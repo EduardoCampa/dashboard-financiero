@@ -168,7 +168,7 @@ else:
     )
 
 # Ruta de tu archivo maestro consolidado en tu equipo
-ruta_archivo = r"C:\Users\User\Downloads\PYTHON\Consolidado_Master.xlsx"
+ruta_archivo = r""Consolidado_Master.xlsx"
 
 @st.cache_data
 def cargar_datos(path):
