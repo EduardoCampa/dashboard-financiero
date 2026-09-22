@@ -268,79 +268,75 @@ columnas_sp = [
 if area_principal == "Contabilidad":
     st.title("📚 Módulo de Contabilidad")
     if menu_contabilidad == "Balanza de Comprobación":
-        st.markdown("### 📊 Gestión de Balanzas de Comprobación")
+        st.markdown("### 📊 Consulta Automática de Balanzas de Comprobación")
         
-        # PESTAÑAS SEPARADAS: CARGA vs CONSULTA
-        tab_carga, tab_consulta = st.tabs(["📤 Cargar y Procesar Balanza", "👁️ Consultar Balanzas Guardadas"])
-        
-        with tab_carga:
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                anos_disponibles = [2024, 2025, 2026, 2027]
-                anio_seleccionado = st.selectbox("Seleccione el Año:", anos_disponibles, index=2, key="balanza_anio_carga")
-            with col_b2:
-                meses_dict = {
-                    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
-                    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
-                    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
-                }
-                mes_seleccionado = st.selectbox("Seleccione el Mes:", list(meses_dict.keys()), key="balanza_mes_carga")
+        carpeta_principal_balanzas = "Balanzas"
+        if os.path.exists(carpeta_principal_balanzas):
+            anios_disponibles = sorted([d for d in os.listdir(carpeta_principal_balanzas) if os.path.isdir(os.path.join(carpeta_principal_balanzas, d))])
+        else:
+            anios_disponibles = []
 
-            archivo_balanza = st.file_uploader(f"Subir archivo de balanza multi-empresa ({mes_seleccionado} {anio_seleccionado})", type=["xlsx", "xls", "csv"], key="uploader_balanza")
-            if archivo_balanza is not None:
-                try:
-                    if archivo_balanza.name.endswith(('.xlsx', '.xls')):
-                        excel_subido = pd.ExcelFile(archivo_balanza)
-                        nombres_hojas = excel_subido.sheet_names
-                        st.success(f"¡Archivo cargado con éxito! Se detectaron **{len(nombres_hojas)} empresas**: {', '.join(nombres_hojas)}")
-                    
-                    if st.button("Guardar / Procesar Balanza"):
-                        num_mes = meses_dict[mes_seleccionado]
-                        carpeta_destino = os.path.join("Balanzas", str(anio_seleccionado), num_mes)
-                        if not os.path.exists(carpeta_destino): 
-                            os.makedirs(carpeta_destino)
-                            
-                        ruta_excel_mes = os.path.join(carpeta_destino, "Balanza.xlsx")
-                        
-                        if archivo_balanza.name.endswith(('.xlsx', '.xls')):
-                            with pd.ExcelWriter(ruta_excel_mes, engine='openpyxl') as writer:
-                                for hoja in nombres_hojas:
-                                    pd.read_excel(excel_subido, sheet_name=hoja).to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                                    
-                        st.success(f"¡Balanza guardada y estructurada correctamente en:\n`{ruta_excel_mes}`!")
-                except Exception as e:
-                    st.error(f"Error al procesar el archivo: {e}")
-
-        with tab_consulta:
+        if anios_disponibles:
             col_c1, col_c2 = st.columns(2)
             with col_c1:
-                anio_con = st.selectbox("Año a Consultar:", [2024, 2025, 2026, 2027], index=2, key="balanza_anio_con")
+                anio_con = st.selectbox("Seleccione el Año:", anios_disponibles, key="balanza_anio_con")
+            
+            ruta_anio = os.path.join(carpeta_principal_balanzas, str(anio_con))
+            meses_disponibles = sorted([d for d in os.listdir(ruta_anio) if os.path.isdir(os.path.join(ruta_anio, d))])
+            
+            meses_dict_nombres = {
+                "01": "01 - Enero", "02": "02 - Febrero", "03": "03 - Marzo", "04": "04 - Abril",
+                "05": "05 - Mayo", "06": "06 - Junio", "07": "07 - Julio", "08": "08 - Agosto",
+                "09": "09 - Septiembre", "10": "10 - Octubre", "11": "11 - Noviembre", "12": "12 - Diciembre"
+            }
+            
+            meses_opciones = [m for m in meses_disponibles if m in meses_dict_nombres]
+            
             with col_c2:
-                meses_dict_con = {
-                    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
-                    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
-                    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
-                }
-                mes_con = st.selectbox("Mes a Consultar:", list(meses_dict_con.keys()), key="balanza_mes_con")
+                mes_con = st.selectbox("Seleccione el Mes:", meses_opciones, format_func=lambda x: meses_dict_nombres.get(x, x), key="balanza_mes_con")
             
-            num_mes_con = meses_dict_con[mes_con]
-            ruta_a_consultar = os.path.join("Balanzas", str(anio_con), num_mes_con, "Balanza.xlsx")
-            
-            if os.path.exists(ruta_a_consultar):
-                try:
-                    xls_consultado = pd.ExcelFile(ruta_a_consultar)
-                    hojas_guardadas = xls_consultado.sheet_names
-                    st.info(f"📂 Archivo encontrado: `Balanzas/{anio_con}/{num_mes_con}/Balanza.xlsx`")
-                    
-                    empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
-                    if empresa_sel_con:
-                        df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
-                        st.markdown(f"#### Empresa: **{empresa_sel_con}** ({mes_con} {anio_con})")
-                        st.dataframe(df_vista, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error al leer el archivo guardado: {e}")
-            else:
-                st.warning(f"⚠️ No existe ningún archivo `Balanza.xlsx` guardado para el periodo **{mes_con} {anio_con}**.")
+            if mes_con:
+                ruta_a_consultar = os.path.join(carpeta_principal_balanzas, str(anio_con), mes_con, "Balanza.xlsx")
+                
+                if os.path.exists(ruta_a_consultar):
+                    try:
+                        xls_temp = pd.ExcelFile(ruta_a_consultar)
+                        hojas_temp = xls_temp.sheet_names
+                        
+                        df_prueba = pd.read_excel(ruta_a_consultar, sheet_name=hojas_temp[0])
+                        necesita_limpieza = False
+                        if any(str(c).startswith("Unnamed") for c in df_prueba.columns):
+                            necesita_limpieza = True
+                        elif not df_prueba.empty and any("Balanza de comprobación" in str(val) for val in df_prueba.iloc[:5, :].values.flatten() if pd.notnull(val)):
+                            necesita_limpieza = True
+
+                        if necesita_limpieza:
+                            with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
+                                for hoja in hojas_temp:
+                                    df_hoja = pd.read_excel(xls_temp, sheet_name=hoja, skiprows=6, header=None)
+                                    if df_hoja.shape[1] >= 8:
+                                        df_hoja = df_hoja.iloc[:, :8]
+                                        df_hoja.columns = ["Cuenta", "Nombre", "Deudor_Inicial", "Acreedor_Inicial", "Cargos", "Abonos", "Deudor_Actual", "Acreedor_Actual"]
+                                    df_hoja = df_hoja.dropna(subset=[df_hoja.columns[0]], how='all')
+                                    df_hoja.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
+                            xls_consultado = pd.ExcelFile(ruta_a_consultar)
+                        else:
+                            xls_consultado = xls_temp
+
+                        hojas_guardadas = xls_consultado.sheet_names
+                        st.info(f"📂 Archivo detectado y listo: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
+                        
+                        empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
+                        if empresa_sel_con:
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
+                            st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
+                            st.dataframe(df_vista, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error al leer o procesar el archivo de balanza: {e}")
+                else:
+                    st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`.")
+        else:
+            st.warning("⚠️ No se encontró la carpeta `Balanzas/` o no contiene subcarpetas de años registradas.")
     else:
         st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
 
