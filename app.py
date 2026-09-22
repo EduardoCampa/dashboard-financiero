@@ -82,7 +82,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
         df_emp = df_datos[df_datos[col_emp] == empresa] if col_emp else df_datos
         total_empresa = df_emp['Saldo_Pendiente'].sum()
 
-        # Nivel 1: Empresa
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=7)
         cell_emp = ws.cell(row=row_idx, column=1, value=f"EMPRESA: {str(empresa).upper()}")
         cell_emp.font = font_empresa
@@ -106,7 +105,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
             df_prov = df_emp[df_emp[col_prov] == prov]
             total_prov = df_prov['Saldo_Pendiente'].sum()
 
-            # Nivel 2: Proveedor
             ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=7)
             cell_prov = ws.cell(row=row_idx, column=1, value=f"   👤 {str(prov)}")
             cell_prov.font = font_prov
@@ -124,7 +122,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
             ws.row_dimensions[row_idx].height = 22
             row_idx += 1
 
-            # Nivel 3: Moneda (Subdivisión por tipo de moneda)
             monedas_prov = sorted(df_prov[col_curr].dropna().unique()) if col_curr else ['MXN']
             for moneda in monedas_prov:
                 df_moneda = df_prov[df_prov[col_curr] == moneda] if col_curr else df_prov
@@ -147,7 +144,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
                 ws.row_dimensions[row_idx].height = 20
                 row_idx += 1
 
-                # Encabezados de tabla detalle
                 for col_num, h in enumerate(headers, 1):
                     c = ws.cell(row=row_idx, column=col_num, value=h)
                     c.font = font_header
@@ -157,7 +153,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
                 ws.row_dimensions[row_idx].height = 20
                 row_idx += 1
 
-                # Filas de detalle
                 for _, r in df_moneda.iterrows():
                     ws.cell(row=row_idx, column=1, value=str(r.get('Tipo_Movimiento', ''))).alignment = Alignment(horizontal="center")
                     ws.cell(row=row_idx, column=2, value=str(r.get('BusinessEntityName', ''))).alignment = Alignment(horizontal="left")
@@ -179,13 +174,10 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
                     ws.row_dimensions[row_idx].height = 18
                     row_idx += 1
 
-                row_idx += 1 # Espacio entre monedas
+                row_idx += 1
+            row_idx += 1
+        row_idx += 1
 
-            row_idx += 1 # Espacio entre proveedores
-
-        row_idx += 1 # Espacio entre empresas
-
-    # Total General
     ws.cell(row=row_idx, column=1, value="TOTAL GENERAL").font = font_total
     for col_num in range(1, 8):
         ws.cell(row=row_idx, column=col_num).fill = fill_total
@@ -209,7 +201,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     output.seek(0)
     return output
 
-# --- BARRA LATERAL (MENÚ LATERAL ORGANIZADO) ---
+# --- BARRA LATERAL ---
 st.sidebar.title("Sistema Auditoría SAT")
 st.sidebar.markdown("---")
 
@@ -233,7 +225,6 @@ else:
         key="menu_contabilidad_sel"
     )
 
-# Ruta relativa del archivo maestro de Excel para que funcione tanto local como en la nube
 ruta_archivo = "Consolidado_Master.xlsx"
 
 @st.cache_data
@@ -277,54 +268,79 @@ columnas_sp = [
 if area_principal == "Contabilidad":
     st.title("📚 Módulo de Contabilidad")
     if menu_contabilidad == "Balanza de Comprobación":
-        st.markdown("### 📊 Carga y Gestión de Balanzas de Comprobación")
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            anos_disponibles = [2024, 2025, 2026, 2027]
-            anio_seleccionado = st.selectbox("Seleccione el Año:", anos_disponibles, index=2, key="balanza_anio")
-        with col_b2:
-            meses_dict = {
-                "01 - Enero": 1, "02 - Febrero": 2, "03 - Marzo": 3, "04 - Abril": 4,
-                "05 - Mayo": 5, "06 - Junio": 6, "07 - Julio": 7, "08 - Agosto": 8,
-                "09 - Septiembre": 9, "10 - Octubre": 10, "11 - Noviembre": 11, "12 - Diciembre": 12
-            }
-            mes_seleccionado = st.selectbox("Seleccione el Mes:", list(meses_dict.keys()), key="balanza_mes")
+        st.markdown("### 📊 Gestión de Balanzas de Comprobación")
+        
+        # PESTAÑAS SEPARADAS: CARGA vs CONSULTA
+        tab_carga, tab_consulta = st.tabs(["📤 Cargar y Procesar Balanza", "👁️ Consultar Balanzas Guardadas"])
+        
+        with tab_carga:
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                anos_disponibles = [2024, 2025, 2026, 2027]
+                anio_seleccionado = st.selectbox("Seleccione el Año:", anos_disponibles, index=2, key="balanza_anio_carga")
+            with col_b2:
+                meses_dict = {
+                    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
+                    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
+                    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
+                }
+                mes_seleccionado = st.selectbox("Seleccione el Mes:", list(meses_dict.keys()), key="balanza_mes_carga")
 
-        archivo_balanza = st.file_uploader(f"Subir archivo de balanza multi-empresa ({mes_seleccionado} {anio_seleccionado})", type=["xlsx", "xls", "csv"], key="uploader_balanza")
-        if archivo_balanza is not None:
-            try:
-                if archivo_balanza.name.endswith(('.xlsx', '.xls')):
-                    excel_subido = pd.ExcelFile(archivo_balanza)
-                    nombres_hojas = excel_subido.sheet_names
-                    st.success(f"¡Archivo cargado con éxito! Se detectaron **{len(nombres_hojas)} empresas**: {', '.join(nombres_hojas)}")
-                
-                if st.button("Guardar / Procesar Balanza"):
-                    num_mes = mes_seleccionado.split(" - ")[0]
-                    carpeta_destino = os.path.join("Balanzas", str(anio_seleccionado), num_mes)
-                    if not os.path.exists(carpeta_destino): 
-                        os.makedirs(carpeta_destino)
-                        
-                    ruta_excel_mes = os.path.join(carpeta_destino, "Balanza.xlsx")
-                    
+            archivo_balanza = st.file_uploader(f"Subir archivo de balanza multi-empresa ({mes_seleccionado} {anio_seleccionado})", type=["xlsx", "xls", "csv"], key="uploader_balanza")
+            if archivo_balanza is not None:
+                try:
                     if archivo_balanza.name.endswith(('.xlsx', '.xls')):
-                        with pd.ExcelWriter(ruta_excel_mes, engine='openpyxl') as writer:
-                            for hoja in nombres_hojas:
-                                pd.read_excel(excel_subido, sheet_name=hoja).to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                                
-                    st.success(f"¡Balanza guardada y estructurada correctamente en:\n`{ruta_excel_mes}`!")
+                        excel_subido = pd.ExcelFile(archivo_balanza)
+                        nombres_hojas = excel_subido.sheet_names
+                        st.success(f"¡Archivo cargado con éxito! Se detectaron **{len(nombres_hojas)} empresas**: {', '.join(nombres_hojas)}")
+                    
+                    if st.button("Guardar / Procesar Balanza"):
+                        num_mes = meses_dict[mes_seleccionado]
+                        carpeta_destino = os.path.join("Balanzas", str(anio_seleccionado), num_mes)
+                        if not os.path.exists(carpeta_destino): 
+                            os.makedirs(carpeta_destino)
+                            
+                        ruta_excel_mes = os.path.join(carpeta_destino, "Balanza.xlsx")
+                        
+                        if archivo_balanza.name.endswith(('.xlsx', '.xls')):
+                            with pd.ExcelWriter(ruta_excel_mes, engine='openpyxl') as writer:
+                                for hoja in nombres_hojas:
+                                    pd.read_excel(excel_subido, sheet_name=hoja).to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
+                                    
+                        st.success(f"¡Balanza guardada y estructurada correctamente en:\n`{ruta_excel_mes}`!")
+                except Exception as e:
+                    st.error(f"Error al procesar el archivo: {e}")
 
-                # --- VISOR EN PANTALLA DE LAS EMPRESAS (PESTAÑAS) ---
-                st.markdown("---")
-                st.markdown("### 👁️ Vista Previa de la Balanza por Empresa")
-                empresa_a_visualizar = st.selectbox("Seleccione la empresa a visualizar:", nombres_hojas, key="visor_empresa_balanza")
-                
-                if empresa_a_visualizar:
-                    df_preview = pd.read_excel(archivo_balanza, sheet_name=empresa_a_visualizar)
-                    st.markdown(f"#### Empresa: **{empresa_a_visualizar}**")
-                    st.dataframe(df_preview, use_container_width=True)
-
-            except Exception as e:
-                st.error(f"Error al procesar el archivo: {e}")
+        with tab_consulta:
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                anio_con = st.selectbox("Año a Consultar:", [2024, 2025, 2026, 2027], index=2, key="balanza_anio_con")
+            with col_c2:
+                meses_dict_con = {
+                    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
+                    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
+                    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
+                }
+                mes_con = st.selectbox("Mes a Consultar:", list(meses_dict_con.keys()), key="balanza_mes_con")
+            
+            num_mes_con = meses_dict_con[mes_con]
+            ruta_a_consultar = os.path.join("Balanzas", str(anio_con), num_mes_con, "Balanza.xlsx")
+            
+            if os.path.exists(ruta_a_consultar):
+                try:
+                    xls_consultado = pd.ExcelFile(ruta_a_consultar)
+                    hojas_guardadas = xls_consultado.sheet_names
+                    st.info(f"📂 Archivo encontrado: `Balanzas/{anio_con}/{num_mes_con}/Balanza.xlsx`")
+                    
+                    empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
+                    if empresa_sel_con:
+                        df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
+                        st.markdown(f"#### Empresa: **{empresa_sel_con}** ({mes_con} {anio_con})")
+                        st.dataframe(df_vista, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error al leer el archivo guardado: {e}")
+            else:
+                st.warning(f"⚠️ No existe ningún archivo `Balanza.xlsx` guardado para el periodo **{mes_con} {anio_con}**.")
     else:
         st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
 
@@ -432,7 +448,6 @@ elif menu == "Facturación":
         st.dataframe(df_fact_anio.head(50), use_container_width=True)
 
 elif menu == "OC y SP" or menu == "Reporte Pagos":
-    # 1. Procesar OrdenCompra
     df_oc_base = pd.DataFrame()
     if df_ordenes is not None:
         df_oc_base = df_ordenes.copy()
@@ -493,7 +508,6 @@ elif menu == "OC y SP" or menu == "Reporte Pagos":
         df_oc_base['Tipo_Movimiento'] = 'Orden de Compra (OC)'
         df_oc_base['Saldo_Pendiente'] = df_oc_base['SaldoPagoOC']
 
-    # 2. Procesar SolicitudPago
     df_sp_base = pd.DataFrame()
     if df_tesoreria is not None:
         df_sp_base = df_tesoreria.copy()
@@ -562,7 +576,6 @@ elif menu == "OC y SP" or menu == "Reporte Pagos":
         df_sp_base['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
         df_sp_base['Saldo_Pendiente'] = df_sp_base['SaldoPagoSP']
 
-    # --- VISTA: OC y SP ---
     if menu == "OC y SP":
         st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
         tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
@@ -573,7 +586,6 @@ elif menu == "OC y SP" or menu == "Reporte Pagos":
             if not df_sp_base.empty:
                 st.dataframe(df_sp_base[[c for c in columnas_sp if c in df_sp_base.columns]], use_container_width=True)
 
-    # --- VISTA: REPORTE PAGOS (DIVIDIDO POR MONEDA) ---
     elif menu == "Reporte Pagos":
         st.title("📋 Reporte Ejecutivo de Pagos con Saldo Pendiente")
         st.markdown("### Muestra exclusivamente las OC y SP que tienen saldo pendiente real (> $1.00)")
