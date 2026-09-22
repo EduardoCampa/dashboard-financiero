@@ -301,38 +301,24 @@ if area_principal == "Contabilidad":
                 if os.path.exists(ruta_a_consultar):
                     try:
                         xls_temp = pd.ExcelFile(ruta_a_consultar)
-                        hojas_temp = xls_temp.sheet_names
+                        hojas_guardadas = xls_temp.sheet_names
                         
-                        df_prueba = pd.read_excel(ruta_a_consultar, sheet_name=hojas_temp[0])
-                        necesita_limpieza = False
-                        if any(str(c).startswith("Unnamed") for c in df_prueba.columns):
-                            necesita_limpieza = True
-                        elif not df_prueba.empty and any("Balanza de comprobación" in str(val) for val in df_prueba.iloc[:5, :].values.flatten() if pd.notnull(val)):
-                            necesita_limpieza = True
-
-                        if necesita_limpieza:
-                            with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
-                                for hoja in hojas_temp:
-                                    df_hoja = pd.read_excel(xls_temp, sheet_name=hoja, skiprows=6, header=None)
-                                    if df_hoja.shape[1] >= 8:
-                                        df_hoja = df_hoja.iloc[:, :8]
-                                        df_hoja.columns = ["Cuenta", "Nombre", "Deudor_Inicial", "Acreedor_Inicial", "Cargos", "Abonos", "Deudor_Actual", "Acreedor_Actual"]
-                                    df_hoja = df_hoja.dropna(subset=[df_hoja.columns[0]], how='all')
-                                    df_hoja.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                            xls_consultado = pd.ExcelFile(ruta_a_consultar)
-                        else:
-                            xls_consultado = xls_temp
-
-                        hojas_guardadas = xls_consultado.sheet_names
                         st.info(f"📂 Archivo detectado y listo: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
+                            # Lectura directa saltando las 7 primeras filas (fila 8 real de CONTPAQ como encabezado)
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, skiprows=7)
+                            
+                            df_vista = df_vista.dropna(how='all')
+                            if not df_vista.empty:
+                                primer_col = df_vista.columns[0]
+                                df_vista = df_vista[df_vista[primer_col].notnull()]
+                            
                             st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
                             st.dataframe(df_vista, use_container_width=True)
                     except Exception as e:
-                        st.error(f"Error al leer o procesar el archivo de balanza: {e}")
+                        st.error(f"Error al leer el archivo de balanza: {e}")
                 else:
                     st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`.")
         else:
