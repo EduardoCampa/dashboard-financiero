@@ -299,10 +299,7 @@ if area_principal == "Contabilidad":
                     st.success(f"¡Archivo cargado con éxito! Se detectaron **{len(nombres_hojas)} empresas**: {', '.join(nombres_hojas)}")
                 
                 if st.button("Guardar / Procesar Balanza"):
-                    # Extraer el número del mes (ej. "08" de "08 - Agosto")
                     num_mes = mes_seleccionado.split(" - ")[0]
-                    
-                    # Estructura de carpetas: Balanzas \ Año \ Mes \ Balanza.xlsx
                     carpeta_destino = os.path.join("Balanzas", str(anio_seleccionado), num_mes)
                     if not os.path.exists(carpeta_destino): 
                         os.makedirs(carpeta_destino)
@@ -315,6 +312,17 @@ if area_principal == "Contabilidad":
                                 pd.read_excel(excel_subido, sheet_name=hoja).to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
                                 
                     st.success(f"¡Balanza guardada y estructurada correctamente en:\n`{ruta_excel_mes}`!")
+
+                # --- VISOR EN PANTALLA DE LAS EMPRESAS (PESTAÑAS) ---
+                st.markdown("---")
+                st.markdown("### 👁️ Vista Previa de la Balanza por Empresa")
+                empresa_a_visualizar = st.selectbox("Seleccione la empresa a visualizar:", nombres_hojas, key="visor_empresa_balanza")
+                
+                if empresa_a_visualizar:
+                    df_preview = pd.read_excel(archivo_balanza, sheet_name=empresa_a_visualizar)
+                    st.markdown(f"#### Empresa: **{empresa_a_visualizar}**")
+                    st.dataframe(df_preview, use_container_width=True)
+
             except Exception as e:
                 st.error(f"Error al procesar el archivo: {e}")
     else:
@@ -653,7 +661,6 @@ elif menu == "OC y SP" or menu == "Reporte Pagos":
                             with st.expander(f"👤 {proveedor} — Saldo Pendiente Total: {formato_mx(subtotal_prov)}", expanded=True):
                                 df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
                                 
-                                # AGRUPAR Y DIVIDIR POR TIPO DE MONEDA DENTRO DEL PROVEEDOR
                                 monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
                                 
                                 for moneda in monedas_del_prov:
