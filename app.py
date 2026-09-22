@@ -233,7 +233,9 @@ else:
         key="menu_contabilidad_sel"
     )
 
+# Ruta relativa del archivo maestro de Excel para que funcione tanto local como en la nube
 ruta_archivo = "Consolidado_Master.xlsx"
+
 @st.cache_data
 def cargar_datos(path):
     try:
@@ -295,16 +297,24 @@ if area_principal == "Contabilidad":
                     excel_subido = pd.ExcelFile(archivo_balanza)
                     nombres_hojas = excel_subido.sheet_names
                     st.success(f"¡Archivo cargado con éxito! Se detectaron **{len(nombres_hojas)} empresas**: {', '.join(nombres_hojas)}")
+                
                 if st.button("Guardar / Procesar Balanza"):
-                    carpeta_destino = rf"C:\Users\User\Downloads\PYTHON\Balanzas\{anio_seleccionado}"
-                    if not os.path.exists(carpeta_destino): os.makedirs(carpeta_destino)
-                    nombre_archivo_mes = mes_seleccionado.replace(" - ", "_")
-                    ruta_excel_mes = os.path.join(carpeta_destino, f"Balanzas_{nombre_archivo_mes}.xlsx")
+                    # Extraer el número del mes (ej. "08" de "08 - Agosto")
+                    num_mes = mes_seleccionado.split(" - ")[0]
+                    
+                    # Estructura de carpetas: Balanzas \ Año \ Mes \ Balanza.xlsx
+                    carpeta_destino = os.path.join("Balanzas", str(anio_seleccionado), num_mes)
+                    if not os.path.exists(carpeta_destino): 
+                        os.makedirs(carpeta_destino)
+                        
+                    ruta_excel_mes = os.path.join(carpeta_destino, "Balanza.xlsx")
+                    
                     if archivo_balanza.name.endswith(('.xlsx', '.xls')):
                         with pd.ExcelWriter(ruta_excel_mes, engine='openpyxl') as writer:
                             for hoja in nombres_hojas:
                                 pd.read_excel(excel_subido, sheet_name=hoja).to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                    st.success(f"¡Balanzas guardadas correctamente en la ruta:\n`{ruta_excel_mes}`!")
+                                
+                    st.success(f"¡Balanza guardada y estructurada correctamente en:\n`{ruta_excel_mes}`!")
             except Exception as e:
                 st.error(f"Error al procesar el archivo: {e}")
     else:
