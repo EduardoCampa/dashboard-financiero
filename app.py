@@ -233,8 +233,7 @@ else:
         key="menu_contabilidad_sel"
     )
 
-ruta_archivo = r"C:\Users\User\Downloads\PYTHON\Consolidado_Master.xlsx"
-
+ruta_archivo = "Consolidado_Master.xlsx"
 @st.cache_data
 def cargar_datos(path):
     try:
