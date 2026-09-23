@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Finanzas - Grupo SERVYRE", layout="wide")
 
-# --- FORMATO DE MONEDA REGIÓN MÉXICO ---
+# --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
 def formato_mx(val):
     if pd.isnull(val):
         return "$0.00"
@@ -22,7 +22,7 @@ def formato_mx(val):
     except (ValueError, TypeError):
         return str(val)
 
-# --- EXCEL EJECUTIVO FACTURACIÓN ---
+# --- FUNCIÓN PARA GENERAR EXCEL FACTURACIÓN ---
 def generar_excel_facturacion_ejecutivo(df_datos):
     wb = Workbook()
     ws = wb.active
@@ -136,7 +136,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     output.seek(0)
     return output
 
-# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS (JERÁRQUICO) ---
+# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
@@ -320,14 +320,25 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CON CRUCE DOBLE (A TRAVÉS DE GASTOS/FC O DIRECTO CON EDO CUENTA POR DOCFOLIO/DOCUMENTID) ---
+# --- PROCESAMIENTO MULTINIVEL CON BÚSQUEDA DE PAGOS EN EDO CUENTA Y FACTURAS/GASTOS ---
 @st.cache_data
-def procesar_oc_sp_corregido(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
+def procesar_oc_sp_robusto(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
+    # PREPARACIÓN DE TABLA DE PAGOS EN EDO CUENTA (AGRUPADO POR FOLIO / DOCFOLIO / DOCUMENTID Y EMPRESA)
+    df_edo_pagos = pd.DataFrame()
+    if _df_edo is not None and not _df_edo.empty:
+        df_edo_pagos = _df_edo.copy()
+        col_edo_doc = 'DocumentID' if 'DocumentID' in df_edo_pagos.columns else ('DocFolio' if 'DocFolio' in df_edo_pagos.columns else None)
+        if col_edo_doc:
+            df_edo_pagos['Folio_Clean'] = df_edo_pagos[col_edo_doc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+            df_edo_pagos['Amount'] = pd.to_numeric(df_edo_pagos['Amount'], errors='coerce').fillna(0)
+
     # 1. ÓRDENES DE COMPRA (OC)
     df_oc_calc = pd.DataFrame()
     if _df_ord is not None and not _df_ord.empty:
         df_oc_calc = _df_ord.copy()
-        
+        if 'DocFolio' in df_oc_calc.columns:
+            df_oc_calc['Folio_Clean'] = df_oc_calc['DocFolio'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+
         # Cruce con FacturaCompra
         if _df_fc is not None and not _df_fc.empty:
             col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
@@ -341,38 +352,35 @@ def procesar_oc_sp_corregido(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 if col_total_fc: cols_fc.append(col_total_fc)
                 if col_docid_fc: cols_fc.append(col_docid_fc)
 
-                df_fc_sub = _df_fc[cols_fc].dropna(subset=[col_llave_fc]).copy()
-                rename_dict = {col_llave_fc: 'DocFolio_Match', col_uuid_fc: 'UUID'}
+                df_fc_sub = _df_fc[[c for c in cols_fc if c in _df_fc.columns]].dropna(subset=[col_llave_fc]).copy()
+                df_fc_sub['Folio_Clean'] = df_fc_sub[col_llave_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+
+                rename_dict = {col_uuid_fc: 'UUID'}
                 if col_total_fc: rename_dict[col_total_fc] = 'TotalFacturaCompra'
                 if col_docid_fc: rename_dict[col_docid_fc] = 'DocumentID_FC'
                 df_fc_sub = df_fc_sub.rename(columns=rename_dict)
 
                 if 'DocumentID' in df_oc_calc.columns: df_oc_calc = df_oc_calc.drop(columns=['DocumentID'])
                 if 'EmpresaOrigen' in df_fc_sub.columns and 'EmpresaOrigen' in df_oc_calc.columns:
-                    df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
+                    df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, on=['EmpresaOrigen', 'Folio_Clean'], how='left')
                 else:
-                    df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
+                    df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, on='Folio_Clean', how='left')
 
                 if 'DocumentID_FC' in df_oc_calc.columns: df_oc_calc['DocumentID'] = df_oc_calc['DocumentID_FC']
 
         if 'DocumentID' not in df_oc_calc.columns or df_oc_calc['DocumentID'].isnull().all():
             if 'DocFolio' in df_oc_calc.columns: df_oc_calc['DocumentID'] = df_oc_calc['DocFolio']
 
-        # Cruce con EdoCuenta
-        if _df_edo is not None and not _df_edo.empty:
-            df_edo_sub = _df_edo[['EmpresaOrigen', 'DocumentID', 'Amount']].copy() if 'EmpresaOrigen' in _df_edo.columns else _df_edo[['DocumentID', 'Amount']].copy()
-            df_edo_sub['DocumentID'] = df_edo_sub['DocumentID'].astype(str)
-            df_oc_calc['DocumentID_Str'] = df_oc_calc['DocumentID'].astype(str)
+        # Sumar Pagos de EdoCuenta
+        if not df_edo_pagos.empty:
+            keys_edo = ['EmpresaOrigen', 'Folio_Clean'] if 'EmpresaOrigen' in df_edo_pagos.columns and 'EmpresaOrigen' in df_oc_calc.columns else ['Folio_Clean']
+            p_edo = df_edo_pagos.groupby(keys_edo)['Amount'].sum().reset_index().rename(columns={'Amount': 'Amount_Edo'})
+            df_oc_calc = pd.merge(df_oc_calc, p_edo, on=keys_edo, how='left')
+            df_oc_calc['Amount'] = df_oc_calc['Amount_Edo'].fillna(0.0)
+        else:
+            df_oc_calc['Amount'] = 0.0
 
-            if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_oc_calc.columns:
-                df_oc_calc = pd.merge(df_oc_calc, df_edo_sub, left_on=['EmpresaOrigen', 'DocumentID_Str'], right_on=['EmpresaOrigen', 'DocumentID'], how='left')
-            else:
-                df_oc_calc = pd.merge(df_oc_calc, df_edo_sub, left_on='DocumentID_Str', right_on='DocumentID', how='left')
-
-        df_oc_calc['Amount'] = pd.to_numeric(df_oc_calc.get('Amount', 0), errors='coerce').fillna(0)
         df_oc_calc['Total'] = pd.to_numeric(df_oc_calc.get('Total', 0), errors='coerce').fillna(0)
-        
-        # Saldo = Total OC - Pago en EdoCuenta
         df_oc_calc['SaldoPagoOC'] = (df_oc_calc['Total'] - df_oc_calc['Amount']).apply(lambda x: max(0.0, x))
         df_oc_calc['Saldo_Pendiente'] = df_oc_calc['SaldoPagoOC']
         df_oc_calc['Tipo_Movimiento'] = 'Orden de Compra (OC)'
@@ -381,8 +389,10 @@ def procesar_oc_sp_corregido(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     df_sp_calc = pd.DataFrame()
     if _df_tes is not None and not _df_tes.empty:
         df_sp_calc = _df_tes.copy()
-        
-        # Cruce con Gastos
+        if 'DocFolio' in df_sp_calc.columns:
+            df_sp_calc['Folio_Clean'] = df_sp_calc['DocFolio'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+
+        # Cruce con Gastos y FacturaCompra
         if _df_gas is not None and not _df_gas.empty:
             col_folio_gs = next((c for c in ['CFDIFolioFiscal', 'UUID', 'FolioFiscal'] if c in _df_gas.columns), None)
             col_total_gs = 'Total' if 'Total' in _df_gas.columns else None
@@ -396,52 +406,44 @@ def procesar_oc_sp_corregido(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 if col_docid_gs: cols_gs.append(col_docid_gs)
 
                 df_gs_sub = _df_gas[[c for c in cols_gs if c in _df_gas.columns]].dropna(subset=[col_llave_gs]).copy()
-                rename_gs = {col_llave_gs: 'DocFolio_Match', col_folio_gs: 'CFDIFolioFiscal'}
+                df_gs_sub['Folio_Clean'] = df_gs_sub[col_llave_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+
+                rename_gs = {col_folio_gs: 'CFDIFolioFiscal'}
                 if col_total_gs: rename_gs[col_total_gs] = 'TotalGastos'
                 if col_docid_gs: rename_gs[col_docid_gs] = 'DocumentID_GS'
                 df_gs_sub = df_gs_sub.rename(columns=rename_gs)
 
                 if 'DocumentID' in df_sp_calc.columns: df_sp_calc = df_sp_calc.drop(columns=['DocumentID'])
                 if 'EmpresaOrigen' in df_gs_sub.columns and 'EmpresaOrigen' in df_sp_calc.columns:
-                    df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
+                    df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, on=['EmpresaOrigen', 'Folio_Clean'], how='left')
                 else:
-                    df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
+                    df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, on='Folio_Clean', how='left')
 
                 if 'CFDIFolioFiscal' in df_sp_calc.columns: df_sp_calc['UUID'] = df_sp_calc['CFDIFolioFiscal']
                 if 'DocumentID_GS' in df_sp_calc.columns: df_sp_calc['DocumentID'] = df_sp_calc['DocumentID_GS']
 
-        # Si DocumentID viene vacio o None, asigna el Folio (DocFolio) directamente
         if 'DocumentID' not in df_sp_calc.columns or df_sp_calc['DocumentID'].isnull().all():
-            if 'DocFolio' in df_sp_calc.columns:
-                df_sp_calc['DocumentID'] = df_sp_calc['DocFolio']
+            if 'DocFolio' in df_sp_calc.columns: df_sp_calc['DocumentID'] = df_sp_calc['DocFolio']
 
-        # Cruce con EdoCuenta por DocumentID / DocFolio
-        if _df_edo is not None and not _df_edo.empty:
-            cols_edo_sp = ['EmpresaOrigen', 'DocumentID', 'Amount'] if 'EmpresaOrigen' in _df_edo.columns else ['DocumentID', 'Amount']
-            df_edo_sub_sp = _df_edo[[c for c in cols_edo_sp if c in _df_edo.columns]].copy()
-            
-            # Limpiar tipos de datos para merge exacto
-            df_edo_sub_sp['DocumentID_Clean'] = df_edo_sub_sp['DocumentID'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            df_sp_calc['DocumentID_Clean'] = df_sp_calc['DocumentID'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        # Sumar Pagos de EdoCuenta por Folio (DocFolio / SolicitudPago)
+        if not df_edo_pagos.empty:
+            keys_edo_sp = ['EmpresaOrigen', 'Folio_Clean'] if 'EmpresaOrigen' in df_edo_pagos.columns and 'EmpresaOrigen' in df_sp_calc.columns else ['Folio_Clean']
+            p_edo_sp = df_edo_pagos.groupby(keys_edo_sp)['Amount'].sum().reset_index().rename(columns={'Amount': 'Amount_Edo'})
+            df_sp_calc = pd.merge(df_sp_calc, p_edo_sp, on=keys_edo_sp, how='left')
+            df_sp_calc['Amount'] = df_sp_calc['Amount_Edo'].fillna(0.0)
+        else:
+            df_sp_calc['Amount'] = 0.0
 
-            df_pagos_edo = df_edo_sub_sp.groupby(['EmpresaOrigen', 'DocumentID_Clean'])['Amount'].sum().reset_index() if 'EmpresaOrigen' in df_edo_sub_sp.columns else df_edo_sub_sp.groupby('DocumentID_Clean')['Amount'].sum().reset_index()
-
-            if 'EmpresaOrigen' in df_pagos_edo.columns and 'EmpresaOrigen' in df_sp_calc.columns:
-                df_sp_calc = pd.merge(df_sp_calc, df_pagos_edo, on=['EmpresaOrigen', 'DocumentID_Clean'], how='left')
-            else:
-                df_sp_calc = pd.merge(df_sp_calc, df_pagos_edo, on='DocumentID_Clean', how='left')
-
-        df_sp_calc['Amount'] = pd.to_numeric(df_sp_calc.get('Amount', 0), errors='coerce').fillna(0)
         df_sp_calc['Total'] = pd.to_numeric(df_sp_calc.get('Total', 0), errors='coerce').fillna(0)
-
-        # Saldo = Total SP - Monto Pagado en EdoCuenta
+        
+        # Saldo = Total SP - Pagos en EdoCuenta
         df_sp_calc['SaldoPagoSP'] = (df_sp_calc['Total'] - df_sp_calc['Amount']).apply(lambda x: max(0.0, x))
         df_sp_calc['Saldo_Pendiente'] = df_sp_calc['SaldoPagoSP']
         df_sp_calc['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
 
     return df_oc_calc, df_sp_calc
 
-df_ordenes_proc, df_tesoreria_proc = procesar_oc_sp_corregido(df_ordenes, df_tesoreria, df_fact_compra, df_gastos, df_edocuenta)
+df_ordenes_proc, df_tesoreria_proc = procesar_oc_sp_robusto(df_ordenes, df_tesoreria, df_fact_compra, df_gastos, df_edocuenta)
 
 columnas_oc_visuales = [
     'EmpresaOrigen', 'DocFolio', 'DocumentID', 'BusinessEntityName', 'DateDocument', 'Title',
