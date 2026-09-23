@@ -298,18 +298,18 @@ if area_principal == "Contabilidad":
             if mes_con:
                 ruta_a_consultar = os.path.join(carpeta_principal_balanzas, str(anio_con), mes_con, "Balanza.xlsx")
                 
-                st.info(f"📂 Ruta activa de consulta: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
+                st.info(f"📂 Ruta activa: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                 
-                archivo_subido = st.file_uploader(f"📤 Si deseas reemplazar o actualizar la balanza de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}, súbela aquí:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
+                archivo_subido = st.file_uploader(f"📤 Actualizar Balanza de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
                 if archivo_subido is not None:
                     try:
                         os.makedirs(os.path.dirname(ruta_a_consultar), exist_ok=True)
                         with open(ruta_a_consultar, "wb") as f:
                             f.write(archivo_subido.getbuffer())
-                        st.success("¡Archivo reemplazado exitosamente! Recargando...")
+                        st.success("¡Archivo guardado con éxito! Recargando...")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error al guardar el nuevo archivo: {e}")
+                        st.error(f"Error al guardar: {e}")
 
                 if os.path.exists(ruta_a_consultar):
                     try:
@@ -318,18 +318,25 @@ if area_principal == "Contabilidad":
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # LECTURA ROBUSTA: Si el archivo viene con filas superiores, leemos sin cabecera o saltando filas dinámicamente
-                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
-                            df_vista = df_vista.dropna(how='all')
+                            # LECTURA 100% BLINDADA E INFALIBLE
+                            # Leemos primero sin cabecera para ver el contenido real crudo
+                            df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
                             
-                            st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
-                            st.dataframe(df_vista, use_container_width=True)
+                            # Filtramos filas completamente vacías
+                            df_raw = df_raw.dropna(how='all')
+                            
+                            if not df_raw.empty:
+                                # Si hay filas, mostramos el contenido tal cual viene en el Excel sin restricciones de 'empty'
+                                st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
+                                st.dataframe(df_raw, use_container_width=True)
+                            else:
+                                st.warning("⚠️ La hoja seleccionada está completamente vacía.")
                     except Exception as e:
                         st.error(f"Error al leer el archivo de balanza: {e}")
                 else:
                     st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`.")
         else:
-            st.warning("⚠️ No se encontró la carpeta `Balanzas/` o no contiene subcarpetas de años registradas.")
+            st.warning("⚠️ No se encontró la carpeta `Balanzas/`.")
     else:
         st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
 
