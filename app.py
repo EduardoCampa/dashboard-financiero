@@ -268,6 +268,12 @@ columnas_sp = [
     'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'TotalGastos', 'SaldoSP', 'DocumentID', 'CFDIFolioFiscal', 'Amount', 'DateOperation', 'SaldoPagoSP'
 ]
 
+# Columnas específicas y limpias para Facturación
+columnas_facturacion = [
+    'EmpresaOrigen', 'BusinessEntityName', 'DocFolio', 'DateDocument', 
+    'Currency', 'SubTotal', 'TotalTax', 'Total', 'UUID', 'Status'
+]
+
 # --- RENDERIZADO SEGÚN LA SELECCIÓN ---
 
 if area_principal == "Contabilidad":
@@ -470,12 +476,14 @@ elif area_principal == "Finanzas":
             st.markdown("---")
             total_fact = pd.to_numeric(df_fact_filtrado['Total'], errors='coerce').fillna(0).sum() if 'Total' in df_fact_filtrado.columns else 0.0
             st.metric("Total Facturado (Filtrado)", formato_mx(total_fact))
-            st.dataframe(df_fact_filtrado, use_container_width=True)
+            
+            # Filtrar estrictamente solo las columnas deseadas y existentes
+            cols_mostrar_fact = [c for c in columnas_facturacion if c in df_fact_filtrado.columns]
+            st.dataframe(df_fact_filtrado[cols_mostrar_fact], use_container_width=True)
 
     elif menu == "OC y SP":
         st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
         
-        # Procesamiento previo para calcular saldos y años en OC
         df_oc_calc = pd.DataFrame()
         if df_ordenes is not None and not df_ordenes.empty:
             df_oc_calc = df_ordenes.copy()
@@ -525,7 +533,6 @@ elif area_principal == "Finanzas":
             df_oc_calc['SaldoPagoOC'] = df_oc_calc['SaldoPagoOC'].apply(lambda x: max(0.0, x))
             df_oc_calc['Saldo_Pendiente'] = df_oc_calc['SaldoPagoOC']
 
-        # Procesamiento previo para Solicitudes de Pago
         df_sp_calc = pd.DataFrame()
         if df_tesoreria is not None and not df_tesoreria.empty:
             df_sp_calc = df_tesoreria.copy()
@@ -758,7 +765,6 @@ elif area_principal == "Finanzas":
             total_pagado_por_doc = df_sp_base.groupby(group_keys_sp + ['DocumentID'])['Amount'].transform('sum')
             df_sp_base['SaldoPagoSP'] = df_sp_base['TotalGastos'] - total_pagado_por_doc
             df_sp_base['SaldoPagoSP'] = df_sp_base['SaldoPagoSP'].apply(lambda x: max(0.0, x))
-            df_sp_base['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
             df_sp_base['Saldo_Pendiente'] = df_sp_base['SaldoPagoSP']
 
         df_rep_list = []
