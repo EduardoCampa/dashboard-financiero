@@ -299,34 +299,34 @@ if area_principal == "Contabilidad":
                 ruta_a_consultar = os.path.join(carpeta_principal_balanzas, str(anio_con), mes_con, "Balanza.xlsx")
                 
                 if os.path.exists(ruta_a_consultar):
+                    st.info(f"📂 Archivo detectado: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
+                    
+                    # Botón de autolimpieza forzada por si el archivo guardado tiene basura previa
+                    if st.button("🔄 Forzar Limpieza y Recargar Balanza"):
+                        try:
+                            xls_raw = pd.ExcelFile(ruta_a_consultar)
+                            with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
+                                for hoja in xls_raw.sheet_names:
+                                    # Leemos saltando las primeras 7 filas para tomar la fila 8 limpia
+                                    df_limpio = pd.read_excel(xls_raw, sheet_name=hoja, skiprows=7)
+                                    df_limpio = df_limpio.dropna(how='all')
+                                    if not df_limpio.empty:
+                                        p_col = df_limpio.columns[0]
+                                        df_limpio = df_limpio[df_limpio[p_col].notnull()]
+                                    df_limpio.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
+                            st.success("¡Archivo limpiado y reestructurado con éxito desde la fila 8! Recargando...")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al limpiar el archivo: {e}")
+
                     try:
                         xls_temp = pd.ExcelFile(ruta_a_consultar)
                         hojas_guardadas = xls_temp.sheet_names
                         
-                        st.info(f"📂 Archivo detectado: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
-                        
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # LECTURA ROBUSTA: Intentamos leer con header=7. Si sale vacío, leemos sin header y buscamos la fila de cuentas.
-                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=7)
-                            df_vista = df_vista.dropna(how='all')
-                            
-                            if df_vista.empty or len(df_vista.columns) < 2:
-                                # Intento alternativo de lectura directa por si la estructura varió
-                                df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
-                                # Buscamos dinámicamente la fila donde esté la cuenta o '101-'
-                                fila_inicio = 0
-                                for idx, row in df_raw.iterrows():
-                                    val_str = str(row.values)
-                                    if "101-" in val_str or "Cuenta" in val_str:
-                                        fila_inicio = idx
-                                        break
-                                df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=fila_inicio)
-                                df_vista = df_vista.dropna(how='all')
-
-                            if not df_vista.empty:
-                                primer_col = df_vista.columns[0]
-                                df_vista = df_vista[df_vista[primer_col].notnull()]
+                            # Lectura limpia aplicando skiprows=7 directamente
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
                             
                             st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
                             st.dataframe(df_vista, use_container_width=True)
