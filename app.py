@@ -243,11 +243,17 @@ def cargar_datos(path):
         df_fact_compra = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
         df_gastos = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
         
-        for df_chk in [df_fact_compra, df_gastos, df_ordenes, df_tesoreria, df_factura]:
+        for df_chk in [df_fact_compra, df_gastos, df_ordenes, df_tesoreria]:
             if df_chk is not None and not df_chk.empty:
                 col_del = 'Deleted' if 'Deleted' in df_chk.columns else ('Delete' if 'Delete' in df_chk.columns else None)
                 if col_del:
                     df_chk.drop(df_chk[pd.to_numeric(df_chk[col_del], errors='coerce').fillna(0) == 1].index, inplace=True)
+
+        # Filtrar FacturaCliente estrictamente donde Delete/Deleted sea 0
+        if df_factura is not None and not df_factura.empty:
+            col_del_fac = 'Deleted' if 'Deleted' in df_factura.columns else ('Delete' if 'Delete' in df_factura.columns else None)
+            if col_del_fac:
+                df_factura = df_factura[pd.to_numeric(df_factura[col_del_fac], errors='coerce').fillna(0) == 0]
 
         return df_factura, df_tesoreria, df_ordenes, df_edocuenta, df_fact_compra, df_gastos
     except Exception as e:
@@ -268,10 +274,10 @@ columnas_sp = [
     'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'TotalGastos', 'SaldoSP', 'DocumentID', 'CFDIFolioFiscal', 'Amount', 'DateOperation', 'SaldoPagoSP'
 ]
 
-# Columnas específicas y limpias para Facturación
+# Columnas específicas para Facturación incluyendo Monto Pagado y Saldo Pendiente
 columnas_facturacion = [
     'EmpresaOrigen', 'BusinessEntityName', 'DocFolio', 'DateDocument', 
-    'Currency', 'SubTotal', 'TotalTax', 'Total', 'UUID', 'Status'
+    'Currency', 'SubTotal', 'TotalTax', 'Total', 'TotalPagado', 'SaldoPendiente', 'UUID', 'Status'
 ]
 
 # --- RENDERIZADO SEGÚN LA SELECCIÓN ---
@@ -444,6 +450,31 @@ elif area_principal == "Finanzas":
         st.title("📊 Módulo de Facturación y Dashboard de Cobranza")
         if df_factura is not None and not df_factura.empty:
             df_fact_filtrado = df_factura.copy()
+
+            # Conexión con EdoCuenta vía DocumentID para calcular TotalPagado y SaldoPendiente
+            if df_edocuenta is not None and not df_edocuenta.empty and 'DocumentID' in df_fact_filtrado.columns and 'DocumentID' in df_edocuenta.columns:
+                cols_edo = ['EmpresaOrigen', 'DocumentID', 'Amount'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount']
+                df_edo_sub = df_edocuenta[cols_edo].copy()
+                df_edo_sub['Amount'] = pd.to_numeric(df_edo_sub['Amount'], errors='coerce').fillna(0)
+                
+                # Agrupar pagos por DocumentID (y EmpresaOrigen si aplica)
+                if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_fact_filtrado.columns:
+                    df_pagos_agr = df_edo_sub.groupby(['EmpresaOrigen', 'DocumentID'])['Amount'].sum().reset_index()
+                    df_fact_filtrado = pd.merge(df_fact_filtrado, df_pagos_agr, on=['EmpresaOrigen', 'DocumentID'], how='left')
+                else:
+                    df_pagos_agr = df_edo_sub.groupby('DocumentID')['Amount'].sum().reset_index()
+                    df_fact_filtrado = pd.merge(df_fact_filtrado, df_pagos_agr, on='DocumentID', how='left')
+                
+                df_fact_filtrado['TotalPagado'] = df_fact_filtrado['Amount'].fillna(0)
+                if 'Amount' in df_fact_filtrado.columns and 'Amount' != 'TotalPagado':
+                    df_fact_filtrado = df_fact_filtrado.drop(columns=['Amount'])
+            else:
+                df_fact_filtrado['TotalPagado'] = 0.0
+
+            df_fact_filtrado['Total'] = pd.to_numeric(df_fact_filtrado['Total'], errors='coerce').fillna(0)
+            df_fact_filtrado['SaldoPendiente'] = df_fact_filtrado['Total'] - df_fact_filtrado['TotalPagado']
+            df_fact_filtrado['SaldoPendiente'] = df_fact_filtrado['SaldoPendiente'].apply(lambda x: max(0.0, x))
+
             if 'DateDocument' in df_fact_filtrado.columns:
                 df_fact_filtrado['DateDocument'] = pd.to_datetime(df_fact_filtrado['DateDocument'], errors='coerce')
                 df_fact_filtrado['Año'] = df_fact_filtrado['DateDocument'].dt.year.fillna(0).astype(int)
@@ -474,12 +505,19 @@ elif area_principal == "Finanzas":
                     df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['Año'].isin(anios_fac_sel)]
 
             st.markdown("---")
-            total_fact = pd.to_numeric(df_fact_filtrado['Total'], errors='coerce').fillna(0).sum() if 'Total' in df_fact_filtrado.columns else 0.0
+            total_fact = df_fact_filtrado['Total'].sum()
             st.metric("Total Facturado (Filtrado)", formato_mx(total_fact))
             
-            # Filtrar estrictamente solo las columnas deseadas y existentes
-            cols_mostrar_fact = [c for c in columnas_facturacion if c in df_fact_filtrado.columns]
-            st.dataframe(df_fact_filtrado[cols_mostrar_fact], use_container_width=True)
+            # Formatear columnas monetarias para la visualización limpia
+            df_view_fact = df_fact_filtrado.copy()
+            if 'Total' in df_view_fact.columns: df_view_fact['Total'] = df_view_fact['Total'].apply(formato_mx)
+            if 'TotalTax' in df_view_fact.columns: df_view_fact['TotalTax'] = df_view_fact['TotalTax'].apply(formato_mx)
+            if 'SubTotal' in df_view_fact.columns: df_view_fact['SubTotal'] = df_view_fact['SubTotal'].apply(formato_mx)
+            if 'TotalPagado' in df_view_fact.columns: df_view_fact['TotalPagado'] = df_view_fact['TotalPagado'].apply(formato_mx)
+            if 'SaldoPendiente' in df_view_fact.columns: df_view_fact['SaldoPendiente'] = df_view_fact['SaldoPendiente'].apply(formato_mx)
+
+            cols_mostrar_fact = [c for c in columnas_facturacion if c in df_view_fact.columns]
+            st.dataframe(df_view_fact[cols_mostrar_fact], use_container_width=True)
 
     elif menu == "OC y SP":
         st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
