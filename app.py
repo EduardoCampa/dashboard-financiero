@@ -300,37 +300,36 @@ if area_principal == "Contabilidad":
                 
                 st.info(f"📂 Ruta activa: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                 
-                archivo_subido = st.file_uploader(f"📤 Actualizar Balanza de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
+                archivo_subido = st.file_uploader(f"📤 Sube aquí tu archivo `Balanza.xlsx` válido de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
                 if archivo_subido is not None:
                     try:
                         os.makedirs(os.path.dirname(ruta_a_consultar), exist_ok=True)
                         with open(ruta_a_consultar, "wb") as f:
                             f.write(archivo_subido.getbuffer())
-                        st.success("¡Archivo guardado con éxito! Recargando...")
+                        st.success("¡Archivo de balanza cargado correctamente! Recargando...")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al guardar: {e}")
 
                 if os.path.exists(ruta_a_consultar):
                     try:
-                        xls_temp = pd.ExcelFile(ruta_a_consultar)
-                        hojas_guardadas = xls_temp.sheet_names
-                        
-                        empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
-                        if empresa_sel_con:
-                            # LECTURA 100% BLINDADA E INFALIBLE
-                            # Leemos primero sin cabecera para ver el contenido real crudo
-                            df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                        tamano_archivo = os.path.getsize(ruta_a_consultar)
+                        if tamano_archivo < 1000:
+                            st.error(f"⚠️ El archivo en `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx` pesa muy poco ({tamano_archivo} bytes) y está dañado o vacío. Por favor súbelo de nuevo usando el cargador de arriba.")
+                        else:
+                            xls_temp = pd.ExcelFile(ruta_a_consultar)
+                            hojas_guardadas = xls_temp.sheet_names
                             
-                            # Filtramos filas completamente vacías
-                            df_raw = df_raw.dropna(how='all')
-                            
-                            if not df_raw.empty:
-                                # Si hay filas, mostramos el contenido tal cual viene en el Excel sin restricciones de 'empty'
-                                st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
-                                st.dataframe(df_raw, use_container_width=True)
-                            else:
-                                st.warning("⚠️ La hoja seleccionada está completamente vacía.")
+                            empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
+                            if empresa_sel_con:
+                                df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                                df_raw = df_raw.dropna(how='all')
+                                
+                                if not df_raw.empty:
+                                    st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
+                                    st.dataframe(df_raw, use_container_width=True)
+                                else:
+                                    st.warning("⚠️ La hoja seleccionada está vacía.")
                     except Exception as e:
                         st.error(f"Error al leer el archivo de balanza: {e}")
                 else:
