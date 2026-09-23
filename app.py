@@ -307,8 +307,8 @@ if area_principal == "Contabilidad":
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # Lectura directa saltando las 7 primeras filas (fila 8 real de CONTPAQ como encabezado)
-                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, skiprows=7)
+                            # header=7 toma exactamente la fila 8 de Excel como cabecera limpia
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=7)
                             
                             df_vista = df_vista.dropna(how='all')
                             if not df_vista.empty:
