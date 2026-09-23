@@ -192,7 +192,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     ws.row_dimensions[row_idx].height = 26
 
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
+        max_len = max(len(str(cell.value or '')) for col in col)
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 4, 16)
 
