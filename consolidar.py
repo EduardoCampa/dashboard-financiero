@@ -3,7 +3,7 @@ import pandas as pd
 
 # Rutas de las carpetas
 carpeta_origen = r"\\CONTPAQ\Reportes"  
-carpeta_destino = r"C:\Users\User\Downloads\PYTHON"
+carpeta_destino = r"C:\Users\User\Documents\GitHub\dashboard-financiero"
 archivo_salida = os.path.join(carpeta_destino, "Consolidado_Master.xlsx")
 
 pestanias_a_consolidar = [
