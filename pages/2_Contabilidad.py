@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- ARCHIVOS DE BALANZA ---
+# --- BUSCAR BALANZAS Y EMPRESAS ---
 def obtener_archivos_balanzas():
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     if archivos:
@@ -34,7 +34,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- PLANTILLA DE EXCEL ---
+# --- LEER ESTRUCTURA Y FÓRMULAS EXACTAS DEL FORMATO EXCEL ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -42,7 +42,7 @@ def cargar_plantilla_formato():
         return []
 
     wb = openpyxl.load_workbook(ruta_formato, data_only=False)
-    sheet = wb.active
+    sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
 
     plantilla = []
     for i in range(4, sheet.max_row + 1):
@@ -56,48 +56,46 @@ def cargar_plantilla_formato():
                 'row_idx': i,
                 'cuenta_patron': str(cta).strip() if cta else None,
                 'concepto': str(concepto).strip() if concepto else '',
-                'c_formula': str(c_formula) if c_formula else None,
-                'd_formula': str(d_formula) if d_formula else None,
+                'c_formula': str(c_formula).strip() if c_formula else None,
+                'd_formula': str(d_formula).strip() if d_formula else None,
             })
     return plantilla
 
 
-# --- EVALUADOR MATEMÁTICO DE FÓRMULAS DE EXCEL ---
-def evaluar_formula_excel(formula_str, mapa_valores):
-    if not formula_str or not str(formula_str).startswith('='):
-        return 0.0
+# --- MOTOR EVALUADOR DE FÓRMULAS EN CASCADA ---
+def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
+    vals = dict(mapa_valores)
 
-    f = (
-        str(formula_str)
-        .upper()
-        .replace(' ', '')
-        .replace('+$', '')
-        .replace('+', '')
-        .replace('$', '')
-    )
+    # Resolvemos hasta 5 pasadas para encadenar subtotales -> totales -> utilidades
+    for _ in range(5):
+        for r_idx, f_str in mapa_formulas.items():
+            f_clean = f_str.upper().replace(' ', '').replace('$', '')
 
-    # 1. SUBTOTAL(9, Cstart:Cend)
-    m_subtotal = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f)
-    if m_subtotal:
-        r_start, r_end = int(m_subtotal.group(1)), int(m_subtotal.group(2))
-        return sum(mapa_valores.get(r, 0.0) for r in range(r_start, r_end + 1))
+            # Caso 1: SUBTOTAL(9, Cstart:Cend)
+            m_sub = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f_clean)
+            if m_sub:
+                r_s, r_e = int(m_sub.group(1)), int(m_sub.group(2))
+                vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
+                continue
 
-    # 2. Reemplazo de referencias de celdas C<numero>
-    def reemplazar_celda(match):
-        r_num = int(match.group(1))
-        return str(mapa_valores.get(r_num, 0.0))
+            # Caso 2: Expresiones algebraicas de celdas (=+C29+C23+C17+C11 o =+C7+C19-C33-C58+C45)
+            expr_raw = re.sub(r'^=\+?', '', f_clean)
 
-    expr = re.sub(r'C(\d+)', reemplazar_celda, f).lstrip('=')
+            def sustituir_celda(match):
+                r_num = int(match.group(1))
+                return str(vals.get(r_num, 0.0))
 
-    try:
-        if re.match(r'^[0-9\.\+\-\*\/\(\)\s]+$', expr):
-            return float(eval(expr))
-    except Exception:
-        pass
-    return 0.0
+            expr = re.sub(r'C(\d+)', sustituir_celda, expr_raw)
+
+            try:
+                if re.match(r'^[0-9\.\+\-\*\/\(\)\s]+$', expr):
+                    vals[r_idx] = float(eval(expr))
+            except Exception:
+                pass
+    return vals
 
 
-# --- COINCIDENCIA DE CUENTAS POR ESTRUCTURA Y NIVELES ---
+# --- COINCIDENCIA DE CUENTAS BÚSQUEDA FLEXIBLE ---
 def coincide_cuenta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA'):
         return False
@@ -105,12 +103,12 @@ def coincide_cuenta(cta_balanza, patron_template):
     cb = str(cta_balanza).strip()
     pt = str(patron_template).strip()
 
-    # Match 1: Regex con comodines
+    # 1. Regex directo
     regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
     if re.match(regex_str, cb):
         return True
 
-    # Match 2: Segmentos contables
+    # 2. Comparación por segmentos contables
     p_segs = pt.split('-')
     b_segs = cb.split('-')
 
@@ -131,7 +129,7 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Extraer balanza con índices de columnas requeridas:
+    # Cargar movimientos de la balanza
     # Col A (0): Cuenta, Col E (4): Cargos Mes, Col F (5): Abonos Mes
     # Col G (6): Cargos Acum (Deudor F), Col H (7): Abonos Acum (Acreedor F)
     balanza_records = []
@@ -155,22 +153,28 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
 
     val_mes_map = {}
     val_acum_map = {}
+    formulas_map = {}
 
-    # PASO 1: Llenar cuentas directas desde la Balanza
+    # PASO 1: Sumar saldos de las cuentas contables hojas
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
+        c_form = row['c_formula']
 
-        if patron and '?' in patron:
+        if c_form and str(c_form).startswith('='):
+            formulas_map[r_idx] = c_form
+            val_mes_map[r_idx] = 0.0
+            val_acum_map[r_idx] = 0.0
+        elif patron and '?' in patron:
             m_mes = 0.0
             m_acum = 0.0
             p_prefix = patron.split('-')[0].strip() if '-' in patron else ''
 
             for b in balanza_records:
                 if coincide_cuenta(b['cta_raw'], patron):
-                    # Fórmulas solicitadas:
-                    # Ingresos (4xxx, 720, 730): Abonos - Cargos
-                    # Costos/Gastos (5xxx, 6xxx, 710, 740): Cargos - Abonos
+                    # Fórmulas de la balanza:
+                    # Ingresos: Abonos - Cargos
+                    # Costos/Gastos: Cargos - Abonos
                     if p_prefix.startswith(('4', '720', '730')):
                         m_mes += b['abonos_m'] - b['cargos_m']
                         m_acum += b['abonos_a'] - b['cargos_a']
@@ -184,16 +188,11 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             val_mes_map[r_idx] = 0.0
             val_acum_map[r_idx] = 0.0
 
-    # PASO 2: Evaluar Fórmulas y Subtotales secuencialmente
-    for row in plantilla:
-        r_idx = row['row_idx']
-        c_form = row['c_formula']
+    # PASO 2: Resolver la cascada completa de fórmulas de Excel
+    val_mes_map = resolver_todas_las_formulas(val_mes_map, formulas_map)
+    val_acum_map = resolver_todas_las_formulas(val_acum_map, formulas_map)
 
-        if c_form and str(c_form).startswith('='):
-            val_mes_map[r_idx] = evaluar_formula_excel(c_form, val_mes_map)
-            val_acum_map[r_idx] = evaluar_formula_excel(c_form, val_acum_map)
-
-    # PASO 3: Construir reporte final con Porcentajes %
+    # PASO 3: Construir el DataFrame final y calcular Porcentajes % sobre Ventas Netas Totales (Fila 91)
     reporte = []
     ventas_totales_mes = val_mes_map.get(91, 0.0) or 1.0
     ventas_totales_acum = val_acum_map.get(91, 0.0) or 1.0
@@ -207,18 +206,18 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
         v_m = val_mes_map.get(r_idx, 0.0)
         v_a = val_acum_map.get(r_idx, 0.0)
 
-        # Si la fila es vacía, omitir
-        if not patron and not concepto:
+        if not patron and not concepto and not c_form:
             continue
 
-        pct_mes = (v_m / ventas_totales_mes) * 100 if ventas_totales_mes else 0
+        pct_mes = (v_m / ventas_totales_mes) * 100 if ventas_totales_mes else 0.0
         pct_acum = (
-            (v_a / ventas_totales_acum) * 100 if ventas_totales_acum else 0
+            (v_a / ventas_totales_acum) * 100 if ventas_totales_acum else 0.0
         )
 
         es_formula = bool(c_form and str(c_form).startswith('='))
         es_cuenta = bool(patron and '?' in patron)
 
+        # Si no es cuenta ni fórmula (ej. títulos o separadores de sección), dejamos celdas limpias/vacías
         reporte.append({
             'CUENTA': patron if patron else '',
             'CONCEPTO': concepto,
@@ -231,7 +230,7 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ GRAFICA STREAMLIT ---
+# --- INTERFAZ STREAMLIT ---
 archivos_balanza = obtener_archivos_balanzas()
 plantilla = cargar_plantilla_formato()
 
@@ -268,7 +267,7 @@ if archivos_balanza:
                     "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz."
                 )
             else:
-                with st.spinner("Generando Estado de Resultados..."):
+                with st.spinner("Procesando Estado de Resultados..."):
                     df_er = generar_estado_resultados_completo(
                         df_balanza, plantilla
                     )
