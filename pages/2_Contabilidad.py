@@ -1,5 +1,7 @@
 import glob
 import os
+import re
+import openpyxl
 import pandas as pd
 import streamlit as st
 
@@ -30,189 +32,131 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- LÓGICA DEL ESTADO DE RESULTADOS ---
-def generar_estado_resultados(df):
-    """Procesa la balanza por índices de columna (A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7)
+# --- CARGAR PLANTILLA EXACTA DE EXCEL ---
+@st.cache_data(ttl=3600)
+def cargar_plantilla_formato():
+    ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
+    if not os.path.exists(ruta_formato):
+        return []
 
-    Aplica la fórmula contable indicada para Del Mes y Acumulado.
-    """
-    try:
-        # Copia de trabajo
-        data = df.copy()
+    wb = openpyxl.load_workbook(ruta_formato, data_only=True)
+    sheet = wb.active
 
-        # Aseguramos que trabajamos con filas numéricas a partir de donde empiezan las cuentas
-        # Columna A (0): Cuenta, Columna B (1): Nombre
-        # Columna E (4): Cargos Mes, Columna F (5): Abonos Mes
-        # Columna G (6): Cargos Acum, Columna H (7): Abonos Acum
-
-        filas_procesadas = []
-
-        for idx, row in data.iterrows():
-            cta_str = str(row.iloc[0]).strip()
-            nombre_str = str(row.iloc[1]).strip()
-
-            # Filtrar solo cuentas que inicien con 4, 5 o 6
-            if cta_str.startswith(('4', '5', '6')):
-                # Convertir montos a numéricos (col E, F, G, H -> índices 4, 5, 6, 7)
-                cargos_mes = pd.to_numeric(row.iloc[4], errors='coerce') or 0
-                abonos_mes = pd.to_numeric(row.iloc[5], errors='coerce') or 0
-                cargos_acum = pd.to_numeric(row.iloc[6], errors='coerce') or 0
-                abonos_acum = pd.to_numeric(row.iloc[7], errors='coerce') or 0
-
-                # Clasificación y fórmulas exactas requeridas:
-                if cta_str.startswith('4'):
-                    tipo = 'Ingresos'
-                    monto_mes = abonos_mes - cargos_mes  # Abonos (F) - Cargos (E)
-                    monto_acum = (
-                        abonos_acum - cargos_acum
-                    )  # Abonos (H) - Cargos (G)
-                elif cta_str.startswith('5'):
-                    tipo = 'Costos'
-                    monto_mes = cargos_mes - abonos_mes  # Cargos (E) - Abonos (F)
-                    monto_acum = (
-                        cargos_acum - abonos_acum
-                    )  # Cargos (G) - Abonos (H)
-                else:  # Inicia con 6
-                    tipo = 'Gastos'
-                    monto_mes = cargos_mes - abonos_mes  # Cargos (E) - Abonos (F)
-                    monto_acum = (
-                        cargos_acum - abonos_acum
-                    )  # Cargos (G) - Abonos (H)
-
-                filas_procesadas.append({
-                    'Cuenta': cta_str,
-                    'Descripción': nombre_str,
-                    'Tipo': tipo,
-                    'Del Mes': monto_mes,
-                    'Acumulado': monto_acum,
-                })
-
-        df_res = pd.DataFrame(filas_procesadas)
-
-        if df_res.empty:
-            return pd.DataFrame()
-
-        # Agrupar por rubros
-        ingresos_df = df_res[df_res['Tipo'] == 'Ingresos']
-        costos_df = df_res[df_res['Tipo'] == 'Costos']
-        gastos_df = df_res[df_res['Tipo'] == 'Gastos']
-
-        # Totales
-        tot_ing_mes, tot_ing_acum = (
-            ingresos_df['Del Mes'].sum(),
-            ingresos_df['Acumulado'].sum(),
-        )
-        tot_cos_mes, tot_cos_acum = (
-            costos_df['Del Mes'].sum(),
-            costos_df['Acumulado'].sum(),
-        )
-        tot_gas_mes, tot_gas_acum = (
-            gastos_df['Del Mes'].sum(),
-            gastos_df['Acumulado'].sum(),
-        )
-
-        util_bruta_mes = tot_ing_mes - tot_cos_mes
-        util_bruta_acum = tot_ing_acum - tot_cos_acum
-
-        util_op_mes = util_bruta_mes - tot_gas_mes
-        util_op_acum = util_bruta_acum - tot_gas_acum
-
-        # Construcción final del reporte
-        tabla_final = []
-
-        # --- INGRESOS ---
-        tabla_final.append({
-            'Concepto': 'INGRESOS',
-            'Del Mes': None,
-            'Acumulado': None,
-        })
-        for _, r in ingresos_df.iterrows():
-            tabla_final.append({
-                'Concepto': f"  {r['Cuenta']} - {r['Descripción']}",
-                'Del Mes': r['Del Mes'],
-                'Acumulado': r['Acumulado'],
+    filas_plantilla = []
+    for i in range(4, sheet.max_row + 1):
+        cta = sheet.cell(row=i, column=1).value
+        concepto = sheet.cell(row=i, column=2).value
+        if cta or concepto:
+            filas_plantilla.append({
+                'row_idx': i,
+                'cuenta_patron': str(cta).strip() if cta else None,
+                'concepto': str(concepto).strip() if concepto else '',
             })
-        tabla_final.append({
-            'Concepto': 'TOTAL INGRESOS',
-            'Del Mes': tot_ing_mes,
-            'Acumulado': tot_ing_acum,
-        })
-        tabla_final.append(
-            {'Concepto': '', 'Del Mes': None, 'Acumulado': None}
-        )
+    return filas_plantilla
 
-        # --- COSTOS ---
-        tabla_final.append({
-            'Concepto': 'COSTOS',
-            'Del Mes': None,
-            'Acumulado': None,
-        })
-        for _, r in costos_df.iterrows():
-            tabla_final.append({
-                'Concepto': f"  {r['Cuenta']} - {r['Descripción']}",
-                'Del Mes': r['Del Mes'],
-                'Acumulado': r['Acumulado'],
-            })
-        tabla_final.append({
-            'Concepto': 'TOTAL COSTOS',
-            'Del Mes': tot_cos_mes,
-            'Acumulado': tot_cos_acum,
-        })
-        tabla_final.append(
-            {'Concepto': '', 'Del Mes': None, 'Acumulado': None}
-        )
 
-        # --- UTILIDAD BRUTA ---
-        tabla_final.append({
-            'Concepto': 'UTILIDAD BRUTA',
-            'Del Mes': util_bruta_mes,
-            'Acumulado': util_bruta_acum,
-        })
-        tabla_final.append(
-            {'Concepto': '', 'Del Mes': None, 'Acumulado': None}
-        )
+def coindice_patron(cuenta_balanza, patron):
+    if not patron or patron == 'CUENTA':
+        return False
+    # Transforma 410-?????-001-0000 a Regex
+    regex_patron = f"^{patron.replace('?', '.').replace('-', r'\\-?')}$"
+    return bool(re.match(regex_patron, str(cuenta_balanza).strip()))
 
-        # --- GASTOS ---
-        tabla_final.append({
-            'Concepto': 'GASTOS DE OPERACIÓN',
-            'Del Mes': None,
-            'Acumulado': None,
-        })
-        for _, r in gastos_df.iterrows():
-            tabla_final.append({
-                'Concepto': f"  {r['Cuenta']} - {r['Descripción']}",
-                'Del Mes': r['Del Mes'],
-                'Acumulado': r['Acumulado'],
-            })
-        tabla_final.append({
-            'Concepto': 'TOTAL GASTOS DE OPERACIÓN',
-            'Del Mes': tot_gas_mes,
-            'Acumulado': tot_gas_acum,
-        })
-        tabla_final.append(
-            {'Concepto': '', 'Del Mes': None, 'Acumulado': None}
-        )
 
-        # --- UTILIDAD DE OPERACIÓN ---
-        tabla_final.append({
-            'Concepto': 'UTILIDAD DE OPERACIÓN',
-            'Del Mes': util_op_mes,
-            'Acumulado': util_op_acum,
-        })
-
-        return pd.DataFrame(tabla_final)
-
-    except Exception as e:
-        st.error(f"Error procesando la balanza: {e}")
+# --- GENERAR ESTADO DE RESULTADOS BASADO EN EL FORMATO ---
+def generar_estado_resultados_formato(df_balanza, plantilla):
+    if not plantilla or df_balanza.empty:
         return pd.DataFrame()
+
+    # Mapeo de columnas por índice en la balanza
+    # Col A (0): Cuenta, Col B (1): Nombre
+    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
+    # Col G (6): Cargos Acum, Col H (7): Abonos Acum
+
+    cuentas_balanza = []
+    for idx, row in df_balanza.iterrows():
+        cta = str(row.iloc[0]).strip()
+        cargos_mes = pd.to_numeric(row.iloc[4], errors='coerce') or 0
+        abonos_mes = pd.to_numeric(row.iloc[5], errors='coerce') or 0
+        cargos_acum = pd.to_numeric(row.iloc[6], errors='coerce') or 0
+        abonos_acum = pd.to_numeric(row.iloc[7], errors='coerce') or 0
+
+        # Determinación de fórmula por inicio de cuenta
+        if cta.startswith(('4', '720', '730')):
+            val_mes = abonos_mes - cargos_mes  # Ingresos Del Mes
+            val_acum = abonos_acum - cargos_acum  # Ingresos Acumulado
+        else:
+            val_mes = cargos_mes - abonos_mes  # Costos/Gastos Del Mes
+            val_acum = cargos_acum - abonos_acum  # Costos/Gastos Acumulado
+
+        cuentas_balanza.append({
+            'cuenta': cta,
+            'val_mes': val_mes,
+            'val_acum': val_acum,
+        })
+
+    df_cuentas = pd.DataFrame(cuentas_balanza)
+
+    # Construir el reporte respetando cada renglón de la plantilla
+    reporte = []
+    acumuladores_mes = {}
+    acumuladores_acum = {}
+
+    for row in plantilla:
+        r_idx = row['row_idx']
+        patron = row['cuenta_patron']
+        concepto = row['concepto']
+
+        # Si es encabezado principal o título
+        if patron == 'CUENTA':
+            reporte.append({
+                'CUENTA': 'CUENTA',
+                'CONCEPTO': 'CONCEPTO',
+                'DEL MES': 'DEL MES',
+                'ACUMULADO': 'ACUMULADO',
+                'es_total': True,
+            })
+            continue
+
+        # Renglón de cuenta individual
+        if patron and '?' in patron:
+            coincidencias = df_cuentas[
+                df_cuentas['cuenta'].apply(
+                    lambda c: coindice_patron(c, patron)
+                )
+            ]
+            m_mes = coincidencias['val_mes'].sum()
+            m_acum = coincidencias['val_acum'].sum()
+
+            acumuladores_mes[r_idx] = m_mes
+            acumuladores_acum[r_idx] = m_acum
+
+            reporte.append({
+                'CUENTA': patron,
+                'CONCEPTO': concepto,
+                'DEL MES': m_mes,
+                'ACUMULADO': m_acum,
+                'es_total': False,
+            })
+        else:
+            # Es una fila de Subtotal / Total / Encabezado de Sección
+            reporte.append({
+                'CUENTA': patron if patron else '',
+                'CONCEPTO': concepto,
+                'DEL MES': None,
+                'ACUMULADO': None,
+                'es_total': True,
+            })
+
+    return pd.DataFrame(reporte)
 
 
 # --- INTERFAZ PRINCIPAL ---
-
 ruta_balanza = obtener_ruta_balanza()
+plantilla_formato = cargar_plantilla_formato()
 
 if ruta_balanza and os.path.exists(ruta_balanza):
-    st.caption(f"📁 Archivo de origen: `{ruta_balanza}`")
+    st.caption(f"📁 Archivo de Origen: `{ruta_balanza}`")
 
     lista_empresas = obtener_lista_empresas(ruta_balanza)
     empresa_seleccionada = st.selectbox("Selecciona la Empresa:", lista_empresas)
@@ -238,37 +182,45 @@ if ruta_balanza and os.path.exists(ruta_balanza):
         with tab_er:
             st.subheader(f"Estado de Resultados - {empresa_seleccionada}")
 
-            df_er = generar_estado_resultados(df_balanza)
-
-            if not df_er.empty:
-                # Formatear números a moneda ($#,###.##) para presentación
-                df_er_display = df_er.copy()
-                df_er_display['Del Mes'] = df_er_display['Del Mes'].apply(
-                    lambda x: f"${x:,.2f}" if pd.notnull(x) else ""
-                )
-                df_er_display['Acumulado'] = df_er_display['Acumulado'].apply(
-                    lambda x: f"${x:,.2f}" if pd.notnull(x) else ""
-                )
-
-                st.dataframe(
-                    df_er_display,
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                # Descarga CSV
-                csv_er = df_er.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada})",
-                    data=csv_er,
-                    file_name=f"Estado_Resultados_{empresa_seleccionada}.csv",
-                    mime="text/csv",
+            if not plantilla_formato:
+                st.error(
+                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz del proyecto."
                 )
             else:
-                st.warning(
-                    "No se encontraron cuentas de resultados (4xxx, 5xxx, 6xxx) en esta pestaña."
+                df_er = generar_estado_resultados_formato(
+                    df_balanza, plantilla_formato
                 )
 
+                if not df_er.empty:
+                    # Formatear montos a moneda ($#,###.##)
+                    df_display = df_er.copy()
+
+                    def fmt(val):
+                        if pd.isnull(val) or val == '' or isinstance(val, str):
+                            return val
+                        return f"${val:,.2f}"
+
+                    df_display['DEL MES'] = df_display['DEL MES'].apply(fmt)
+                    df_display['ACUMULADO'] = df_display['ACUMULADO'].apply(
+                        fmt
+                    )
+
+                    st.dataframe(
+                        df_display.drop(columns=['es_total']),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    # Botón de Descarga
+                    csv_er = df_er.drop(columns=['es_total']).to_csv(
+                        index=False
+                    ).encode('utf-8')
+                    st.download_button(
+                        label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada})",
+                        data=csv_er,
+                        file_name=f"Estado_Resultados_{empresa_seleccionada}.csv",
+                        mime="text/csv",
+                    )
 else:
     st.error(
         "No se encontró el archivo de balanzas en la carpeta 'Balanzas/'."
