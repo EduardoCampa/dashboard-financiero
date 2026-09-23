@@ -192,7 +192,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     ws.row_dimensions[row_idx].height = 26
 
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for col in col)
+        max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 4, 16)
 
@@ -227,7 +227,6 @@ else:
 
 ruta_archivo = "Consolidado_Master.xlsx"
 
-# --- CARGA OPTIMIZADA Y SEGURA CON CACHÉ ---
 @st.cache_data
 def cargar_datos(path):
     if not os.path.exists(path):
@@ -257,9 +256,6 @@ def cargar_datos(path):
 
 df_factura, df_tesoreria, df_ordenes, df_edocuenta, df_fact_compra, df_gastos = cargar_datos(ruta_archivo)
 
-if df_factura is None or df_factura.empty:
-    st.warning(f"⚠️ No se encontró el archivo `{ruta_archivo}` o está vacío en la raíz del repositorio de GitHub. Asegúrate de incluirlo.")
-
 columnas_oc = [
     'EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument',
     'Title', 'CostCenterName', 'Currency', 'Rate', 'SubTotal',
@@ -279,6 +275,12 @@ if area_principal == "Contabilidad":
     if menu_contabilidad == "Balanza de Comprobación":
         st.markdown("### 📊 Consulta Automática de Balanzas de Comprobación")
         
+        col_btn1, col_btn2 = st.columns([6, 1])
+        with col_btn2:
+            if st.button("🔄 Refrescar"):
+                st.cache_data.clear()
+                st.rerun()
+
         carpeta_principal_balanzas = "Balanzas"
         if os.path.exists(carpeta_principal_balanzas):
             anios_disponibles = sorted([d for d in os.listdir(carpeta_principal_balanzas) if os.path.isdir(os.path.join(carpeta_principal_balanzas, d))])
@@ -331,7 +333,7 @@ if area_principal == "Contabilidad":
                     except Exception as e:
                         st.error(f"Error al leer el archivo de balanza: {e}")
                 else:
-                    st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`. Asegúrate de incluirlo en tu repositorio de GitHub.")
+                    st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`.")
         else:
             st.warning("⚠️ No se encontró la carpeta `Balanzas/` en el proyecto.")
     else:
@@ -434,14 +436,61 @@ elif area_principal == "Finanzas":
 
     elif menu == "Facturación":
         st.title("📊 Módulo de Facturación y Dashboard de Cobranza")
-        if df_factura is not None:
-            df_fact_anio = df_factura.copy()
-            if 'Total' in df_fact_anio.columns:
-                total_fact = pd.to_numeric(df_fact_anio['Total'], errors='coerce').fillna(0).sum()
-                st.metric("Total Facturado", formato_mx(total_fact))
-            st.dataframe(df_fact_anio.head(50), use_container_width=True)
+        if df_factura is not None and not df_factura.empty:
+            df_fact_filtrado = df_factura.copy()
+            
+            st.markdown("#### ⚙️ Filtros de Selección")
+            col_f1, col_f2 = st.columns(2)
+            
+            with col_f1:
+                if 'EmpresaOrigen' in df_fact_filtrado.columns:
+                    lista_empresas_fac = sorted(df_fact_filtrado['EmpresaOrigen'].dropna().unique())
+                    empresas_fac_sel = st.multiselect("Filtrar por Empresa Origen:", lista_empresas_fac, default=lista_empresas_fac, key="fac_emp")
+                    if empresas_fac_sel:
+                        df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['EmpresaOrigen'].isin(empresas_fac_sel)]
+            
+            with col_f2:
+                if 'BusinessEntityName' in df_fact_filtrado.columns:
+                    lista_cli_fac = sorted(df_fact_filtrado['BusinessEntityName'].dropna().unique())
+                    cli_fac_sel = st.multiselect("Filtrar por Cliente(s):", lista_cli_fac, default=lista_cli_fac, key="fac_cli")
+                    if cli_fac_sel:
+                        df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['BusinessEntityName'].isin(cli_fac_sel)]
 
-    elif menu in ["OC y SP", "Reporte Pagos"]:
+            st.markdown("---")
+            total_fact = pd.to_numeric(df_fact_filtrado['Total'], errors='coerce').fillna(0).sum() if 'Total' in df_fact_filtrado.columns else 0.0
+            st.metric("Total Facturado (Filtrado)", formato_mx(total_fact))
+            st.dataframe(df_fact_filtrado, use_container_width=True)
+
+    elif menu == "OC y SP":
+        st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
+        tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
+        
+        with tab_oc:
+            if df_ordenes is not None and not df_ordenes.empty:
+                df_oc_f = df_ordenes.copy()
+                st.markdown("#### ⚙️ Filtros Orden de Compra")
+                if 'EmpresaOrigen' in df_oc_f.columns:
+                    l_emp_oc = sorted(df_oc_f['EmpresaOrigen'].dropna().unique())
+                    e_oc_sel = st.multiselect("Empresa Origen (OC):", l_emp_oc, default=l_emp_oc, key="oc_emp_f")
+                    if e_oc_sel:
+                        df_oc_f = df_oc_f[df_oc_f['EmpresaOrigen'].isin(e_oc_sel)]
+                st.dataframe(df_oc_f[[c for c in columnas_oc if c in df_oc_f.columns]], use_container_width=True)
+                
+        with tab_sp:
+            if df_tesoreria is not None and not df_tesoreria.empty:
+                df_sp_f = df_tesoreria.copy()
+                st.markdown("#### ⚙️ Filtros Solicitudes de Pago")
+                if 'EmpresaOrigen' in df_sp_f.columns:
+                    l_emp_sp = sorted(df_sp_f['EmpresaOrigen'].dropna().unique())
+                    e_sp_sel = st.multiselect("Empresa Origen (SP):", l_emp_sp, default=l_emp_sp, key="sp_emp_f")
+                    if e_sp_sel:
+                        df_sp_f = df_sp_f[df_sp_f['EmpresaOrigen'].isin(e_sp_sel)]
+                st.dataframe(df_sp_f[[c for c in columnas_sp if c in df_sp_f.columns]], use_container_width=True)
+
+    elif menu == "Reporte Pagos":
+        st.title("📋 Reporte Ejecutivo de Pagos con Saldo Pendiente")
+        st.markdown("### Muestra exclusivamente las OC y SP que tienen saldo pendiente real (> $1.00)")
+
         df_oc_base = pd.DataFrame()
         if df_ordenes is not None:
             df_oc_base = df_ordenes.copy()
@@ -449,38 +498,30 @@ elif area_principal == "Finanzas":
                 col_uuid_fc = 'UUID' if 'UUID' in df_fact_compra.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in df_fact_compra.columns else None)
                 col_total_fc = 'Total' if 'Total' in df_fact_compra.columns else None
                 col_docid_fc = 'DocumentID' if 'DocumentID' in df_fact_compra.columns else None
-                
                 col_llave_fc = None
                 for cand in ['Solicitud de Pago', 'SolicitudPago', 'DocFolio']:
                     if cand in df_fact_compra.columns:
                         col_llave_fc = cand
                         break
-                
                 if col_llave_fc and col_uuid_fc:
                     cols_fc = [col_llave_fc, col_uuid_fc]
                     if 'EmpresaOrigen' in df_fact_compra.columns: cols_fc.append('EmpresaOrigen')
                     if col_total_fc: cols_fc.append(col_total_fc)
                     if col_docid_fc: cols_fc.append(col_docid_fc)
-                    
                     df_fc_sub = df_fact_compra[cols_fc].dropna(subset=[col_llave_fc]).copy()
                     rename_dict = {col_llave_fc: 'DocFolio_Match', col_uuid_fc: 'UUID'}
                     if col_total_fc: rename_dict[col_total_fc] = 'TotalFacturaCompra'
                     if col_docid_fc: rename_dict[col_docid_fc] = 'DocumentID_FC'
                     df_fc_sub = df_fc_sub.rename(columns=rename_dict)
-                    
                     if 'DocumentID' in df_oc_base.columns: df_oc_base = df_oc_base.drop(columns=['DocumentID'])
-                    
                     if 'EmpresaOrigen' in df_fc_sub.columns and 'EmpresaOrigen' in df_oc_base.columns:
                         df_oc_base = pd.merge(df_oc_base, df_fc_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
                     else:
                         df_oc_base = pd.merge(df_oc_base, df_fc_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
-                    
                     if 'DocumentID_FC' in df_oc_base.columns: df_oc_base['DocumentID'] = df_oc_base['DocumentID_FC']
-
             if 'UUID' not in df_oc_base.columns: df_oc_base['UUID'] = ""
             if 'TotalFacturaCompra' not in df_oc_base.columns: df_oc_base['TotalFacturaCompra'] = 0.0
             if 'DocumentID' not in df_oc_base.columns: df_oc_base['DocumentID'] = ""
-
             if df_edocuenta is not None and 'DocumentID' in df_oc_base.columns and 'DocumentID' in df_edocuenta.columns:
                 cols_edo = ['EmpresaOrigen', 'DocumentID', 'Amount', 'DateOperation'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount', 'DateOperation']
                 df_edo_sub = df_edocuenta[[c for c in cols_edo if c in df_edocuenta.columns]].copy()
@@ -490,11 +531,9 @@ elif area_principal == "Finanzas":
                     df_oc_base = pd.merge(df_oc_base, df_edo_sub, on='DocumentID', how='left')
             else:
                 df_oc_base['Amount'] = 0.0
-
             df_oc_base['Amount'] = pd.to_numeric(df_oc_base['Amount'], errors='coerce').fillna(0)
             df_oc_base['Total'] = pd.to_numeric(df_oc_base['Total'], errors='coerce').fillna(0)
             df_oc_base['TotalFacturaCompra'] = pd.to_numeric(df_oc_base['TotalFacturaCompra'], errors='coerce').fillna(0)
-            
             group_keys_oc = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_oc_base.columns else ['DocFolio']
             total_pagado_oc = df_oc_base.groupby(group_keys_oc + ['DocumentID'])['Amount'].transform('sum')
             df_oc_base['SaldoPagoOC'] = df_oc_base['TotalFacturaCompra'] - total_pagado_oc
@@ -511,44 +550,34 @@ elif area_principal == "Finanzas":
                     if candidate in df_gastos.columns:
                         col_folio_gs = candidate
                         break
-                
                 col_total_gs = 'Total' if 'Total' in df_gastos.columns else None
                 col_docid_gs = 'DocumentID' if 'DocumentID' in df_gastos.columns else None
-                
                 col_llave_gs = None
                 for cand in ['SolicitudPago', 'Solicitud de Pago', 'DocFolio']:
                     if cand in df_gastos.columns:
                         col_llave_gs = cand
                         break
-                
                 if col_llave_gs and col_folio_gs:
                     cols_gs = [col_llave_gs, col_folio_gs]
                     if 'EmpresaOrigen' in df_gastos.columns: cols_gs.append('EmpresaOrigen')
                     if col_total_gs: cols_gs.append(col_total_gs)
                     if col_docid_gs: cols_gs.append(col_docid_gs)
-                    
                     cols_gs_validas = [c for c in cols_gs if c in df_gastos.columns]
                     df_gs_sub = df_gastos[cols_gs_validas].dropna(subset=[col_llave_gs]).copy()
-                    
                     rename_gs = {col_llave_gs: 'DocFolio_Match', col_folio_gs: 'CFDIFolioFiscal'}
                     if col_total_gs: rename_gs[col_total_gs] = 'TotalGastos'
                     if col_docid_gs: rename_gs[col_docid_gs] = 'DocumentID_GS'
                     df_gs_sub = df_gs_sub.rename(columns=rename_gs)
-                    
                     if 'DocumentID' in df_sp_base.columns: df_sp_base = df_sp_base.drop(columns=['DocumentID'])
-                    
                     if 'EmpresaOrigen' in df_gs_sub.columns and 'EmpresaOrigen' in df_sp_base.columns:
                         df_sp_base = pd.merge(df_sp_base, df_gs_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
                     else:
                         df_sp_base = pd.merge(df_sp_base, df_gs_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
-                    
                     if 'CFDIFolioFiscal' in df_sp_base.columns: df_sp_base['UUID'] = df_sp_base['CFDIFolioFiscal']
                     if 'DocumentID_GS' in df_sp_base.columns: df_sp_base['DocumentID'] = df_sp_base['DocumentID_GS']
-
             if 'UUID' not in df_sp_base.columns: df_sp_base['UUID'] = ""
             if 'TotalGastos' not in df_sp_base.columns: df_sp_base['TotalGastos'] = 0.0
             if 'DocumentID' not in df_sp_base.columns: df_sp_base['DocumentID'] = ""
-
             if df_edocuenta is not None and 'DocumentID' in df_sp_base.columns and 'DocumentID' in df_edocuenta.columns:
                 cols_edo_sp = ['EmpresaOrigen', 'DocumentID', 'Amount', 'DateOperation'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount', 'DateOperation']
                 df_edo_sub_sp = df_edocuenta[[c for c in cols_edo_sp if c in df_edocuenta.columns]].copy()
@@ -558,11 +587,9 @@ elif area_principal == "Finanzas":
                     df_sp_base = pd.merge(df_sp_base, df_edo_sub_sp, on='DocumentID', how='left')
             else:
                 df_sp_base['Amount'] = 0.0
-
             df_sp_base['Amount'] = pd.to_numeric(df_sp_base['Amount'], errors='coerce').fillna(0)
             df_sp_base['Total'] = pd.to_numeric(df_sp_base['Total'], errors='coerce').fillna(0)
             df_sp_base['TotalGastos'] = pd.to_numeric(df_sp_base['TotalGastos'], errors='coerce').fillna(0)
-            
             group_keys_sp = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_sp_base.columns else ['DocFolio']
             total_pagado_por_doc = df_sp_base.groupby(group_keys_sp + ['DocumentID'])['Amount'].transform('sum')
             df_sp_base['SaldoPagoSP'] = df_sp_base['TotalGastos'] - total_pagado_por_doc
@@ -570,130 +597,107 @@ elif area_principal == "Finanzas":
             df_sp_base['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
             df_sp_base['Saldo_Pendiente'] = df_sp_base['SaldoPagoSP']
 
-        if menu == "OC y SP":
-            st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
-            tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
-            with tab_oc:
-                if not df_oc_base.empty:
-                    st.dataframe(df_oc_base[[c for c in columnas_oc if c in df_oc_base.columns]], use_container_width=True)
-            with tab_sp:
-                if not df_sp_base.empty:
-                    st.dataframe(df_sp_base[[c for c in columnas_sp if c in df_sp_base.columns]], use_container_width=True)
+        df_rep_list = []
+        if not df_oc_base.empty: df_rep_list.append(df_oc_base)
+        if not df_sp_base.empty: df_rep_list.append(df_sp_base)
 
-        elif menu == "Reporte Pagos":
-            st.title("📋 Reporte Ejecutivo de Pagos con Saldo Pendiente")
-            st.markdown("### Muestra exclusivamente las OC y SP que tienen saldo pendiente real (> $1.00)")
+        if df_rep_list:
+            df_rep_total = pd.concat(df_rep_list, ignore_index=True)
+            if 'Saldo_Pendiente' in df_rep_total.columns:
+                df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
 
-            df_rep_list = []
-            if not df_oc_base.empty: df_rep_list.append(df_oc_base)
-            if not df_sp_base.empty: df_rep_list.append(df_sp_base)
+            col_emp_name = 'EmpresaOrigen' if 'EmpresaOrigen' in df_rep_total.columns else None
+            col_prov_name = 'BusinessEntityName' if 'BusinessEntityName' in df_rep_total.columns else None
+            col_folio_name = 'DocFolio' if 'DocFolio' in df_rep_total.columns else None
+            col_currency = 'Currency' if 'Currency' in df_rep_total.columns else None
 
-            if df_rep_list:
-                df_rep_total = pd.concat(df_rep_list, ignore_index=True)
-                
-                if 'Saldo_Pendiente' in df_rep_total.columns:
-                    df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
+            if col_prov_name and col_folio_name:
+                st.markdown("#### ⚙️ Filtros de Selección Independientes")
+                lista_empresas = sorted(df_rep_total[col_emp_name].dropna().unique()) if col_emp_name else []
+                tipos_disponibles = sorted(df_rep_total['Tipo_Movimiento'].dropna().unique())
+                lista_proveedores = sorted(df_rep_total[col_prov_name].dropna().unique())
+                lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
 
-                col_emp_name = 'EmpresaOrigen' if 'EmpresaOrigen' in df_rep_total.columns else None
-                col_prov_name = 'BusinessEntityName' if 'BusinessEntityName' in df_rep_total.columns else None
-                col_folio_name = 'DocFolio' if 'DocFolio' in df_rep_total.columns else None
-                col_currency = 'Currency' if 'Currency' in df_rep_total.columns else None
+                if col_emp_name:
+                    empresas_seleccionadas = st.multiselect("Filtrar por Empresa Origen:", lista_empresas, default=lista_empresas)
+                    if empresas_seleccionadas:
+                        df_rep_total = df_rep_total[df_rep_total[col_emp_name].isin(empresas_seleccionadas)]
 
-                if col_prov_name and col_folio_name:
-                    st.markdown("#### ⚙️ Filtros de Selección Independientes")
+                tipos_seleccionados = st.multiselect("Filtrar por Tipo (OC / SP):", tipos_disponibles, default=tipos_disponibles)
+                if tipos_seleccionados:
+                    df_rep_total = df_rep_total[df_rep_total['Tipo_Movimiento'].isin(tipos_seleccionados)]
+
+                prov_seleccionados = st.multiselect("Filtrar por Proveedor(es):", lista_proveedores, default=lista_proveedores)
+                if prov_seleccionados:
+                    df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
+
+                folios_seleccionados = st.multiselect("Filtrar por Folio(s) Específico(s) (OC / SP):", lista_folios, default=lista_folios)
+                if folios_seleccionados:
+                    df_rep_total = df_rep_total[df_rep_total[col_folio_name].isin(folios_seleccionados)]
+
+                st.markdown("---")
+                col_fecha = 'DateDocument' if 'DateDocument' in df_rep_total.columns else None
+                col_desc = 'Title' if 'Title' in df_rep_total.columns else None
+
+                if not df_rep_total.empty:
+                    if col_fecha:
+                        df_rep_total['Fecha_Fmt'] = pd.to_datetime(df_rep_total[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y')
+                    else:
+                        df_rep_total['Fecha_Fmt'] = ""
+
+                    total_general_rep = df_rep_total['Saldo_Pendiente'].sum()
+                    st.markdown(f"### 💰 **Total Saldo Pendiente General:** {formato_mx(total_general_rep)}")
                     
-                    lista_empresas = sorted(df_rep_total[col_emp_name].dropna().unique()) if col_emp_name else []
-                    tipos_disponibles = sorted(df_rep_total['Tipo_Movimiento'].dropna().unique())
-                    lista_proveedores = sorted(df_rep_total[col_prov_name].dropna().unique())
-                    lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
+                    empresas_agrupadas = df_rep_total[col_emp_name].dropna().unique() if col_emp_name else ['General']
+                    empresa_para_excel = empresas_agrupadas[0] if len(empresas_agrupadas) == 1 else "Consolidado"
+                    
+                    excel_file_bytes = generar_excel_ejecutivo(df_rep_total, empresa_para_excel)
 
-                    if col_emp_name:
-                        empresas_seleccionadas = st.multiselect("Filtrar por Empresa Origen:", lista_empresas, default=lista_empresas)
-                        if empresas_seleccionadas:
-                            df_rep_total = df_rep_total[df_rep_total[col_emp_name].isin(empresas_seleccionadas)]
-
-                    tipos_seleccionados = st.multiselect("Filtrar por Tipo (OC / SP):", tipos_disponibles, default=tipos_disponibles)
-                    if tipos_seleccionados:
-                        df_rep_total = df_rep_total[df_rep_total['Tipo_Movimiento'].isin(tipos_seleccionados)]
-
-                    prov_seleccionados = st.multiselect("Filtrar por Proveedor(es):", lista_proveedores, default=lista_proveedores)
-                    if prov_seleccionados:
-                        df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
-
-                    folios_seleccionados = st.multiselect("Filtrar por Folio(s) Específico(s) (OC / SP):", lista_folios, default=lista_folios)
-                    if folios_seleccionados:
-                        df_rep_total = df_rep_total[df_rep_total[col_folio_name].isin(folios_seleccionados)]
-
+                    st.download_button(
+                        label="📥 Descargar Reporte en Excel con UUID",
+                        data=excel_file_bytes,
+                        file_name="Reporte_Ejecutivo_Pagos_UUID.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                     st.markdown("---")
 
-                    col_fecha = 'DateDocument' if 'DateDocument' in df_rep_total.columns else None
-                    col_desc = 'Title' if 'Title' in df_rep_total.columns else None
-
-                    if not df_rep_total.empty:
-                        if col_fecha:
-                            df_rep_total['Fecha_Fmt'] = pd.to_datetime(df_rep_total[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y')
-                        else:
-                            df_rep_total['Fecha_Fmt'] = ""
-
-                        total_general_rep = df_rep_total['Saldo_Pendiente'].sum()
-                        st.markdown(f"### 💰 **Total Saldo Pendiente General:** {formato_mx(total_general_rep)}")
+                    for empresa in sorted(empresas_agrupadas):
+                        df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
+                        total_empresa = df_emp_subset['Saldo_Pendiente'].sum()
                         
-                        empresas_agrupadas = df_rep_total[col_emp_name].dropna().unique() if col_emp_name else ['General']
-                        empresa_para_excel = empresas_agrupadas[0] if len(empresas_agrupadas) == 1 else "Consolidado"
-                        
-                        excel_file_bytes = generar_excel_ejecutivo(df_rep_total, empresa_para_excel)
+                        st.markdown(f"## 🏢 **{empresa}** (Saldo Total Pendiente: {formato_mx(total_empresa)})")
+                        resumen_proveedor = df_emp_subset.groupby(col_prov_name)['Saldo_Pendiente'].sum().reset_index()
+                        resumen_proveedor = resumen_proveedor.sort_values(by='Saldo_Pendiente', ascending=False)
 
-                        st.download_button(
-                            label="📥 Descargar Reporte en Excel con UUID",
-                            data=excel_file_bytes,
-                            file_name="Reporte_Ejecutivo_Pagos_UUID.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                        st.markdown("---")
-
-                        for empresa in sorted(empresas_agrupadas):
-                            df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
-                            total_empresa = df_emp_subset['Saldo_Pendiente'].sum()
+                        for _, prov_row in resumen_proveedor.iterrows():
+                            proveedor = prov_row[col_prov_name]
+                            subtotal_prov = prov_row['Saldo_Pendiente']
                             
-                            st.markdown(f"## 🏢 **{empresa}** (Saldo Total Pendiente: {formato_mx(total_empresa)})")
-                            
-                            resumen_proveedor = df_emp_subset.groupby(col_prov_name)['Saldo_Pendiente'].sum().reset_index()
-                            resumen_proveedor = resumen_proveedor.sort_values(by='Saldo_Pendiente', ascending=False)
-
-                            for _, prov_row in resumen_proveedor.iterrows():
-                                proveedor = prov_row[col_prov_name]
-                                subtotal_prov = prov_row['Saldo_Pendiente']
+                            with st.expander(f"👤 {proveedor} — Saldo Pendiente Total: {formato_mx(subtotal_prov)}", expanded=True):
+                                df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
+                                monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
                                 
-                                with st.expander(f"👤 {proveedor} — Saldo Pendiente Total: {formato_mx(subtotal_prov)}", expanded=True):
-                                    df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
+                                for moneda in monedas_del_prov:
+                                    df_det_moneda = df_det_prov[df_det_prov[col_currency] == moneda] if col_currency else df_det_prov
+                                    subtotal_moneda = df_det_moneda['Saldo_Pendiente'].sum()
                                     
-                                    monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
-                                    
-                                    for moneda in monedas_del_prov:
-                                        df_det_moneda = df_det_prov[df_det_prov[col_currency] == moneda] if col_currency else df_det_prov
-                                        subtotal_moneda = df_det_moneda['Saldo_Pendiente'].sum()
-                                        
-                                        st.markdown(f"##### 💱 Moneda: **{moneda}** — Subtotal: {formato_mx(subtotal_moneda)}")
-                                        
-                                        data_det_list = []
-                                        for _, row in df_det_moneda.iterrows():
-                                            data_det_list.append({
-                                                "Tipo": row['Tipo_Movimiento'],
-                                                "Fecha Vencimiento": row['Fecha_Fmt'],
-                                                "Folio / Documento": row[col_folio_name],
-                                                "UUID": row.get('UUID', ''),
-                                                "Moneda": row[col_currency] if col_currency and not pd.isnull(row[col_currency]) else "MXN",
-                                                "Descripción": row[col_desc] if col_desc else "",
-                                                "Saldo Pendiente": formato_mx(row['Saldo_Pendiente'])
-                                            })
-                                        
-                                        df_tabla_det = pd.DataFrame(data_det_list)
-                                        st.dataframe(df_tabla_det, use_container_width=True)
-                                        st.markdown("")
-                            st.markdown("---")
-                    else:
-                        st.warning("No hay registros que coincidan con los filtros seleccionados.")
+                                    st.markdown(f"##### 💱 Moneda: **{moneda}** — Subtotal: {formato_mx(subtotal_moneda)}")
+                                    data_det_list = []
+                                    for _, row in df_det_moneda.iterrows():
+                                        data_det_list.append({
+                                            "Tipo": row['Tipo_Movimiento'],
+                                            "Fecha Vencimiento": row['Fecha_Fmt'],
+                                            "Folio / Documento": row[col_folio_name],
+                                            "UUID": row.get('UUID', ''),
+                                            "Moneda": row[col_currency] if col_currency and not pd.isnull(row[col_currency]) else "MXN",
+                                            "Descripción": row[col_desc] if col_desc else "",
+                                            "Saldo Pendiente": formato_mx(row['Saldo_Pendiente'])
+                                        })
+                                    df_tabla_det = pd.DataFrame(data_det_list)
+                                    st.dataframe(df_tabla_det, use_container_width=True)
+                                    st.markdown("")
+                        st.markdown("---")
                 else:
-                    st.warning("Faltan columnas requeridas en los archivos.")
-            else:
-                st.warning("No hay datos cargados para generar el reporte.")
+                    st.warning("No hay registros que coincidan con los filtros seleccionados.")
+        else:
+            st.warning("No hay datos cargados para generar el reporte.")
