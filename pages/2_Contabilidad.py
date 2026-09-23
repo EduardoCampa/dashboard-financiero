@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- OBTENER ARCHIVO DE BALANZA MÁS RECIENTE ---
+# --- OBTENER RUTA DE BALANZA Y EMPRESAS ---
 def obtener_ruta_balanza():
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     if archivos:
@@ -32,131 +32,206 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- CARGAR PLANTILLA EXACTA DE EXCEL ---
+# --- CARGAR ESTRUCTURA DE LA PLANTILLA EXCEL ---
 @st.cache_data(ttl=3600)
-def cargar_plantilla_formato():
+def cargar_plantilla():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
     if not os.path.exists(ruta_formato):
         return []
 
-    wb = openpyxl.load_workbook(ruta_formato, data_only=True)
+    wb = openpyxl.load_workbook(ruta_formato, data_only=False)
     sheet = wb.active
 
-    filas_plantilla = []
+    plantilla = []
     for i in range(4, sheet.max_row + 1):
         cta = sheet.cell(row=i, column=1).value
         concepto = sheet.cell(row=i, column=2).value
-        if cta or concepto:
-            filas_plantilla.append({
+        c_formula = sheet.cell(row=i, column=3).value
+        d_formula = sheet.cell(row=i, column=4).value
+
+        if cta or concepto or c_formula:
+            plantilla.append({
                 'row_idx': i,
                 'cuenta_patron': str(cta).strip() if cta else None,
                 'concepto': str(concepto).strip() if concepto else '',
+                'c_formula': str(c_formula) if c_formula else None,
+                'd_formula': str(d_formula) if d_formula else None,
             })
-    return filas_plantilla
+    return plantilla
 
 
-def coindice_patron(cuenta_balanza, patron):
-    if not patron or patron == 'CUENTA':
-        return False
-    # Transforma 410-?????-001-0000 a Regex
-    regex_patron = f"^{patron.replace('?', '.').replace('-', r'\\-?')}$"
-    return bool(re.match(regex_patron, str(cuenta_balanza).strip()))
+# --- EVALUADOR DE FÓRMULAS EXCEL (SUBTOTALES / SUMAS / RESTAS) ---
+def evaluar_formula_excel(formula, mapa_valores):
+    if not formula or not str(formula).startswith('='):
+        return 0.0
+
+    f = (
+        str(formula)
+        .upper()
+        .replace(' ', '')
+        .replace('+$', '')
+        .replace('+', '')
+        .replace('$', '')
+    )
+
+    # Evaluar SUBTOTAL(9, Cstart:Cend)
+    m_subtotal = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f)
+    if m_subtotal:
+        r_start, r_end = int(m_subtotal.group(1)), int(m_subtotal.group(2))
+        return sum(mapa_valores.get(r, 0.0) for r in range(r_start, r_end + 1))
+
+    # Evaluar sumas/restas de celdas (ej. =+C29+C23+C17+C11)
+    def reemplazar_celda(match):
+        r_num = int(match.group(1))
+        return str(mapa_valores.get(r_num, 0.0))
+
+    expr = re.sub(r'C(\d+)', reemplazar_celda, f).lstrip('=')
+
+    try:
+        if re.match(r'^[0-9\.\+\-\*\/\(\)\s]+$', expr):
+            return float(eval(expr))
+    except Exception:
+        pass
+    return 0.0
 
 
-# --- GENERAR ESTADO DE RESULTADOS BASADO EN EL FORMATO ---
-def generar_estado_resultados_formato(df_balanza, plantilla):
+# --- MOTOR DE MATCHING FLEXIBLE Y GENERACIÓN DEL ESTADO DE RESULTADOS ---
+def generar_estado_resultados_completo(df_balanza, plantilla):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Mapeo de columnas por índice en la balanza
-    # Col A (0): Cuenta, Col B (1): Nombre
-    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
-    # Col G (6): Cargos Acum, Col H (7): Abonos Acum
-
-    cuentas_balanza = []
+    # Pre-procesar registros de la balanza
+    # Col A (0): Cuenta, Col E (4): Cargos Mes, Col F (5): Abonos Mes, Col G (6): Cargos Acum, Col H (7): Abonos Acum
+    balanza_records = []
     for idx, row in df_balanza.iterrows():
-        cta = str(row.iloc[0]).strip()
-        cargos_mes = pd.to_numeric(row.iloc[4], errors='coerce') or 0
-        abonos_mes = pd.to_numeric(row.iloc[5], errors='coerce') or 0
-        cargos_acum = pd.to_numeric(row.iloc[6], errors='coerce') or 0
-        abonos_acum = pd.to_numeric(row.iloc[7], errors='coerce') or 0
+        cta_raw = str(row.iloc[0]).strip()
+        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+            continue
 
-        # Determinación de fórmula por inicio de cuenta
-        if cta.startswith(('4', '720', '730')):
-            val_mes = abonos_mes - cargos_mes  # Ingresos Del Mes
-            val_acum = abonos_acum - cargos_acum  # Ingresos Acumulado
-        else:
-            val_mes = cargos_mes - abonos_mes  # Costos/Gastos Del Mes
-            val_acum = cargos_acum - abonos_acum  # Costos/Gastos Acumulado
+        cargos_m = pd.to_numeric(row.iloc[4], errors='coerce') or 0
+        abonos_m = pd.to_numeric(row.iloc[5], errors='coerce') or 0
+        cargos_a = pd.to_numeric(row.iloc[6], errors='coerce') or 0
+        abonos_a = pd.to_numeric(row.iloc[7], errors='coerce') or 0
 
-        cuentas_balanza.append({
-            'cuenta': cta,
-            'val_mes': val_mes,
-            'val_acum': val_acum,
+        digits_segments = re.findall(r'\d+', cta_raw)
+        balanza_records.append({
+            'cta_raw': cta_raw,
+            'segments': digits_segments,
+            'cargos_m': cargos_m,
+            'abonos_m': abonos_m,
+            'cargos_a': cargos_a,
+            'abonos_a': abonos_a,
         })
 
-    df_cuentas = pd.DataFrame(cuentas_balanza)
+    def coincide_cuenta(b_rec, patron):
+        if not patron or '?' not in patron:
+            return False
+        p_segs = patron.split('-')
+        if len(p_segs) < 3:
+            return False
 
-    # Construir el reporte respetando cada renglón de la plantilla
+        p_prefix = p_segs[0].strip()
+        p_sub = p_segs[2].strip()
+
+        b_segs = b_rec['segments']
+        if len(b_segs) >= 3:
+            try:
+                if b_segs[0] == p_prefix and int(b_segs[2]) == int(p_sub):
+                    if len(p_segs) >= 4 and len(b_segs) >= 4:
+                        return int(b_segs[3]) == int(p_segs[3])
+                    return True
+            except ValueError:
+                pass
+
+        regex_p = "^" + patron.replace('?', '.').replace('-', r'\\-?') + "$"
+        return bool(re.match(regex_p, b_rec['cta_raw']))
+
+    val_mes_map = {}
+    val_acum_map = {}
+
+    # Paso 1: Cargar valores de cuentas base
+    for row in plantilla:
+        r_idx = row['row_idx']
+        patron = row['cuenta_patron']
+
+        if patron and '?' in patron:
+            m_mes = 0.0
+            m_acum = 0.0
+            p_prefix = patron.split('-')[0].strip() if '-' in patron else ''
+
+            for b in balanza_records:
+                if coincide_cuenta(b, patron):
+                    if p_prefix.startswith(('4', '720', '730')):
+                        m_mes += b['abonos_m'] - b['cargos_m']
+                        m_acum += b['abonos_a'] - b['cargos_a']
+                    else:
+                        m_mes += b['cargos_m'] - b['abonos_m']
+                        m_acum += b['cargos_a'] - b['abonos_a']
+
+            val_mes_map[r_idx] = m_mes
+            val_acum_map[r_idx] = m_acum
+        else:
+            val_mes_map[r_idx] = 0.0
+            val_acum_map[r_idx] = 0.0
+
+    # Paso 2: Calcular subtotales y fórmulas secuencialmente
+    for row in plantilla:
+        r_idx = row['row_idx']
+        c_form = row['c_formula']
+
+        if c_form and str(c_form).startswith('='):
+            val_mes_map[r_idx] = evaluar_formula_excel(c_form, val_mes_map)
+            val_acum_map[r_idx] = evaluar_formula_excel(c_form, val_acum_map)
+
+    # Paso 3: Armar tabla final
     reporte = []
-    acumuladores_mes = {}
-    acumuladores_acum = {}
+    ventas_totales_mes = val_mes_map.get(91, 1.0) or 1.0
+    ventas_totales_acum = val_acum_map.get(91, 1.0) or 1.0
 
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
         concepto = row['concepto']
 
-        # Si es encabezado principal o título
-        if patron == 'CUENTA':
-            reporte.append({
-                'CUENTA': 'CUENTA',
-                'CONCEPTO': 'CONCEPTO',
-                'DEL MES': 'DEL MES',
-                'ACUMULADO': 'ACUMULADO',
-                'es_total': True,
-            })
+        v_m = val_mes_map.get(r_idx, 0.0)
+        v_a = val_acum_map.get(r_idx, 0.0)
+
+        # Si la fila es únicamente título o vacía
+        if not patron and not concepto:
             continue
 
-        # Renglón de cuenta individual
-        if patron and '?' in patron:
-            coincidencias = df_cuentas[
-                df_cuentas['cuenta'].apply(
-                    lambda c: coindice_patron(c, patron)
-                )
-            ]
-            m_mes = coincidencias['val_mes'].sum()
-            m_acum = coincidencias['val_acum'].sum()
+        pct_mes = (v_m / ventas_totales_mes) * 100 if ventas_totales_mes else 0
+        pct_acum = (
+            (v_a / ventas_totales_acum) * 100 if ventas_totales_acum else 0
+        )
 
-            acumuladores_mes[r_idx] = m_mes
-            acumuladores_acum[r_idx] = m_acum
+        es_titulo = (
+            True if (not patron or patron == 'CUENTA' or 'Total' in concepto) else False
+        )
 
-            reporte.append({
-                'CUENTA': patron,
-                'CONCEPTO': concepto,
-                'DEL MES': m_mes,
-                'ACUMULADO': m_acum,
-                'es_total': False,
-            })
-        else:
-            # Es una fila de Subtotal / Total / Encabezado de Sección
-            reporte.append({
-                'CUENTA': patron if patron else '',
-                'CONCEPTO': concepto,
-                'DEL MES': None,
-                'ACUMULADO': None,
-                'es_total': True,
-            })
+        reporte.append({
+            'CUENTA': patron if patron else '',
+            'CONCEPTO': concepto,
+            'DEL MES': v_m if not (not patron and not c_form_es_valida(row['c_formula'])) else None,
+            '% MES': pct_mes if patron or c_form_es_valida(row['c_formula']) else None,
+            'ACUMULADO': v_a if not (not patron and not c_form_es_valida(row['c_formula'])) else None,
+            '% ACUM': pct_acum if patron or c_form_es_valida(row['c_formula']) else None,
+            'es_titulo': es_titulo,
+        })
 
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ PRINCIPAL ---
+def c_form_es_valida(c_form):
+    return bool(c_form and str(c_form).startswith('='))
+
+
+# --- INTERFAZ STREAMLIT ---
 ruta_balanza = obtener_ruta_balanza()
-plantilla_formato = cargar_plantilla_formato()
+plantilla = cargar_plantilla()
 
 if ruta_balanza and os.path.exists(ruta_balanza):
-    st.caption(f"📁 Archivo de Origen: `{ruta_balanza}`")
+    st.caption(f"📁 Archivo de origen: `{ruta_balanza}`")
 
     lista_empresas = obtener_lista_empresas(ruta_balanza)
     empresa_seleccionada = st.selectbox("Selecciona la Empresa:", lista_empresas)
@@ -164,57 +239,52 @@ if ruta_balanza and os.path.exists(ruta_balanza):
     if empresa_seleccionada:
         df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
 
-        # MÓDULO CON PESTAÑAS (TABS)
         tab_balanzas, tab_er = st.tabs(
             ["📑 Balanzas de Comprobación", "📈 Estado de Resultados"]
         )
 
-        # PESTAÑA 1: BALANZAS
         with tab_balanzas:
             st.subheader(f"Balanza de Comprobación - {empresa_seleccionada}")
-            st.dataframe(
-                df_balanza,
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(df_balanza, use_container_width=True, hide_index=True)
 
-        # PESTAÑA 2: ESTADO DE RESULTADOS
         with tab_er:
             st.subheader(f"Estado de Resultados - {empresa_seleccionada}")
 
-            if not plantilla_formato:
+            if not plantilla:
                 st.error(
-                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz del proyecto."
+                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz."
                 )
             else:
-                df_er = generar_estado_resultados_formato(
-                    df_balanza, plantilla_formato
-                )
-
-                if not df_er.empty:
-                    # Formatear montos a moneda ($#,###.##)
-                    df_display = df_er.copy()
-
-                    def fmt(val):
-                        if pd.isnull(val) or val == '' or isinstance(val, str):
-                            return val
-                        return f"${val:,.2f}"
-
-                    df_display['DEL MES'] = df_display['DEL MES'].apply(fmt)
-                    df_display['ACUMULADO'] = df_display['ACUMULADO'].apply(
-                        fmt
+                with st.spinner("Procesando Estado de Resultados..."):
+                    df_er = generar_estado_resultados_completo(
+                        df_balanza, plantilla
                     )
 
+                if not df_er.empty:
+
+                    def fmt_monto(val):
+                        if pd.isnull(val) or val == '':
+                            return ''
+                        return f"${val:,.2f}"
+
+                    def fmt_pct(val):
+                        if pd.isnull(val) or val == '':
+                            return ''
+                        return f"{val:.1f}%"
+
+                    df_disp = df_er.copy()
+                    df_disp['DEL MES'] = df_disp['DEL MES'].apply(fmt_monto)
+                    df_disp['% MES'] = df_disp['% MES'].apply(fmt_pct)
+                    df_disp['ACUMULADO'] = df_disp['ACUMULADO'].apply(fmt_monto)
+                    df_disp['% ACUM'] = df_disp['% ACUM'].apply(fmt_pct)
+
                     st.dataframe(
-                        df_display.drop(columns=['es_total']),
+                        df_disp.drop(columns=['es_titulo']),
                         use_container_width=True,
                         hide_index=True,
                     )
 
-                    # Botón de Descarga
-                    csv_er = df_er.drop(columns=['es_total']).to_csv(
-                        index=False
-                    ).encode('utf-8')
+                    csv_er = df_er.drop(columns=['es_titulo']).to_csv(index=False).encode('utf-8')
                     st.download_button(
                         label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada})",
                         data=csv_er,
