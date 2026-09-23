@@ -298,25 +298,35 @@ if area_principal == "Contabilidad":
             if mes_con:
                 ruta_a_consultar = os.path.join(carpeta_principal_balanzas, str(anio_con), mes_con, "Balanza.xlsx")
                 
+                st.info(f"📂 Ruta activa de consulta: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
+                
+                # Cargador alternativo/reemplazo directo por si la balanza almacenada está dañada
+                archivo_subido = st.file_uploader(f"📤 Si deseas reemplazar o actualizar la balanza de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}, súbela aquí:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
+                if archivo_subido is not None:
+                    try:
+                        os.makedirs(os.path.dirname(ruta_a_consultar), exist_ok=True)
+                        with open(ruta_a_consultar, "wb") as f:
+                            f.write(archivo_subido.getbuffer())
+                        st.success("¡Archivo reemplazado exitosamente! Recargando...")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar el nuevo archivo: {e}")
+
                 if os.path.exists(ruta_a_consultar):
-                    st.info(f"📂 Archivo detectado: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
-                    
-                    # Botón de limpieza garantizado para cualquier mes y año seleccionado
-                    if st.button("🔄 Forzar Limpieza y Recargar Balanza", key=f"btn_limpiar_{anio_con}_{mes_con}"):
-                        try:
-                            xls_raw = pd.ExcelFile(ruta_a_consultar)
-                            with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
-                                for hoja in xls_raw.sheet_names:
-                                    df_limpio = pd.read_excel(xls_raw, sheet_name=hoja, skiprows=7)
-                                    df_limpio = df_limpio.dropna(how='all')
-                                    if not df_limpio.empty:
-                                        p_col = df_limpio.columns[0]
-                                        df_limpio = df_limpio[df_limpio[p_col].notnull()]
-                                    df_limpio.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                            st.success("¡Archivo limpiado y reestructurado con éxito! Recargando...")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al limpiar el archivo: {e}")
+                    col_b1, col_b2 = st.columns(2)
+                    with col_b1:
+                        if st.button("🔄 Forzar Limpieza Estándar (Desde Fila 8)", key=f"btn_limpiar_{anio_con}_{mes_con}"):
+                            try:
+                                xls_raw = pd.ExcelFile(ruta_a_consultar)
+                                with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
+                                    for hoja in xls_raw.sheet_names:
+                                        df_limpio = pd.read_excel(xls_raw, sheet_name=hoja, skiprows=7)
+                                        df_limpio = df_limpio.dropna(how='all')
+                                        df_limpio.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
+                                st.success("¡Archivo limpiado desde fila 8! Recargando...")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al limpiar el archivo: {e}")
 
                     try:
                         xls_temp = pd.ExcelFile(ruta_a_consultar)
@@ -324,8 +334,13 @@ if area_principal == "Contabilidad":
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # Lectura directa del archivo ya limpio
+                            # 1. Intento de lectura normal
                             df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
+                            
+                            # 2. Si viene vacía o con una sola celda, leemos el contenido completo sin filtro
+                            if df_vista.empty or df_vista.dropna(how='all').empty:
+                                df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                                df_vista = df_vista.dropna(how='all')
                             
                             st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
                             st.dataframe(df_vista, use_container_width=True)
