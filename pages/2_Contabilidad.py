@@ -7,21 +7,20 @@ st.set_page_config(page_title="Módulo Contable", layout="wide")
 st.title("📊 Estados Financieros")
 
 
-# Función para cargar la lista de empresas (hojas de Excel)
+# Retornamos directamente la lista de nombres de pestañas (que sí se puede guardar en caché)
 @st.cache_data
-def cargar_datos_balanzas(ruta_archivo):
-    # Lee todas las pestañas/hojas del archivo Excel
+def obtener_pestanas_empresas(ruta_archivo):
     xls = pd.ExcelFile(ruta_archivo)
-    return xls
+    return xls.sheet_names
 
 
 archivo_balanzas = "Consolidado_Master.xlsx"
 
 if os.path.exists(archivo_balanzas):
-    excel_balanzas = cargar_datos_balanzas(archivo_balanzas)
-    lista_empresas = excel_balanzas.sheet_names
+    # Obtenemos la lista de nombres de las empresas
+    lista_empresas = obtener_pestanas_empresas(archivo_balanzas)
 
-    # Selector de empresa (cada empresa corresponde a una pestaña)
+    # Selector de empresa
     empresa_seleccionada = st.selectbox(
         "Selecciona la Empresa:", lista_empresas
     )
