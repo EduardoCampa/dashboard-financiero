@@ -303,14 +303,27 @@ if area_principal == "Contabilidad":
                         xls_temp = pd.ExcelFile(ruta_a_consultar)
                         hojas_guardadas = xls_temp.sheet_names
                         
-                        st.info(f"📂 Archivo detectado y listo: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
+                        st.info(f"📂 Archivo detectado: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # header=7 toma exactamente la fila 8 de Excel como cabecera limpia
+                            # LECTURA ROBUSTA: Intentamos leer con header=7. Si sale vacío, leemos sin header y buscamos la fila de cuentas.
                             df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=7)
-                            
                             df_vista = df_vista.dropna(how='all')
+                            
+                            if df_vista.empty or len(df_vista.columns) < 2:
+                                # Intento alternativo de lectura directa por si la estructura varió
+                                df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                                # Buscamos dinámicamente la fila donde esté la cuenta o '101-'
+                                fila_inicio = 0
+                                for idx, row in df_raw.iterrows():
+                                    val_str = str(row.values)
+                                    if "101-" in val_str or "Cuenta" in val_str:
+                                        fila_inicio = idx
+                                        break
+                                df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=fila_inicio)
+                                df_vista = df_vista.dropna(how='all')
+
                             if not df_vista.empty:
                                 primer_col = df_vista.columns[0]
                                 df_vista = df_vista[df_vista[primer_col].notnull()]
