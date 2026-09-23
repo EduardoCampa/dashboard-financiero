@@ -28,7 +28,6 @@ def cargar_facturacion():
         df_factura = pd.read_excel(ruta_archivo, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
         df_edocuenta = pd.read_excel(ruta_archivo, sheet_name='EdoCuenta') if 'EdoCuenta' in sheets else pd.DataFrame()
         
-        # Filtrar FacturaCliente estrictamente donde Delete/Deleted sea 0
         if not df_factura.empty:
             col_del_fac = 'Deleted' if 'Deleted' in df_factura.columns else ('Delete' if 'Delete' in df_factura.columns else None)
             if col_del_fac:
@@ -51,7 +50,6 @@ st.title("📊 Módulo de Facturación y Dashboard de Cobranza")
 if df_factura is not None and not df_factura.empty:
     df_fact_filtrado = df_factura.copy()
 
-    # Conexión con EdoCuenta vía DocumentID para calcular TotalPagado y SaldoPendiente
     if df_edocuenta is not None and not df_edocuenta.empty and 'DocumentID' in df_fact_filtrado.columns and 'DocumentID' in df_edocuenta.columns:
         cols_edo = ['EmpresaOrigen', 'DocumentID', 'Amount'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount']
         df_edo_sub = df_edocuenta[cols_edo].copy()

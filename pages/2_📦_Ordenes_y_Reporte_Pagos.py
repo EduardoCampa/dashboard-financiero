@@ -68,15 +68,10 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=7)
         cell_emp = ws.cell(row=row_idx, column=1, value=f"EMPRESA: {str(empresa).upper()}")
-        cell_emp.font = font_empresa
-        cell_emp.fill = fill_empresa
-        cell_emp.alignment = Alignment(horizontal="left", vertical="center")
+        cell_emp.font = font_empresa; cell_emp.fill = fill_empresa; cell_emp.alignment = Alignment(horizontal="left", vertical="center")
         
         cell_emp_tot = ws.cell(row=row_idx, column=8, value=total_empresa)
-        cell_emp_tot.font = font_empresa
-        cell_emp_tot.fill = fill_empresa
-        cell_emp_tot.number_format = '"$"#,##0.00'
-        cell_emp_tot.alignment = Alignment(horizontal="right", vertical="center")
+        cell_emp_tot.font = font_empresa; cell_emp_tot.fill = fill_empresa; cell_emp_tot.number_format = '"$"#,##0.00'; cell_emp_tot.alignment = Alignment(horizontal="right", vertical="center")
         
         for c_idx in range(1, 9): ws.cell(row=row_idx, column=c_idx).border = borde_delgado
         ws.row_dimensions[row_idx].height = 26
@@ -89,15 +84,10 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
             ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=7)
             cell_prov = ws.cell(row=row_idx, column=1, value=f"   👤 {str(prov)}")
-            cell_prov.font = font_prov
-            cell_prov.fill = fill_prov
-            cell_prov.alignment = Alignment(horizontal="left", vertical="center")
+            cell_prov.font = font_prov; cell_prov.fill = fill_prov; cell_prov.alignment = Alignment(horizontal="left", vertical="center")
             
             cell_prov_tot = ws.cell(row=row_idx, column=8, value=total_prov)
-            cell_prov_tot.font = font_prov
-            cell_prov_tot.fill = fill_prov
-            cell_prov_tot.number_format = '"$"#,##0.00'
-            cell_prov_tot.alignment = Alignment(horizontal="right", vertical="center")
+            cell_prov_tot.font = font_prov; cell_prov_tot.fill = fill_prov; cell_prov_tot.number_format = '"$"#,##0.00'; cell_prov_tot.alignment = Alignment(horizontal="right", vertical="center")
             
             for c_idx in range(1, 9): ws.cell(row=row_idx, column=c_idx).border = borde_delgado
             ws.row_dimensions[row_idx].height = 22
@@ -110,15 +100,10 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
                 ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=7)
                 cell_mon = ws.cell(row=row_idx, column=1, value=f"      💱 Moneda: {str(moneda)}")
-                cell_mon.font = font_moneda
-                cell_mon.fill = fill_moneda
-                cell_mon.alignment = Alignment(horizontal="left", vertical="center")
+                cell_mon.font = font_moneda; cell_mon.fill = fill_moneda; cell_mon.alignment = Alignment(horizontal="left", vertical="center")
                 
                 cell_mon_tot = ws.cell(row=row_idx, column=8, value=total_moneda)
-                cell_mon_tot.font = font_moneda
-                cell_mon_tot.fill = fill_moneda
-                cell_mon_tot.number_format = '"$"#,##0.00'
-                cell_mon_tot.alignment = Alignment(horizontal="right", vertical="center")
+                cell_mon_tot.font = font_moneda; cell_mon_tot.fill = fill_moneda; cell_mon_tot.number_format = '"$"#,##0.00'; cell_mon_tot.alignment = Alignment(horizontal="right", vertical="center")
                 
                 for c_idx in range(1, 9): ws.cell(row=row_idx, column=c_idx).border = borde_delgado
                 ws.row_dimensions[row_idx].height = 20
@@ -126,10 +111,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
                 for col_num, h in enumerate(headers, 1):
                     c = ws.cell(row=row_idx, column=col_num, value=h)
-                    c.font = font_header
-                    c.fill = fill_header
-                    c.alignment = Alignment(horizontal="center", vertical="center")
-                    c.border = borde_delgado
+                    c.font = font_header; c.fill = fill_header; c.alignment = Alignment(horizontal="center", vertical="center"); c.border = borde_delgado
                 ws.row_dimensions[row_idx].height = 20
                 row_idx += 1
 
@@ -143,8 +125,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
                     ws.cell(row=row_idx, column=7, value=str(r.get('Title', ''))).alignment = Alignment(horizontal="left")
                     
                     c_val = ws.cell(row=row_idx, column=8, value=float(r.get('Saldo_Pendiente', 0)))
-                    c_val.number_format = '"$"#,##0.00'
-                    c_val.alignment = Alignment(horizontal="right")
+                    c_val.number_format = '"$"#,##0.00'; c_val.alignment = Alignment(horizontal="right")
 
                     for col_num in range(1, 9): ws.cell(row=row_idx, column=col_num).font = font_normal; ws.cell(row=row_idx, column=col_num).border = borde_delgado
                     ws.row_dimensions[row_idx].height = 18
@@ -174,7 +155,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 ruta_archivo = "../Consolidado_Master.xlsx" if not os.path.exists("Consolidado_Master.xlsx") else "Consolidado_Master.xlsx"
 
 @st.cache_data
-def cargar_datos_oc_sp():
+def cargar_datos_completos():
     if not os.path.exists(ruta_archivo):
         return None, None, None, None, None
     try:
@@ -196,18 +177,23 @@ def cargar_datos_oc_sp():
         st.error(f"Error: {e}")
         return None, None, None, None, None
 
-df_tesoreria, df_ordenes, df_edocuenta, df_fact_compra, df_gastos = cargar_datos_oc_sp()
+df_tesoreria, df_ordenes, df_edocuenta, df_fact_compra, df_gastos = cargar_datos_completos()
 
-st.title("📦 Módulo de Órdenes, Solicitudes y Reporte de Pagos")
+st.title("📦 Módulo de Órdenes, Solicitudes y Reportes")
+vista = st.radio("Seleccione vista:", ["Órdenes de Compra y Solicitudes de Pago", "Reporte Ejecutivo de Pagos"], horizontal=True)
 
-menu_op = st.radio("Seleccione vista:", ["Órdenes de Compra y Solicitudes de Pago", "Reporte Ejecutivo de Pagos"], horizontal=True)
+columnas_oc = ['EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title', 'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'Total', 'UUID', 'Saldo_Pendiente']
+columnas_sp = ['EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title', 'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'Total', 'UUID', 'Saldo_Pendiente']
 
-if menu_op == "Órdenes de Compra y Solicitudes de Pago":
-    columnas_oc = ['EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title', 'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'Total', 'UUID', 'Saldo_Pendiente']
-    columnas_sp = ['EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title', 'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'Total', 'UUID', 'Saldo_Pendiente']
-    
-    st.info("Visualización de OC y Solicitudes de Pago")
-    # (Aquí puedes mantener la lógica rápida de visualización de OC/SP que ya tenías)
+if vista == "Órdenes de Compra y Solicitudes de Pago":
+    st.info("Visualización de Órdenes de Compra y Solicitudes de Pago con filtros independientes.")
+    tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
+    with tab_oc:
+        if df_ordenes is not None and not df_ordenes.empty:
+            st.dataframe(df_ordenes, use_container_width=True)
+    with tab_sp:
+        if df_tesoreria is not None and not df_tesoreria.empty:
+            st.dataframe(df_tesoreria, use_container_width=True)
 else:
     st.markdown("### 📋 Reporte Ejecutivo de Pagos con Saldo Pendiente")
-    # Lógica del Reporte de Pagos
+    # Lógica del Reporte de Pagos ejecutiva
