@@ -12,19 +12,24 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- OBTENER RUTA DE BALANZA Y EMPRESAS ---
-def obtener_ruta_balanza():
+# --- OBTENER TODAS LAS BALANZAS DISPONIBLES EN LA CARPETA 'Balanzas/' ---
+def obtener_archivos_balanzas():
+    # Busca todos los archivos Balanza.xlsx
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     if archivos:
+        # Ordenar por fecha de modificación (más reciente primero)
         archivos.sort(key=os.path.getmtime, reverse=True)
-        return archivos[0]
-    return None
+    return archivos
 
 
 @st.cache_data(ttl=300)
 def obtener_lista_empresas(ruta):
     xls = pd.ExcelFile(ruta)
-    return xls.sheet_names
+    # Filtra únicamente hojas que no sean vacías o 'Hoja1' por defecto si hay otras
+    sheets = xls.sheet_names
+    if len(sheets) > 1 and "Hoja1" in sheets:
+        sheets.remove("Hoja1")
+    return sheets
 
 
 @st.cache_data(ttl=300)
@@ -32,7 +37,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- CARGAR ESTRUCTURA DE LA PLANTILLA EXCEL ---
+# --- CARGAR PLANTILLA EXCEL ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -60,7 +65,6 @@ def cargar_plantilla():
     return plantilla
 
 
-# --- EVALUADOR DE FÓRMULAS EXCEL (SUBTOTALES / SUMAS / RESTAS) ---
 def evaluar_formula_excel(formula, mapa_valores):
     if not formula or not str(formula).startswith('='):
         return 0.0
@@ -74,13 +78,11 @@ def evaluar_formula_excel(formula, mapa_valores):
         .replace('$', '')
     )
 
-    # Evaluar SUBTOTAL(9, Cstart:Cend)
     m_subtotal = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f)
     if m_subtotal:
         r_start, r_end = int(m_subtotal.group(1)), int(m_subtotal.group(2))
         return sum(mapa_valores.get(r, 0.0) for r in range(r_start, r_end + 1))
 
-    # Evaluar sumas/restas de celdas (ej. =+C29+C23+C17+C11)
     def reemplazar_celda(match):
         r_num = int(match.group(1))
         return str(mapa_valores.get(r_num, 0.0))
@@ -95,13 +97,10 @@ def evaluar_formula_excel(formula, mapa_valores):
     return 0.0
 
 
-# --- MOTOR DE MATCHING FLEXIBLE Y GENERACIÓN DEL ESTADO DE RESULTADOS ---
 def generar_estado_resultados_completo(df_balanza, plantilla):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Pre-procesar registros de la balanza
-    # Col A (0): Cuenta, Col E (4): Cargos Mes, Col F (5): Abonos Mes, Col G (6): Cargos Acum, Col H (7): Abonos Acum
     balanza_records = []
     for idx, row in df_balanza.iterrows():
         cta_raw = str(row.iloc[0]).strip()
@@ -149,7 +148,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     val_mes_map = {}
     val_acum_map = {}
 
-    # Paso 1: Cargar valores de cuentas base
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
@@ -174,7 +172,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             val_mes_map[r_idx] = 0.0
             val_acum_map[r_idx] = 0.0
 
-    # Paso 2: Calcular subtotales y fórmulas secuencialmente
     for row in plantilla:
         r_idx = row['row_idx']
         c_form = row['c_formula']
@@ -183,7 +180,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             val_mes_map[r_idx] = evaluar_formula_excel(c_form, val_mes_map)
             val_acum_map[r_idx] = evaluar_formula_excel(c_form, val_acum_map)
 
-    # Paso 3: Armar tabla final
     reporte = []
     ventas_totales_mes = val_mes_map.get(91, 1.0) or 1.0
     ventas_totales_acum = val_acum_map.get(91, 1.0) or 1.0
@@ -196,7 +192,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
         v_m = val_mes_map.get(r_idx, 0.0)
         v_a = val_acum_map.get(r_idx, 0.0)
 
-        # Si la fila es únicamente título o vacía
         if not patron and not concepto:
             continue
 
@@ -226,15 +221,24 @@ def c_form_es_valida(c_form):
     return bool(c_form and str(c_form).startswith('='))
 
 
-# --- INTERFAZ STREAMLIT ---
-ruta_balanza = obtener_ruta_balanza()
+# --- INTERFAZ CON SELECTOR DE ARCHIVO Y MES ---
+archivos_balanza = obtener_archivos_balanzas()
 plantilla = cargar_plantilla()
 
-if ruta_balanza and os.path.exists(ruta_balanza):
-    st.caption(f"📁 Archivo de origen: `{ruta_balanza}`")
+if archivos_balanza:
+    col1, col2 = st.columns([2, 2])
+    with col1:
+        # Permite seleccionar el archivo o mes si hay varios (ej. Balanzas/2026/08/Balanza.xlsx)
+        ruta_balanza = st.selectbox(
+            "Selecciona la Balanza a consultar:",
+            archivos_balanza,
+            index=0,
+        )
 
     lista_empresas = obtener_lista_empresas(ruta_balanza)
-    empresa_seleccionada = st.selectbox("Selecciona la Empresa:", lista_empresas)
+
+    with col2:
+        empresa_seleccionada = st.selectbox("Selecciona la Empresa:", lista_empresas)
 
     if empresa_seleccionada:
         df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
@@ -293,5 +297,5 @@ if ruta_balanza and os.path.exists(ruta_balanza):
                     )
 else:
     st.error(
-        "No se encontró el archivo de balanzas en la carpeta 'Balanzas/'."
+        "No se encontró ningún archivo de balanza dentro de la carpeta 'Balanzas/'."
     )
