@@ -438,23 +438,34 @@ elif area_principal == "Finanzas":
         st.title("📊 Módulo de Facturación y Dashboard de Cobranza")
         if df_factura is not None and not df_factura.empty:
             df_fact_filtrado = df_factura.copy()
-            
+            if 'DateDocument' in df_fact_filtrado.columns:
+                df_fact_filtrado['DateDocument'] = pd.to_datetime(df_fact_filtrado['DateDocument'], errors='coerce')
+                df_fact_filtrado['Año'] = df_fact_filtrado['DateDocument'].dt.year.fillna(0).astype(int)
+            else:
+                df_fact_filtrado['Año'] = 0
+
             st.markdown("#### ⚙️ Filtros de Selección")
-            col_f1, col_f2 = st.columns(2)
+            col_f1, col_f2, col_f3 = st.columns(3)
             
             with col_f1:
                 if 'EmpresaOrigen' in df_fact_filtrado.columns:
                     lista_empresas_fac = sorted(df_fact_filtrado['EmpresaOrigen'].dropna().unique())
-                    empresas_fac_sel = st.multiselect("Filtrar por Empresa Origen:", lista_empresas_fac, default=lista_empresas_fac, key="fac_emp")
+                    empresas_fac_sel = st.multiselect("Filtrar por Empresa Origen:", lista_empresas_fac, default=[], key="fac_emp")
                     if empresas_fac_sel:
                         df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['EmpresaOrigen'].isin(empresas_fac_sel)]
             
             with col_f2:
                 if 'BusinessEntityName' in df_fact_filtrado.columns:
                     lista_cli_fac = sorted(df_fact_filtrado['BusinessEntityName'].dropna().unique())
-                    cli_fac_sel = st.multiselect("Filtrar por Cliente(s):", lista_cli_fac, default=lista_cli_fac, key="fac_cli")
+                    cli_fac_sel = st.multiselect("Filtrar por Cliente(s):", lista_cli_fac, default=[], key="fac_cli")
                     if cli_fac_sel:
                         df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['BusinessEntityName'].isin(cli_fac_sel)]
+
+            with col_f3:
+                anios_fac_disponibles = sorted([int(a) for a in df_fact_filtrado['Año'].unique() if a > 0], reverse=True)
+                anios_fac_sel = st.multiselect("Filtrar por Año(s):", anios_fac_disponibles, default=[], key="fac_anio")
+                if anios_fac_sel:
+                    df_fact_filtrado = df_fact_filtrado[df_fact_filtrado['Año'].isin(anios_fac_sel)]
 
             st.markdown("---")
             total_fact = pd.to_numeric(df_fact_filtrado['Total'], errors='coerce').fillna(0).sum() if 'Total' in df_fact_filtrado.columns else 0.0
@@ -463,28 +474,181 @@ elif area_principal == "Finanzas":
 
     elif menu == "OC y SP":
         st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
+        
+        # Procesamiento previo para calcular saldos y años en OC
+        df_oc_calc = pd.DataFrame()
+        if df_ordenes is not None and not df_ordenes.empty:
+            df_oc_calc = df_ordenes.copy()
+            if df_fact_compra is not None:
+                col_uuid_fc = 'UUID' if 'UUID' in df_fact_compra.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in df_fact_compra.columns else None)
+                col_total_fc = 'Total' if 'Total' in df_fact_compra.columns else None
+                col_docid_fc = 'DocumentID' if 'DocumentID' in df_fact_compra.columns else None
+                col_llave_fc = None
+                for cand in ['Solicitud de Pago', 'SolicitudPago', 'DocFolio']:
+                    if cand in df_fact_compra.columns:
+                        col_llave_fc = cand
+                        break
+                if col_llave_fc and col_uuid_fc:
+                    cols_fc = [col_llave_fc, col_uuid_fc]
+                    if 'EmpresaOrigen' in df_fact_compra.columns: cols_fc.append('EmpresaOrigen')
+                    if col_total_fc: cols_fc.append(col_total_fc)
+                    if col_docid_fc: cols_fc.append(col_docid_fc)
+                    df_fc_sub = df_fact_compra[cols_fc].dropna(subset=[col_llave_fc]).copy()
+                    rename_dict = {col_llave_fc: 'DocFolio_Match', col_uuid_fc: 'UUID'}
+                    if col_total_fc: rename_dict[col_total_fc] = 'TotalFacturaCompra'
+                    if col_docid_fc: rename_dict[col_docid_fc] = 'DocumentID_FC'
+                    df_fc_sub = df_fc_sub.rename(columns=rename_dict)
+                    if 'DocumentID' in df_oc_calc.columns: df_oc_calc = df_oc_calc.drop(columns=['DocumentID'])
+                    if 'EmpresaOrigen' in df_fc_sub.columns and 'EmpresaOrigen' in df_oc_calc.columns:
+                        df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
+                    else:
+                        df_oc_calc = pd.merge(df_oc_calc, df_fc_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
+                    if 'DocumentID_FC' in df_oc_calc.columns: df_oc_calc['DocumentID'] = df_oc_calc['DocumentID_FC']
+            if 'UUID' not in df_oc_calc.columns: df_oc_calc['UUID'] = ""
+            if 'TotalFacturaCompra' not in df_oc_calc.columns: df_oc_calc['TotalFacturaCompra'] = 0.0
+            if 'DocumentID' not in df_oc_calc.columns: df_oc_calc['DocumentID'] = ""
+            if df_edocuenta is not None and 'DocumentID' in df_oc_calc.columns and 'DocumentID' in df_edocuenta.columns:
+                cols_edo = ['EmpresaOrigen', 'DocumentID', 'Amount', 'DateOperation'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount', 'DateOperation']
+                df_edo_sub = df_edocuenta[[c for c in cols_edo if c in df_edocuenta.columns]].copy()
+                if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_oc_calc.columns:
+                    df_oc_calc = pd.merge(df_oc_calc, df_edo_sub, on=['EmpresaOrigen', 'DocumentID'], how='left')
+                else:
+                    df_oc_calc = pd.merge(df_oc_calc, df_edo_sub, on='DocumentID', how='left')
+            else:
+                df_oc_calc['Amount'] = 0.0
+            df_oc_calc['Amount'] = pd.to_numeric(df_oc_calc['Amount'], errors='coerce').fillna(0)
+            df_oc_calc['Total'] = pd.to_numeric(df_oc_calc['Total'], errors='coerce').fillna(0)
+            df_oc_calc['TotalFacturaCompra'] = pd.to_numeric(df_oc_calc['TotalFacturaCompra'], errors='coerce').fillna(0)
+            group_keys_oc = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_oc_calc.columns else ['DocFolio']
+            total_pagado_oc = df_oc_calc.groupby(group_keys_oc + ['DocumentID'])['Amount'].transform('sum')
+            df_oc_calc['SaldoPagoOC'] = df_oc_calc['TotalFacturaCompra'] - total_pagado_oc
+            df_oc_calc['SaldoPagoOC'] = df_oc_calc['SaldoPagoOC'].apply(lambda x: max(0.0, x))
+            df_oc_calc['Saldo_Pendiente'] = df_oc_calc['SaldoPagoOC']
+
+        # Procesamiento previo para Solicitudes de Pago
+        df_sp_calc = pd.DataFrame()
+        if df_tesoreria is not None and not df_tesoreria.empty:
+            df_sp_calc = df_tesoreria.copy()
+            if df_gastos is not None:
+                col_folio_gs = None
+                for candidate in ['CFDIFolioFiscal', 'UUID', 'FolioFiscal']:
+                    if candidate in df_gastos.columns:
+                        col_folio_gs = candidate
+                        break
+                col_total_gs = 'Total' if 'Total' in df_gastos.columns else None
+                col_docid_gs = 'DocumentID' if 'DocumentID' in df_gastos.columns else None
+                col_llave_gs = None
+                for cand in ['SolicitudPago', 'Solicitud de Pago', 'DocFolio']:
+                    if cand in df_gastos.columns:
+                        col_llave_gs = cand
+                        break
+                if col_llave_gs and col_folio_gs:
+                    cols_gs = [col_llave_gs, col_folio_gs]
+                    if 'EmpresaOrigen' in df_gastos.columns: cols_gs.append('EmpresaOrigen')
+                    if col_total_gs: cols_gs.append(col_total_gs)
+                    if col_docid_gs: cols_gs.append(col_docid_gs)
+                    cols_gs_validas = [c for c in cols_gs if c in df_gastos.columns]
+                    df_gs_sub = df_gastos[cols_gs_validas].dropna(subset=[col_llave_gs]).copy()
+                    rename_gs = {col_llave_gs: 'DocFolio_Match', col_folio_gs: 'CFDIFolioFiscal'}
+                    if col_total_gs: rename_gs[col_total_gs] = 'TotalGastos'
+                    if col_docid_gs: rename_gs[col_docid_gs] = 'DocumentID_GS'
+                    df_gs_sub = df_gs_sub.rename(columns=rename_gs)
+                    if 'DocumentID' in df_sp_calc.columns: df_sp_calc = df_sp_calc.drop(columns=['DocumentID'])
+                    if 'EmpresaOrigen' in df_gs_sub.columns and 'EmpresaOrigen' in df_sp_calc.columns:
+                        df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, left_on=['EmpresaOrigen', 'DocFolio'], right_on=['EmpresaOrigen', 'DocFolio_Match'], how='left')
+                    else:
+                        df_sp_calc = pd.merge(df_sp_calc, df_gs_sub, left_on='DocFolio', right_on='DocFolio_Match', how='left')
+                    if 'CFDIFolioFiscal' in df_sp_calc.columns: df_sp_calc['UUID'] = df_sp_calc['CFDIFolioFiscal']
+                    if 'DocumentID_GS' in df_sp_calc.columns: df_sp_calc['DocumentID'] = df_sp_calc['DocumentID_GS']
+            if 'UUID' not in df_sp_calc.columns: df_sp_calc['UUID'] = ""
+            if 'TotalGastos' not in df_sp_calc.columns: df_sp_calc['TotalGastos'] = 0.0
+            if 'DocumentID' not in df_sp_calc.columns: df_sp_calc['DocumentID'] = ""
+            if df_edocuenta is not None and 'DocumentID' in df_sp_calc.columns and 'DocumentID' in df_edocuenta.columns:
+                cols_edo_sp = ['EmpresaOrigen', 'DocumentID', 'Amount', 'DateOperation'] if 'EmpresaOrigen' in df_edocuenta.columns else ['DocumentID', 'Amount', 'DateOperation']
+                df_edo_sub_sp = df_edocuenta[[c for c in cols_edo_sp if c in df_edocuenta.columns]].copy()
+                if 'EmpresaOrigen' in df_edo_sub_sp.columns and 'EmpresaOrigen' in df_sp_calc.columns:
+                    df_sp_calc = pd.merge(df_sp_calc, df_edo_sub_sp, on=['EmpresaOrigen', 'DocumentID'], how='left')
+                else:
+                    df_sp_calc = pd.merge(df_sp_calc, df_edo_sub_sp, on='DocumentID', how='left')
+            else:
+                df_sp_calc['Amount'] = 0.0
+            df_sp_calc['Amount'] = pd.to_numeric(df_sp_calc['Amount'], errors='coerce').fillna(0)
+            df_sp_calc['Total'] = pd.to_numeric(df_sp_calc['Total'], errors='coerce').fillna(0)
+            df_sp_calc['TotalGastos'] = pd.to_numeric(df_sp_calc['TotalGastos'], errors='coerce').fillna(0)
+            group_keys_sp = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_sp_calc.columns else ['DocFolio']
+            total_pagado_por_doc = df_sp_calc.groupby(group_keys_sp + ['DocumentID'])['Amount'].transform('sum')
+            df_sp_calc['SaldoPagoSP'] = df_sp_calc['TotalGastos'] - total_pagado_por_doc
+            df_sp_calc['SaldoPagoSP'] = df_sp_calc['SaldoPagoSP'].apply(lambda x: max(0.0, x))
+            df_sp_calc['Saldo_Pendiente'] = df_sp_calc['SaldoPagoSP']
+
         tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
         
         with tab_oc:
-            if df_ordenes is not None and not df_ordenes.empty:
-                df_oc_f = df_ordenes.copy()
+            if not df_oc_calc.empty:
+                df_oc_f = df_oc_calc.copy()
+                if 'DateDocument' in df_oc_f.columns:
+                    df_oc_f['DateDocument'] = pd.to_datetime(df_oc_f['DateDocument'], errors='coerce')
+                    df_oc_f['Año'] = df_oc_f['DateDocument'].dt.year.fillna(0).astype(int)
+                else:
+                    df_oc_f['Año'] = 0
+
                 st.markdown("#### ⚙️ Filtros Orden de Compra")
-                if 'EmpresaOrigen' in df_oc_f.columns:
-                    l_emp_oc = sorted(df_oc_f['EmpresaOrigen'].dropna().unique())
-                    e_oc_sel = st.multiselect("Empresa Origen (OC):", l_emp_oc, default=l_emp_oc, key="oc_emp_f")
-                    if e_oc_sel:
-                        df_oc_f = df_oc_f[df_oc_f['EmpresaOrigen'].isin(e_oc_sel)]
+                oc_c1, oc_c2, oc_c3, oc_c4 = st.columns(4)
+                
+                with oc_c1:
+                    l_emp_oc = sorted(df_oc_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_oc_f.columns else []
+                    e_oc_sel = st.multiselect("Empresa Origen (OC):", l_emp_oc, default=[], key="oc_emp_f")
+                    if e_oc_sel: df_oc_f = df_oc_f[df_oc_f['EmpresaOrigen'].isin(e_oc_sel)]
+                
+                with oc_c2:
+                    l_prov_oc = sorted(df_oc_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_oc_f.columns else []
+                    p_oc_sel = st.multiselect("Proveedor (OC):", l_prov_oc, default=[], key="oc_prov_f")
+                    if p_oc_sel: df_oc_f = df_oc_f[df_oc_f['BusinessEntityName'].isin(p_oc_sel)]
+
+                with oc_c3:
+                    l_anio_oc = sorted([int(a) for a in df_oc_f['Año'].unique() if a > 0], reverse=True)
+                    a_oc_sel = st.multiselect("Año (OC):", l_anio_oc, default=[], key="oc_anio_f")
+                    if a_oc_sel: df_oc_f = df_oc_f[df_oc_f['Año'].isin(a_oc_sel)]
+
+                with oc_c4:
+                    solo_saldo_oc = st.checkbox("Saldo pendiente > $1.00 (OC)", value=False, key="oc_saldo_chk")
+                    if solo_saldo_oc: df_oc_f = df_oc_f[df_oc_f['Saldo_Pendiente'] > 1.0]
+
+                st.markdown("---")
                 st.dataframe(df_oc_f[[c for c in columnas_oc if c in df_oc_f.columns]], use_container_width=True)
                 
         with tab_sp:
-            if df_tesoreria is not None and not df_tesoreria.empty:
-                df_sp_f = df_tesoreria.copy()
+            if not df_sp_calc.empty:
+                df_sp_f = df_sp_calc.copy()
+                if 'DateDocument' in df_sp_f.columns:
+                    df_sp_f['DateDocument'] = pd.to_datetime(df_sp_f['DateDocument'], errors='coerce')
+                    df_sp_f['Año'] = df_sp_f['DateDocument'].dt.year.fillna(0).astype(int)
+                else:
+                    df_sp_f['Año'] = 0
+
                 st.markdown("#### ⚙️ Filtros Solicitudes de Pago")
-                if 'EmpresaOrigen' in df_sp_f.columns:
-                    l_emp_sp = sorted(df_sp_f['EmpresaOrigen'].dropna().unique())
-                    e_sp_sel = st.multiselect("Empresa Origen (SP):", l_emp_sp, default=l_emp_sp, key="sp_emp_f")
-                    if e_sp_sel:
-                        df_sp_f = df_sp_f[df_sp_f['EmpresaOrigen'].isin(e_sp_sel)]
+                sp_c1, sp_c2, sp_c3, sp_c4 = st.columns(4)
+                
+                with sp_c1:
+                    l_emp_sp = sorted(df_sp_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_sp_f.columns else []
+                    e_sp_sel = st.multiselect("Empresa Origen (SP):", l_emp_sp, default=[], key="sp_emp_f")
+                    if e_sp_sel: df_sp_f = df_sp_f[df_sp_f['EmpresaOrigen'].isin(e_sp_sel)]
+                
+                with sp_c2:
+                    l_prov_sp = sorted(df_sp_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_sp_f.columns else []
+                    p_sp_sel = st.multiselect("Proveedor (SP):", l_prov_sp, default=[], key="sp_prov_f")
+                    if p_sp_sel: df_sp_f = df_sp_f[df_sp_f['BusinessEntityName'].isin(p_sp_sel)]
+
+                with sp_c3:
+                    l_anio_sp = sorted([int(a) for a in df_sp_f['Año'].unique() if a > 0], reverse=True)
+                    a_sp_sel = st.multiselect("Año (SP):", l_anio_sp, default=[], key="sp_anio_f")
+                    if a_sp_sel: df_sp_f = df_sp_f[df_sp_f['Año'].isin(a_sp_sel)]
+
+                with sp_c4:
+                    solo_saldo_sp = st.checkbox("Saldo pendiente > $1.00 (SP)", value=False, key="sp_saldo_chk")
+                    if solo_saldo_sp: df_sp_f = df_sp_f[df_sp_f['Saldo_Pendiente'] > 1.0]
+
+                st.markdown("---")
                 st.dataframe(df_sp_f[[c for c in columnas_sp if c in df_sp_f.columns]], use_container_width=True)
 
     elif menu == "Reporte Pagos":
@@ -619,19 +783,19 @@ elif area_principal == "Finanzas":
                 lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
 
                 if col_emp_name:
-                    empresas_seleccionadas = st.multiselect("Filtrar por Empresa Origen:", lista_empresas, default=lista_empresas)
+                    empresas_seleccionadas = st.multiselect("Filtrar por Empresa Origen:", lista_empresas, default=[], key="rep_emp")
                     if empresas_seleccionadas:
                         df_rep_total = df_rep_total[df_rep_total[col_emp_name].isin(empresas_seleccionadas)]
 
-                tipos_seleccionados = st.multiselect("Filtrar por Tipo (OC / SP):", tipos_disponibles, default=tipos_disponibles)
+                tipos_seleccionados = st.multiselect("Filtrar por Tipo (OC / SP):", tipos_disponibles, default=[], key="rep_tipo")
                 if tipos_seleccionados:
                     df_rep_total = df_rep_total[df_rep_total['Tipo_Movimiento'].isin(tipos_seleccionados)]
 
-                prov_seleccionados = st.multiselect("Filtrar por Proveedor(es):", lista_proveedores, default=lista_proveedores)
+                prov_seleccionados = st.multiselect("Filtrar por Proveedor(es):", lista_proveedores, default=[], key="rep_prov")
                 if prov_seleccionados:
                     df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
 
-                folios_seleccionados = st.multiselect("Filtrar por Folio(s) Específico(s) (OC / SP):", lista_folios, default=lista_folios)
+                folios_seleccionados = st.multiselect("Filtrar por Folio(s) Específico(s) (OC / SP):", lista_folios, default=[], key="rep_folio")
                 if folios_seleccionados:
                     df_rep_total = df_rep_total[df_rep_total[col_folio_name].isin(folios_seleccionados)]
 
