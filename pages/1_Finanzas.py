@@ -307,7 +307,6 @@ def cargar_datos_finanzas(path):
         df_fc = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
         df_gas = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
 
-        # Exclusión de eliminados en OC, SP, FC y Gastos
         for df_chk in [df_fc, df_gas, df_ord, df_tes]:
             if df_chk is not None and not df_chk.empty:
                 col_del = 'Deleted' if 'Deleted' in df_chk.columns else ('Delete' if 'Delete' in df_chk.columns else None)
@@ -321,10 +320,10 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CRUZADO EN 3 NIVELES (OC / SP -> FC / Gastos -> EdoCuenta) ---
+# --- PROCESAMIENTO CON RESTA EXACTA DE FACTURAGASTO / FACTURACOMPRA ---
 @st.cache_data
 def procesar_oc_sp_exacto(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
-    # 1. CÁLCULO DE ÓRDENES DE COMPRA (OC)
+    # 1. ÓRDENES DE COMPRA (OC)
     df_oc_calc = pd.DataFrame()
     if _df_ord is not None and not _df_ord.empty:
         df_oc_calc = _df_ord.copy()
@@ -375,15 +374,12 @@ def procesar_oc_sp_exacto(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
         df_oc_calc['Total'] = pd.to_numeric(df_oc_calc['Total'], errors='coerce').fillna(0)
         df_oc_calc['TotalFacturaCompra'] = pd.to_numeric(df_oc_calc['TotalFacturaCompra'], errors='coerce').fillna(0)
 
-        group_keys_oc = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_oc_calc.columns else ['DocFolio']
-        total_pagado_oc = df_oc_calc.groupby(group_keys_oc + ['DocumentID'])['Amount'].transform('sum')
-
-        df_oc_calc['SaldoPagoOC'] = df_oc_calc['TotalFacturaCompra'] - total_pagado_oc
-        df_oc_calc['SaldoPagoOC'] = df_oc_calc['SaldoPagoOC'].apply(lambda x: max(0.0, x))
+        # RESTA SOLICITADA: Total Orden de Compra menos Total Facturado en FacturaCompra
+        df_oc_calc['SaldoPagoOC'] = (df_oc_calc['Total'] - df_oc_calc['TotalFacturaCompra']).apply(lambda x: max(0.0, x))
         df_oc_calc['Saldo_Pendiente'] = df_oc_calc['SaldoPagoOC']
         df_oc_calc['Tipo_Movimiento'] = 'Orden de Compra (OC)'
 
-    # 2. CÁLCULO DE SOLICITUDES DE PAGO (SP)
+    # 2. SOLICITUDES DE PAGO (SP)
     df_sp_calc = pd.DataFrame()
     if _df_tes is not None and not _df_tes.empty:
         df_sp_calc = _df_tes.copy()
@@ -439,11 +435,8 @@ def procesar_oc_sp_exacto(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
         df_sp_calc['Total'] = pd.to_numeric(df_sp_calc['Total'], errors='coerce').fillna(0)
         df_sp_calc['TotalGastos'] = pd.to_numeric(df_sp_calc['TotalGastos'], errors='coerce').fillna(0)
 
-        group_keys_sp = ['EmpresaOrigen', 'DocFolio'] if 'EmpresaOrigen' in df_sp_calc.columns else ['DocFolio']
-        total_pagado_por_doc = df_sp_calc.groupby(group_keys_sp + ['DocumentID'])['Amount'].transform('sum')
-
-        df_sp_calc['SaldoPagoSP'] = df_sp_calc['TotalGastos'] - total_pagado_por_doc
-        df_sp_calc['SaldoPagoSP'] = df_sp_calc['SaldoPagoSP'].apply(lambda x: max(0.0, x))
+        # RESTA SOLICITADA: Total Solicitud de Pago menos Total Gastos
+        df_sp_calc['SaldoPagoSP'] = (df_sp_calc['Total'] - df_sp_calc['TotalGastos']).apply(lambda x: max(0.0, x))
         df_sp_calc['Saldo_Pendiente'] = df_sp_calc['SaldoPagoSP']
         df_sp_calc['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
 
@@ -451,21 +444,19 @@ def procesar_oc_sp_exacto(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
 df_ordenes_proc, df_tesoreria_proc = procesar_oc_sp_exacto(df_ordenes, df_tesoreria, df_fact_compra, df_gastos, df_edocuenta)
 
+# INCLUSIÓN DE DocFolio EN LAS LISTAS DE COLUMNAS A MOSTRAR
 columnas_oc_visuales = [
     'EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title',
     'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'TotalDiscount', 'TotalTax',
-    'TotalRetention', 'Total', 'TotalFacturaCompra', 'SaldoPagoOC', 'DocumentID',
-    'UUID', 'Amount'
+    'TotalRetention', 'Total', 'TotalFacturaCompra', 'DocumentID', 'UUID', 'Amount', 'SaldoPagoOC'
 ]
 
 columnas_sp_visuales = [
     'EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument', 'Title',
     'CostCenterName', 'Currency', 'Rate', 'SubTotal', 'TotalDiscount', 'TotalTax',
-    'TotalRetention', 'Total', 'TotalGastos', 'SaldoPagoSP', 'DocumentID',
-    'UUID', 'Amount'
+    'TotalRetention', 'Total', 'TotalGastos', 'DocumentID', 'UUID', 'Amount', 'SaldoPagoSP'
 ]
 
-# --- NAVEGACIÓN EN MENÚ LATERAL ---
 st.sidebar.title("💰 Módulo de Finanzas")
 st.sidebar.markdown("---")
 submodulo = st.sidebar.radio(
@@ -530,7 +521,6 @@ if submodulo == "📊 Facturación":
         df_f['SaldoFactura'] = (total_fac_val - df_f['Total_Pagos_Acumulados']).apply(lambda x: max(0.0, x))
         df_f['DateDocument'] = df_f['DateDocument_Fmt']
 
-        # Multiplica Notas de Crédito por -1
         es_nc_mask = df_f['TIPO DOC'] == 'NC'
         cols_a_restar = ['SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'SaldoFactura', 'TotalRetention']
         
