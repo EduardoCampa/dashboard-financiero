@@ -301,20 +301,19 @@ if area_principal == "Contabilidad":
                 if os.path.exists(ruta_a_consultar):
                     st.info(f"📂 Archivo detectado: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                     
-                    # Botón de autolimpieza forzada por si el archivo guardado tiene basura previa
-                    if st.button("🔄 Forzar Limpieza y Recargar Balanza"):
+                    # Botón de limpieza garantizado para cualquier mes y año seleccionado
+                    if st.button("🔄 Forzar Limpieza y Recargar Balanza", key=f"btn_limpiar_{anio_con}_{mes_con}"):
                         try:
                             xls_raw = pd.ExcelFile(ruta_a_consultar)
                             with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
                                 for hoja in xls_raw.sheet_names:
-                                    # Leemos saltando las primeras 7 filas para tomar la fila 8 limpia
                                     df_limpio = pd.read_excel(xls_raw, sheet_name=hoja, skiprows=7)
                                     df_limpio = df_limpio.dropna(how='all')
                                     if not df_limpio.empty:
                                         p_col = df_limpio.columns[0]
                                         df_limpio = df_limpio[df_limpio[p_col].notnull()]
                                     df_limpio.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                            st.success("¡Archivo limpiado y reestructurado con éxito desde la fila 8! Recargando...")
+                            st.success("¡Archivo limpiado y reestructurado con éxito! Recargando...")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al limpiar el archivo: {e}")
@@ -325,7 +324,7 @@ if area_principal == "Contabilidad":
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # Lectura limpia aplicando skiprows=7 directamente
+                            # Lectura directa del archivo ya limpio
                             df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
                             
                             st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
