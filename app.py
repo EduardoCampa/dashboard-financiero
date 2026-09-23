@@ -227,7 +227,6 @@ else:
 
 ruta_archivo = "Consolidado_Master.xlsx"
 
-@st.cache_data
 def cargar_datos(path):
     try:
         df_factura = pd.read_excel(path, sheet_name='FacturaCliente')
@@ -297,45 +296,35 @@ if area_principal == "Contabilidad":
             
             if mes_con:
                 ruta_a_consultar = os.path.join(carpeta_principal_balanzas, str(anio_con), mes_con, "Balanza.xlsx")
-                
-                st.info(f"📂 Ruta activa: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
-                
-                archivo_subido = st.file_uploader(f"📤 Sube aquí tu archivo `Balanza.xlsx` válido de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
-                if archivo_subido is not None:
-                    try:
-                        os.makedirs(os.path.dirname(ruta_a_consultar), exist_ok=True)
-                        with open(ruta_a_consultar, "wb") as f:
-                            f.write(archivo_subido.getbuffer())
-                        st.success("¡Archivo de balanza cargado correctamente! Recargando...")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error al guardar: {e}")
+                st.info(f"📂 Ruta activa de lectura automática: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
 
                 if os.path.exists(ruta_a_consultar):
                     try:
-                        tamano_archivo = os.path.getsize(ruta_a_consultar)
-                        if tamano_archivo < 1000:
-                            st.error(f"⚠️ El archivo en `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx` pesa muy poco ({tamano_archivo} bytes) y está dañado o vacío. Por favor súbelo de nuevo usando el cargador de arriba.")
-                        else:
-                            xls_temp = pd.ExcelFile(ruta_a_consultar)
-                            hojas_guardadas = xls_temp.sheet_names
+                        xls_temp = pd.ExcelFile(ruta_a_consultar)
+                        hojas_guardadas = xls_temp.sheet_names
+                        
+                        empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
+                        if empresa_sel_con:
+                            # DETECTOR INTELIGENTE AUTOMÁTICO DE ENCABEZADOS CONTPAQ
+                            df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                            fila_header = 0
+                            for idx, row in df_raw.iterrows():
+                                fila_str = str(row.values)
+                                if "Cuenta" in fila_str or "101-" in fila_str:
+                                    fila_header = idx if idx <= 4 else 0
+                                    break
                             
-                            empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
-                            if empresa_sel_con:
-                                df_raw = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
-                                df_raw = df_raw.dropna(how='all')
-                                
-                                if not df_raw.empty:
-                                    st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
-                                    st.dataframe(df_raw, use_container_width=True)
-                                else:
-                                    st.warning("⚠️ La hoja seleccionada está vacía.")
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=fila_header)
+                            df_vista = df_vista.dropna(how='all')
+                            
+                            st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
+                            st.dataframe(df_vista, use_container_width=True)
                     except Exception as e:
                         st.error(f"Error al leer el archivo de balanza: {e}")
                 else:
-                    st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta `Balanzas/{anio_con}/{mes_con}/`.")
+                    st.warning(f"⚠️ No se encontró el archivo `Balanza.xlsx` en la ruta automática `Balanzas/{anio_con}/{mes_con}/`. Asegúrate de haberlo subido en tu repositorio de GitHub.")
         else:
-            st.warning("⚠️ No se encontró la carpeta `Balanzas/`.")
+            st.warning("⚠️ No se encontró la carpeta `Balanzas/` en el proyecto.")
     else:
         st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
 
