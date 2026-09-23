@@ -4,17 +4,11 @@ import os
 
 st.set_page_config(page_title="Contabilidad - Grupo SERVYRE", layout="wide")
 
-st.sidebar.title("Sistema Auditoría SAT")
+st.sidebar.title("Contabilidad Grupo SERVYRE")
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Módulos Contables")
+menu_con = st.sidebar.radio("Seleccione módulo:", ["Polizas", "Balanza de Comprobación", "Conciliación Bancaria"], key="menu_con_sub")
 
-menu_contabilidad = st.sidebar.radio(
-    "Seleccione módulo:",
-    ["Polizas", "Balanza de Comprobación", "Conciliación Bancaria"],
-    key="menu_contabilidad_sel"
-)
-
-if menu_contabilidad == "Balanza de Comprobación":
+if menu_con == "Balanza de Comprobación":
     st.title("📚 Módulo de Contabilidad")
     st.markdown("### 📊 Consulta Automática de Balanzas de Comprobación")
     
@@ -24,7 +18,8 @@ if menu_contabilidad == "Balanza de Comprobación":
             st.cache_data.clear()
             st.rerun()
 
-    carpeta_principal_balanzas = "Balanzas"
+    carpeta_principal_balanzas = "../Balanzas" if not os.path.exists("Balanzas") else "Balanzas"
+
     if os.path.exists(carpeta_principal_balanzas):
         anios_disponibles = sorted([d for d in os.listdir(carpeta_principal_balanzas) if os.path.isdir(os.path.join(carpeta_principal_balanzas, d))])
     else:
@@ -79,4 +74,4 @@ if menu_contabilidad == "Balanza de Comprobación":
         st.warning("⚠️ No se encontró la carpeta `Balanzas/` en el proyecto.")
 else:
     st.title("📚 Módulo de Contabilidad")
-    st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
+    st.info(f"El módulo de **{menu_con}** se encuentra en desarrollo.")
