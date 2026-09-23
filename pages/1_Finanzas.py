@@ -267,6 +267,15 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
 ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
+# --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS (DELETED == 1) ---
+def filtrar_no_eliminados(df):
+    if df is None or df.empty:
+        return df
+    col_del = next((c for c in ['Deleted', 'Delete', 'deleted', 'delete'] if c in df.columns), None)
+    if col_del:
+        df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
+    return df
+
 @st.cache_data
 def cargar_datos_finanzas(path):
     if not os.path.exists(path):
@@ -276,11 +285,8 @@ def cargar_datos_finanzas(path):
         sheets = xls.sheet_names
 
         df_fac = pd.read_excel(path, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
-        if not df_fac.empty:
-            col_del_fac = 'Deleted' if 'Deleted' in df_fac.columns else ('Delete' if 'Delete' in df_fac.columns else None)
-            if col_del_fac:
-                df_fac = df_fac[pd.to_numeric(df_fac[col_del_fac], errors='coerce').fillna(0) == 0].copy()
-
+        df_fac = filtrar_no_eliminados(df_fac)
+        if df_fac is not None and not df_fac.empty:
             if 'ModuleName' in df_fac.columns:
                 df_fac['TIPO DOC'] = df_fac['ModuleName'].astype(str).apply(
                     lambda x: 'NC' if 'nota' in x.lower() or 'credito' in x.lower() or 'crédito' in x.lower() else 'F'
@@ -289,29 +295,29 @@ def cargar_datos_finanzas(path):
                 df_fac['TIPO DOC'] = 'F'
 
         df_nc = pd.read_excel(path, sheet_name='NotaCreditoCliente') if 'NotaCreditoCliente' in sheets else pd.DataFrame()
-        if not df_nc.empty:
-            col_del_nc = 'Deleted' if 'Deleted' in df_nc.columns else ('Delete' if 'Delete' in df_nc.columns else None)
-            if col_del_nc:
-                df_nc = df_nc[pd.to_numeric(df_nc[col_del_nc], errors='coerce').fillna(0) == 0].copy()
+        df_nc = filtrar_no_eliminados(df_nc)
+        if df_nc is not None and not df_nc.empty:
             df_nc['TIPO DOC'] = 'NC'
 
         df_facturacion = pd.concat([df_fac, df_nc], ignore_index=True) if not df_fac.empty or not df_nc.empty else pd.DataFrame()
 
         df_edo = pd.read_excel(path, sheet_name='EdoCuenta') if 'EdoCuenta' in sheets else pd.DataFrame()
-        if not df_edo.empty and 'Amount' in df_edo.columns:
+        df_edo = filtrar_no_eliminados(df_edo)
+        if df_edo is not None and not df_edo.empty and 'Amount' in df_edo.columns:
             df_edo['Amount'] = pd.to_numeric(df_edo['Amount'], errors='coerce').fillna(0)
             df_edo = df_edo[df_edo['Amount'] != 0].copy()
 
         df_tes = pd.read_excel(path, sheet_name='SolicitudPago') if 'SolicitudPago' in sheets else pd.DataFrame()
-        df_ord = pd.read_excel(path, sheet_name='OrdenCompra') if 'OrdenCompra' in sheets else pd.DataFrame()
-        df_fc = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
-        df_gas = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
+        df_tes = filtrar_no_eliminados(df_tes)
 
-        for df_chk in [df_fc, df_gas, df_ord, df_tes]:
-            if df_chk is not None and not df_chk.empty:
-                col_del = 'Deleted' if 'Deleted' in df_chk.columns else ('Delete' if 'Delete' in df_chk.columns else None)
-                if col_del:
-                    df_chk.drop(df_chk[pd.to_numeric(df_chk[col_del], errors='coerce').fillna(0) == 1].index, inplace=True)
+        df_ord = pd.read_excel(path, sheet_name='OrdenCompra') if 'OrdenCompra' in sheets else pd.DataFrame()
+        df_ord = filtrar_no_eliminados(df_ord)
+
+        df_fc = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
+        df_fc = filtrar_no_eliminados(df_fc)
+
+        df_gas = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
+        df_gas = filtrar_no_eliminados(df_gas)
 
         return df_facturacion, df_edo, df_tes, df_ord, df_fc, df_gas
     except Exception as e:
