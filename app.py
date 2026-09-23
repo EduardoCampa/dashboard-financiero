@@ -227,18 +227,25 @@ else:
 
 ruta_archivo = "Consolidado_Master.xlsx"
 
+# --- CARGA OPTIMIZADA Y SEGURA CON CACHÉ ---
+@st.cache_data
 def cargar_datos(path):
+    if not os.path.exists(path):
+        return None, None, None, None, None, None
     try:
-        df_factura = pd.read_excel(path, sheet_name='FacturaCliente')
-        df_tesoreria = pd.read_excel(path, sheet_name='SolicitudPago')
-        df_ordenes = pd.read_excel(path, sheet_name='OrdenCompra')
-        df_edocuenta = pd.read_excel(path, sheet_name='EdoCuenta')
+        xls = pd.ExcelFile(path)
+        sheets = xls.sheet_names
         
-        df_fact_compra = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in pd.ExcelFile(path).sheet_names else None
-        df_gastos = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in pd.ExcelFile(path).sheet_names else None
+        df_factura = pd.read_excel(path, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
+        df_tesoreria = pd.read_excel(path, sheet_name='SolicitudPago') if 'SolicitudPago' in sheets else pd.DataFrame()
+        df_ordenes = pd.read_excel(path, sheet_name='OrdenCompra') if 'OrdenCompra' in sheets else pd.DataFrame()
+        df_edocuenta = pd.read_excel(path, sheet_name='EdoCuenta') if 'EdoCuenta' in sheets else pd.DataFrame()
+        
+        df_fact_compra = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
+        df_gastos = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
         
         for df_chk in [df_fact_compra, df_gastos, df_ordenes, df_tesoreria, df_factura]:
-            if df_chk is not None:
+            if df_chk is not None and not df_chk.empty:
                 col_del = 'Deleted' if 'Deleted' in df_chk.columns else ('Delete' if 'Delete' in df_chk.columns else None)
                 if col_del:
                     df_chk.drop(df_chk[pd.to_numeric(df_chk[col_del], errors='coerce').fillna(0) == 1].index, inplace=True)
@@ -249,6 +256,9 @@ def cargar_datos(path):
         return None, None, None, None, None, None
 
 df_factura, df_tesoreria, df_ordenes, df_edocuenta, df_fact_compra, df_gastos = cargar_datos(ruta_archivo)
+
+if df_factura is None or df_factura.empty:
+    st.warning(f"⚠️ No se encontró el archivo `{ruta_archivo}` o está vacío en la raíz del repositorio de GitHub. Asegúrate de incluirlo.")
 
 columnas_oc = [
     'EmpresaOrigen', 'DocFolio', 'BusinessEntityName', 'DateDocument',
