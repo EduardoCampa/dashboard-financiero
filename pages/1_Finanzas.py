@@ -326,7 +326,7 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CON MATCH STRICTO POR EMPRESA Y FOLIO PARA OC Y SP ---
+# --- PROCESAMIENTO CON SOPORTE PARA MÚLTIPLES FACTURAS VINCULADAS ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     pagos_edo_map = {}
@@ -386,25 +386,37 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             folio_sp = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
             emp = str(row.get('EmpresaOrigen', '')).strip()
             
-            doc_id_encontrado, uuid_encontrado = "", ""
+            docs_encontrados = []
+            uuids_encontrados = []
 
+            # Múltiples coincidencias en Gastos
             if not df_gs_m.empty:
                 sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_sp) & (df_gs_m['Emp_GS'] == emp)] if 'Emp_GS' in df_gs_m.columns else df_gs_m[df_gs_m['Folio_Match'] == folio_sp]
                 if not sub_gs.empty:
-                    doc_id_encontrado = str(sub_gs.iloc[0].get('DocumentID_GS', ''))
-                    uuid_encontrado = str(sub_gs.iloc[0].get('UUID_GS', ''))
+                    for _, r_gs in sub_gs.iterrows():
+                        d_id = str(r_gs.get('DocumentID_GS', '')).strip()
+                        u_id = str(r_gs.get('UUID_GS', '')).strip()
+                        if d_id and d_id not in docs_encontrados: docs_encontrados.append(d_id)
+                        if u_id and u_id != 'nan' and u_id not in uuids_encontrados: uuids_encontrados.append(u_id)
 
-            if not doc_id_encontrado and not df_fc_m.empty:
+            # Múltiples coincidencias en FacturaCompra
+            if not df_fc_m.empty:
                 sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_sp) & (df_fc_m['Emp_FC'] == emp)] if 'Emp_FC' in df_fc_m.columns else df_fc_m[df_fc_m['Folio_Match'] == folio_sp]
                 if not sub_fc.empty:
-                    doc_id_encontrado = str(sub_fc.iloc[0].get('DocumentID_FC', ''))
-                    uuid_encontrado = str(sub_fc.iloc[0].get('UUID_FC', ''))
+                    for _, r_fc in sub_fc.iterrows():
+                        d_id = str(r_fc.get('DocumentID_FC', '')).strip()
+                        u_id = str(r_fc.get('UUID_FC', '')).strip()
+                        if d_id and d_id not in docs_encontrados: docs_encontrados.append(d_id)
+                        if u_id and u_id != 'nan' and u_id not in uuids_encontrados: uuids_encontrados.append(u_id)
 
-            doc_ids_sp.append(doc_id_encontrado)
-            uuids_sp.append(uuid_encontrado if uuid_encontrado != 'nan' else "")
+            # Suma acumulada de pagos de todos los documentos encontrados
+            monto_pagado_total = 0.0
+            for d_id in docs_encontrados:
+                monto_pagado_total += pagos_edo_map.get((emp, d_id), 0.0)
 
-            monto_pagado = pagos_edo_map.get((emp, doc_id_encontrado), 0.0) if doc_id_encontrado else 0.0
-            pagos_sp.append(monto_pagado)
+            doc_ids_sp.append(", ".join(docs_encontrados))
+            uuids_sp.append(", ".join(uuids_encontrados))
+            pagos_sp.append(monto_pagado_total)
 
         df_sp_calc['DocumentID'] = doc_ids_sp
         df_sp_calc['UUID'] = uuids_sp
@@ -415,7 +427,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
         df_sp_calc['Saldo_Pendiente'] = df_sp_calc['SaldoPagoSP']
         df_sp_calc['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
 
-    # 2. ÓRDENES DE COMPRA (OC) - APLICANDO EXACTAMENTE LAS MISMAS REGLAS
+    # 2. ÓRDENES DE COMPRA (OC) - SOPORTE MÚLTIPLES FACTURAS
     df_oc_calc = pd.DataFrame()
     if _df_ord is not None and not _df_ord.empty:
         df_oc_calc = _df_ord.copy()
@@ -426,32 +438,41 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             folio_oc = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
             emp = str(row.get('EmpresaOrigen', '')).strip()
             
-            doc_id_encontrado, uuid_encontrado = "", ""
+            docs_encontrados = []
+            uuids_encontrados = []
 
-            # BÚSQUEDA 1: En FacturaCompra filtrando por Folio + EmpresaOrigen
+            # Múltiples facturas en FacturaCompra para la misma OC
             if not df_fc_m.empty:
                 sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_oc) & (df_fc_m['Emp_FC'] == emp)] if 'Emp_FC' in df_fc_m.columns else df_fc_m[df_fc_m['Folio_Match'] == folio_oc]
                 if not sub_fc.empty:
-                    doc_id_encontrado = str(sub_fc.iloc[0].get('DocumentID_FC', ''))
-                    uuid_encontrado = str(sub_fc.iloc[0].get('UUID_FC', ''))
+                    for _, r_fc in sub_fc.iterrows():
+                        d_id = str(r_fc.get('DocumentID_FC', '')).strip()
+                        u_id = str(r_fc.get('UUID_FC', '')).strip()
+                        if d_id and d_id not in docs_encontrados: docs_encontrados.append(d_id)
+                        if u_id and u_id != 'nan' and u_id not in uuids_encontrados: uuids_encontrados.append(u_id)
 
-            # BÚSQUEDA 2: En Gastos si no se halló en FacturaCompra
-            if not doc_id_encontrado and not df_gs_m.empty:
+            # Múltiples registros en Gastos si aplica
+            if not df_gs_m.empty:
                 sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_oc) & (df_gs_m['Emp_GS'] == emp)] if 'Emp_GS' in df_gs_m.columns else df_gs_m[df_gs_m['Folio_Match'] == folio_oc]
                 if not sub_gs.empty:
-                    doc_id_encontrado = str(sub_gs.iloc[0].get('DocumentID_GS', ''))
-                    uuid_encontrado = str(sub_gs.iloc[0].get('UUID_GS', ''))
+                    for _, r_gs in sub_gs.iterrows():
+                        d_id = str(r_gs.get('DocumentID_GS', '')).strip()
+                        u_id = str(r_gs.get('UUID_GS', '')).strip()
+                        if d_id and d_id not in docs_encontrados: docs_encontrados.append(d_id)
+                        if u_id and u_id != 'nan' and u_id not in uuids_encontrados: uuids_encontrados.append(u_id)
 
-            # BÚSQUEDA 3: Conservar DocumentID nativo de la OC si no existe cruce
-            if not doc_id_encontrado and 'DocumentID' in row:
-                doc_id_encontrado = str(row.get('DocumentID', '')).replace('.0', '').strip()
+            if not docs_encontrados and 'DocumentID' in row:
+                doc_native = str(row.get('DocumentID', '')).replace('.0', '').strip()
+                if doc_native: docs_encontrados.append(doc_native)
 
-            doc_ids_oc.append(doc_id_encontrado)
-            uuids_oc.append(uuid_encontrado if uuid_encontrado != 'nan' else "")
+            # Suma acumulada de pagos en EdoCuenta para TODOS los documentos
+            monto_pagado_total = 0.0
+            for d_id in docs_encontrados:
+                monto_pagado_total += pagos_edo_map.get((emp, d_id), 0.0)
 
-            # BÚSQUEDA DE PAGOS EN EDO CUENTA (EmpresaOrigen, DocumentID)
-            monto_pagado = pagos_edo_map.get((emp, doc_id_encontrado), 0.0) if doc_id_encontrado else 0.0
-            pagos_oc.append(monto_pagado)
+            doc_ids_oc.append(", ".join(docs_encontrados))
+            uuids_oc.append(", ".join(uuids_encontrados))
+            pagos_oc.append(monto_pagado_total)
 
         df_oc_calc['DocumentID'] = doc_ids_oc
         df_oc_calc['UUID'] = uuids_oc
