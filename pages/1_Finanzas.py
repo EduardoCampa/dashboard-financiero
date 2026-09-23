@@ -22,6 +22,15 @@ def formato_mx(val):
     except (ValueError, TypeError):
         return str(val)
 
+# --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS (DELETED == 1) ---
+def filtrar_no_eliminados(df):
+    if df is None or df.empty:
+        return df
+    col_del = next((c for c in ['Deleted', 'Delete', 'deleted', 'delete'] if c in df.columns), None)
+    if col_del:
+        df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
+    return df
+
 # --- FUNCIÓN GENERAR EXCEL FACTURACIÓN ---
 def generar_excel_facturacion_ejecutivo(df_datos):
     wb = Workbook()
@@ -267,15 +276,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 
 ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
-# --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS (DELETED == 1) ---
-def filtrar_no_eliminados(df):
-    if df is None or df.empty:
-        return df
-    col_del = next((c for c in ['Deleted', 'Delete', 'deleted', 'delete'] if c in df.columns), None)
-    if col_del:
-        df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
-    return df
-
 @st.cache_data
 def cargar_datos_finanzas(path):
     if not os.path.exists(path):
@@ -326,10 +326,10 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CON MAPEO DEFINITIVO DE DOCUMENTID Y PAGOS ---
+# --- PROCESAMIENTO CON MAPEO UNÍVOCO Y STRICT MATCH POR SP Y EMPRESA ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
-    # DICCIONARIO DE PAGOS EN EDO CUENTA POR (EMPRESAORIGEN, DOCUMENTID)
+    # DICCIONARIOS DE PAGOS EN EDO CUENTA
     pagos_edo_map = {}
     if _df_edo is not None and not _df_edo.empty:
         col_doc_edo = 'DocumentID' if 'DocumentID' in _df_edo.columns else ('Document' if 'Document' in _df_edo.columns else None)
@@ -339,29 +339,18 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             df_edo_c['Amount'] = pd.to_numeric(df_edo_c['Amount'], errors='coerce').fillna(0)
             
             if 'EmpresaOrigen' in df_edo_c.columns:
-                pagos_edo_map = df_edo_c.groupby(['EmpresaOrigen', 'DocID_Clean'])['Amount'].sum().to_dict()
-            else:
-                pagos_edo_map = df_edo_c.groupby('DocID_Clean')['Amount'].sum().to_dict()
+                df_edo_c['Emp_Clean'] = df_edo_c['EmpresaOrigen'].astype(str).str.strip()
+                pagos_edo_map = df_edo_c.groupby(['Emp_Clean', 'DocID_Clean'])['Amount'].sum().to_dict()
+            
+            # Map secundario general por DocumentID
+            pagos_edo_gen_map = df_edo_c.groupby('DocID_Clean')['Amount'].sum().to_dict()
 
     # 1. SOLICITUDES DE PAGO (SP)
     df_sp_calc = pd.DataFrame()
     if _df_tes is not None and not _df_tes.empty:
         df_sp_calc = _df_tes.copy()
 
-        # PREPARAR FACTURACOMPRA
-        df_fc_m = pd.DataFrame()
-        if _df_fc is not None and not _df_fc.empty:
-            col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'DocFolio'] if c in _df_fc.columns), None)
-            col_doc_fc = 'DocumentID' if 'DocumentID' in _df_fc.columns else ('Document' if 'Document' in _df_fc.columns else None)
-            col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
-
-            if col_sp_fc and col_doc_fc:
-                df_fc_m = _df_fc.copy()
-                df_fc_m['SP_Match'] = df_fc_m[col_sp_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-                df_fc_m['DocumentID_FC'] = df_fc_m[col_doc_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-                if col_uuid_fc: df_fc_m['UUID_FC'] = df_fc_m[col_uuid_fc].astype(str).str.strip()
-
-        # PREPARAR GASTOS
+        # PREPARAR GASTOS (Primario para SP)
         df_gs_m = pd.DataFrame()
         if _df_gas is not None and not _df_gas.empty:
             col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'DocFolio'] if c in _df_gas.columns), None)
@@ -374,6 +363,19 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 df_gs_m['DocumentID_GS'] = df_gs_m[col_doc_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
                 if col_uuid_gs: df_gs_m['UUID_GS'] = df_gs_m[col_uuid_gs].astype(str).str.strip()
 
+        # PREPARAR FACTURACOMPRA (Secundario para SP)
+        df_fc_m = pd.DataFrame()
+        if _df_fc is not None and not _df_fc.empty:
+            col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'DocFolio'] if c in _df_fc.columns), None)
+            col_doc_fc = 'DocumentID' if 'DocumentID' in _df_fc.columns else ('Document' if 'Document' in _df_fc.columns else None)
+            col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
+
+            if col_sp_fc and col_doc_fc:
+                df_fc_m = _df_fc.copy()
+                df_fc_m['SP_Match'] = df_fc_m[col_sp_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+                df_fc_m['DocumentID_FC'] = df_fc_m[col_doc_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+                if col_uuid_fc: df_fc_m['UUID_FC'] = df_fc_m[col_uuid_fc].astype(str).str.strip()
+
         doc_ids_sp = []
         uuids_sp = []
         pagos_sp = []
@@ -385,19 +387,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             doc_id_encontrado = ""
             uuid_encontrado = ""
 
-            # BÚSQUEDA 1: En FacturaCompra filtrando por Folio + EmpresaOrigen
-            if not df_fc_m.empty:
-                sub_fc = df_fc_m[df_fc_m['SP_Match'] == folio_sp]
-                if emp and 'EmpresaOrigen' in sub_fc.columns:
-                    sub_fc_emp = sub_fc[sub_fc['EmpresaOrigen'].astype(str).str.strip() == emp]
-                    if not sub_fc_emp.empty: sub_fc = sub_fc_emp
-
-                if not sub_fc.empty:
-                    doc_id_encontrado = str(sub_fc.iloc[0].get('DocumentID_FC', ''))
-                    uuid_encontrado = str(sub_fc.iloc[0].get('UUID_FC', ''))
-
-            # BÚSQUEDA 2: En Gastos si no se halló en FacturaCompra
-            if not doc_id_encontrado and not df_gs_m.empty:
+            # BÚSQUEDA 1: En Gastos
+            if not df_gs_m.empty:
                 sub_gs = df_gs_m[df_gs_m['SP_Match'] == folio_sp]
                 if emp and 'EmpresaOrigen' in sub_gs.columns:
                     sub_gs_emp = sub_gs[sub_gs['EmpresaOrigen'].astype(str).str.strip() == emp]
@@ -407,16 +398,31 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                     doc_id_encontrado = str(sub_gs.iloc[0].get('DocumentID_GS', ''))
                     uuid_encontrado = str(sub_gs.iloc[0].get('UUID_GS', ''))
 
+            # BÚSQUEDA 2: En FacturaCompra
+            if not doc_id_encontrado and not df_fc_m.empty:
+                sub_fc = df_fc_m[df_fc_m['SP_Match'] == folio_sp]
+                if emp and 'EmpresaOrigen' in sub_fc.columns:
+                    sub_fc_emp = sub_fc[sub_fc['EmpresaOrigen'].astype(str).str.strip() == emp]
+                    if not sub_fc_emp.empty: sub_fc = sub_fc_emp
+
+                if not sub_fc.empty:
+                    doc_id_encontrado = str(sub_fc.iloc[0].get('DocumentID_FC', ''))
+                    uuid_encontrado = str(sub_fc.iloc[0].get('UUID_FC', ''))
+
+            # BÚSQUEDA 3: Si no se encuentra en Gastos ni FC, usar DocumentID propio de la SP
+            if not doc_id_encontrado and 'DocumentID' in row:
+                doc_id_encontrado = str(row.get('DocumentID', '')).replace('.0', '').strip()
+
             doc_ids_sp.append(doc_id_encontrado)
             uuids_sp.append(uuid_encontrado if uuid_encontrado != 'nan' else "")
 
-            # BÚSQUEDA 3: Obtener pagos en EdoCuenta por (EmpresaOrigen, DocumentID)
+            # BÚSQUEDA DE PAGOS EN EDO CUENTA
             monto_pagado = 0.0
             if doc_id_encontrado:
                 if (emp, doc_id_encontrado) in pagos_edo_map:
                     monto_pagado = pagos_edo_map[(emp, doc_id_encontrado)]
-                elif doc_id_encontrado in pagos_edo_map:
-                    monto_pagado = pagos_edo_map[doc_id_encontrado]
+                elif doc_id_encontrado in pagos_edo_gen_map:
+                    monto_pagado = pagos_edo_gen_map[doc_id_encontrado]
 
             pagos_sp.append(monto_pagado)
 
@@ -467,6 +473,9 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                     doc_id_encontrado = str(sub_fc.iloc[0].get('DocumentID_FC', ''))
                     uuid_encontrado = str(sub_fc.iloc[0].get('UUID_FC', ''))
 
+            if not doc_id_encontrado and 'DocumentID' in row:
+                doc_id_encontrado = str(row.get('DocumentID', '')).replace('.0', '').strip()
+
             doc_ids_oc.append(doc_id_encontrado)
             uuids_oc.append(uuid_encontrado if uuid_encontrado != 'nan' else "")
 
@@ -474,8 +483,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             if doc_id_encontrado:
                 if (emp, doc_id_encontrado) in pagos_edo_map:
                     monto_pagado = pagos_edo_map[(emp, doc_id_encontrado)]
-                elif doc_id_encontrado in pagos_edo_map:
-                    monto_pagado = pagos_edo_map[doc_id_encontrado]
+                elif doc_id_encontrado in pagos_edo_gen_map:
+                    monto_pagado = pagos_edo_gen_map[doc_id_encontrado]
 
             pagos_oc.append(monto_pagado)
 
