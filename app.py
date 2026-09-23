@@ -7,7 +7,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # Configuración inicial del dashboard en ancho completo
-st.set_page_config(page_title="Dashboard Financiero - Contpaq", layout="wide")
+st.set_page_config(page_title="Dashboard Financiero - Grupo SERVYRE", layout="wide")
 
 # --- REGLA FIJA ESTRICTA PARA FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
 def formato_mx(val):
@@ -300,7 +300,6 @@ if area_principal == "Contabilidad":
                 
                 st.info(f"📂 Ruta activa de consulta: `Balanzas/{anio_con}/{mes_con}/Balanza.xlsx`")
                 
-                # Cargador alternativo/reemplazo directo por si la balanza almacenada está dañada
                 archivo_subido = st.file_uploader(f"📤 Si deseas reemplazar o actualizar la balanza de {meses_dict_nombres.get(mes_con, mes_con)} {anio_con}, súbela aquí:", type=["xlsx", "xls"], key=f"uploader_{anio_con}_{mes_con}")
                 if archivo_subido is not None:
                     try:
@@ -313,34 +312,15 @@ if area_principal == "Contabilidad":
                         st.error(f"Error al guardar el nuevo archivo: {e}")
 
                 if os.path.exists(ruta_a_consultar):
-                    col_b1, col_b2 = st.columns(2)
-                    with col_b1:
-                        if st.button("🔄 Forzar Limpieza Estándar (Desde Fila 8)", key=f"btn_limpiar_{anio_con}_{mes_con}"):
-                            try:
-                                xls_raw = pd.ExcelFile(ruta_a_consultar)
-                                with pd.ExcelWriter(ruta_a_consultar, engine='openpyxl') as writer:
-                                    for hoja in xls_raw.sheet_names:
-                                        df_limpio = pd.read_excel(xls_raw, sheet_name=hoja, skiprows=7)
-                                        df_limpio = df_limpio.dropna(how='all')
-                                        df_limpio.to_excel(writer, sheet_name=str(hoja).strip()[:31], index=False)
-                                st.success("¡Archivo limpiado desde fila 8! Recargando...")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al limpiar el archivo: {e}")
-
                     try:
                         xls_temp = pd.ExcelFile(ruta_a_consultar)
                         hojas_guardadas = xls_temp.sheet_names
                         
                         empresa_sel_con = st.selectbox("Seleccione la empresa a visualizar:", hojas_guardadas, key="visor_empresa_guardada")
                         if empresa_sel_con:
-                            # 1. Intento de lectura normal
-                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con)
-                            
-                            # 2. Si viene vacía o con una sola celda, leemos el contenido completo sin filtro
-                            if df_vista.empty or df_vista.dropna(how='all').empty:
-                                df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
-                                df_vista = df_vista.dropna(how='all')
+                            # LECTURA ROBUSTA: Si el archivo viene con filas superiores, leemos sin cabecera o saltando filas dinámicamente
+                            df_vista = pd.read_excel(ruta_a_consultar, sheet_name=empresa_sel_con, header=None)
+                            df_vista = df_vista.dropna(how='all')
                             
                             st.markdown(f"#### Empresa: **{empresa_sel_con}** (Periodo: {meses_dict_nombres.get(mes_con, mes_con)} {anio_con})")
                             st.dataframe(df_vista, use_container_width=True)
@@ -354,7 +334,7 @@ if area_principal == "Contabilidad":
         st.info(f"El módulo de **{menu_contabilidad}** se encuentra en desarrollo.")
 
 elif menu == "Panel":
-    st.title("Testing Solutions S.A.")
+    st.title("Grupo SERVYRE")
     st.markdown("### 📊 Panel Ejecutivo y Consolidado General")
     if df_factura is not None and df_tesoreria is not None:
         df_dash_fact = df_factura.copy()
