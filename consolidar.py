@@ -8,6 +8,7 @@ archivo_salida = os.path.join(carpeta_destino, "Consolidado_Master.xlsx")
 
 pestanias_a_consolidar = [
     'FacturaCliente', 
+    'NotaCreditoCliente',  # Pestaña agregada
     'SolicitudPago', 
     'OrdenCompra', 
     'EdoCuenta', 
@@ -45,7 +46,6 @@ for archivo in archivos:
 print("\nGuardando archivo maestro consolidado...")
 
 try:
-    # Escribir los datos con compatibilidad total para openpyxl moderno
     with pd.ExcelWriter(archivo_salida, engine='openpyxl') as writer:
         for pestaña, lista_dfs in datos_consolidados.items():
             if lista_dfs:

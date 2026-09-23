@@ -1,0 +1,8 @@
+Ejecutar aplicaicon
+py -m streamlit run app.py
+Ejecutar el consolidado de info
+py consolidar.py
+Ejecutar actualización de exceles
+C:\Users\User\AppData\Local\Python\pythoncore-3.14-64\python.exe actualizar_reportes.py
+Cambiar carpeta
+cd C:\Users\User\Downloads\PYTHON
