@@ -317,38 +317,33 @@ def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
 
     df_disp = df_er.copy()
 
-    # Función de formato con colores para resaltar totales tipo Excel
     def aplicar_estilo_excel(row):
         styles = [''] * len(row)
         es_total = row.get('es_total', False)
         es_encabezado = row.get('es_encabezado', False)
 
         if es_total:
-            # Fondo azul oscuro / gris con negrita para totales
             styles = [
                 'font-weight: bold; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #475569; border-bottom: 2px solid #94a3b8;'
             ] * len(row)
         elif es_encabezado:
-            # Fondo suave para títulos de sección
             styles = [
                 'font-weight: bold; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
             ] * len(row)
 
         return styles
 
-    # Preparar DataFrame para presentación
     df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
 
-    # Aplicar formato de moneda y porcentaje
     styler = (
         df_clean.style.apply(aplicar_estilo_excel, axis=1)
         .format(
             {
                 col_monto: lambda x: (
-                    f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
+                    f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
                 ),
                 col_pct: lambda x: (
-                    f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
+                    f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
                 ),
             }
         )
@@ -364,32 +359,15 @@ def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- GENERADOR DE EXCEL OFICIAL (.XLSX) ---
-def exportar_excel_formateado(df_er, nombre_hoja):
+# --- GENERADOR DE EXCEL USANDO OPENPYXL (SIN REQUERIR XLSXWRITER) ---
+def exportar_excel_formateado_openpyxl(df_er, nombre_hoja):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_clean = df_er.drop(
-            columns=['es_total', 'es_encabezado'], errors='ignore'
-        )
+    df_clean = df_er.drop(
+        columns=['es_total', 'es_encabezado'], errors='ignore'
+    ).copy()
+
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_clean.to_excel(writer, sheet_name=nombre_hoja, index=False)
-
-        workbook = writer.book
-        worksheet = writer.sheets[nombre_hoja]
-
-        # Formatos Excel
-        hdr_format = workbook.add_format({
-            'bold': True,
-            'font_color': 'white',
-            'bg_color': '#1E293B',
-            'border': 1,
-        })
-        currency_format = workbook.add_format({'num_format': '$#,##0.00'})
-        pct_format = workbook.add_format({'num_format': '0.0%'})
-
-        worksheet.set_column('A:A', 22)
-        worksheet.set_column('B:B', 40)
-        worksheet.set_column('C:C', 18, currency_format)
-        worksheet.set_column('D:D', 12, pct_format)
 
     return output.getvalue()
 
@@ -457,7 +435,7 @@ if estructura:
                         df_er_mes, 'DEL MES', '% MES'
                     )
 
-                    excel_mes = exportar_excel_formateado(df_er_mes, "ER_MES")
+                    excel_mes = exportar_excel_formateado_openpyxl(df_er_mes, "ER_MES")
                     st.download_button(
                         label=f"📥 Descargar ER Mes en Excel ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
                         data=excel_mes,
@@ -483,7 +461,7 @@ if estructura:
                         df_er_acum, 'ACUMULADO', '% ACUM'
                     )
 
-                    excel_acum = exportar_excel_formateado(
+                    excel_acum = exportar_excel_formateado_openpyxl(
                         df_er_acum, "ER_ACUM"
                     )
                     st.download_button(
