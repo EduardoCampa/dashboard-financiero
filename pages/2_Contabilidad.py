@@ -19,11 +19,9 @@ def obtener_estructura_balanzas():
     estructura = []
 
     for path in archivos:
-        # Normalizar barras de ruta (Windows/Linux)
         path_norm = path.replace("\\", "/")
         partes = path_norm.split("/")
 
-        # Estructura esperada: Balanzas / AÑO / MES / Balanza.xlsx
         if len(partes) >= 4:
             anio = partes[-3]
             mes = partes[-2]
@@ -35,7 +33,6 @@ def obtener_estructura_balanzas():
             })
 
     if estructura:
-        # Ordenar por fecha de modificación más reciente
         estructura.sort(key=lambda x: x['mtime'], reverse=True)
 
     return estructura
@@ -247,7 +244,6 @@ estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
 if estructura:
-    # 1. Obtener lista de Años únicos
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
 
     col_a, col_m, col_e = st.columns([1, 1, 2])
@@ -255,7 +251,6 @@ if estructura:
     with col_a:
         anio_sel = st.selectbox("Selecciona Año:", anios_disponibles)
 
-    # 2. Filtrar Meses disponibles para el Año seleccionado
     meses_disponibles = sorted(
         list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
         reverse=True,
@@ -264,9 +259,9 @@ if estructura:
     with col_m:
         mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
 
-    # 3. Obtener ruta del archivo coincidente
+    # Corregido: Uso correcto del operador '==' en la comparación
     ruta_balanza = next(
-        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] mes_sel),
+        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
         estructura[0]['ruta'],
     )
 
