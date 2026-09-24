@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- EXPLORADOR DE ESTRUCTURA: Balanzas / AÑO / MES / Balanza.xlsx ---
+# --- BUSCAR BALANZAS POR AÑO Y MES ---
 def obtener_estructura_balanzas():
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     estructura = []
@@ -51,7 +51,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- PLANTILLA EXCEL ---
+# --- PLANTILLA DE EXCEL ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -142,11 +142,15 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- GENERADOR DEL ESTADO DE RESULTADOS ---
-def generar_estado_resultados_completo(df_balanza, plantilla):
+# --- GENERADOR DE ESTADOS DE RESULTADOS (MES Y ACUMULADO POR SEPARADO) ---
+def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
+    # Mapeo de columnas de la balanza:
+    # Col A (0): Cuenta
+    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
+    # Col G (6): Deudor F (Cargos Acum), Col H (7): Acreedor F (Abonos Acum)
     balanza_records = []
     for idx, row in df_balanza.iterrows():
         cta_raw = str(row.iloc[0]).strip()
@@ -166,8 +170,7 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             'acreedor_f': acreedor_f,
         })
 
-    val_mes_map = {}
-    val_acum_map = {}
+    val_map = {}
     formulas_map = {}
 
     for row in plantilla:
@@ -177,75 +180,69 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
 
         if c_form and str(c_form).startswith('='):
             formulas_map[r_idx] = c_form
-            val_mes_map[r_idx] = 0.0
-            val_acum_map[r_idx] = 0.0
+            val_map[r_idx] = 0.0
         elif patron:
-            m_mes = 0.0
-            m_acum = 0.0
+            monto = 0.0
             p_prefix = patron.split('-')[0].strip() if '-' in patron else patron[:3]
 
             for b in balanza_records:
                 if coincide_cuenta_robusta(b['cta_raw'], patron):
-                    # Fórmulas de la balanza contable:
-                    if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                        # Descuentos y Penalizaciones S/ Ventas: Mostrar en positivo
-                        m_mes += abs(b['cargos_m'] - b['abonos_m'])
-                        m_acum += abs(b['deudor_f'] - b['acreedor_f'])
-                    elif p_prefix.startswith(('4', '720', '730')):
-                        # Ingresos: Abonos - Cargos
-                        m_mes += b['abonos_m'] - b['cargos_m']
-                        m_acum += b['acreedor_f'] - b['deudor_f']
+                    if tipo == 'mes':
+                        # Lógica Del Mes (Cols E y F)
+                        if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                            monto += abs(b['cargos_m'] - b['abonos_m'])
+                        elif p_prefix.startswith(('4', '720', '730')):
+                            monto += b['abonos_m'] - b['cargos_m']
+                        else:
+                            monto += b['cargos_m'] - b['abonos_m']
                     else:
-                        # Costos/Gastos: Cargos - Abonos
-                        m_mes += b['cargos_m'] - b['abonos_m']
-                        m_acum += b['deudor_f'] - b['acreedor_f']
+                        # Lógica Acumulada (Cols G y H)
+                        if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                            monto += abs(b['deudor_f'] - b['acreedor_f'])
+                        elif p_prefix.startswith(('4', '720', '730')):
+                            monto += b['acreedor_f'] - b['deudor_f']
+                        else:
+                            monto += b['deudor_f'] - b['acreedor_f']
 
-            val_mes_map[r_idx] = m_mes
-            val_acum_map[r_idx] = m_acum
+            val_map[r_idx] = monto
         else:
-            val_mes_map[r_idx] = 0.0
-            val_acum_map[r_idx] = 0.0
+            val_map[r_idx] = 0.0
 
-    val_mes_map = resolver_todas_las_formulas(val_mes_map, formulas_map)
-    val_acum_map = resolver_todas_las_formulas(val_acum_map, formulas_map)
+    # Resolver fórmulas en cascada
+    val_map = resolver_todas_las_formulas(val_map, formulas_map)
+
+    # Construir la tabla final
+    ventas_totales = val_map.get(91, 0.0) or 1.0
+    col_monto_hdr = 'DEL MES' if tipo == 'mes' else 'ACUMULADO'
+    col_pct_hdr = '% MES' if tipo == 'mes' else '% ACUM'
 
     reporte = []
-    ventas_totales_mes = val_mes_map.get(91, 0.0) or 1.0
-    ventas_totales_acum = val_acum_map.get(91, 0.0) or 1.0
-
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
         concepto = row['concepto']
         c_form = row['c_formula']
 
-        v_m = val_mes_map.get(r_idx, 0.0)
-        v_a = val_acum_map.get(r_idx, 0.0)
+        v = val_map.get(r_idx, 0.0)
 
         if not patron and not concepto and not c_form:
             continue
 
-        pct_mes = (v_m / ventas_totales_mes) * 100 if ventas_totales_mes else 0.0
-        pct_acum = (
-            (v_a / ventas_totales_acum) * 100 if ventas_totales_acum else 0.0
-        )
-
+        pct = (v / ventas_totales) * 100 if ventas_totales else 0.0
         es_formula = bool(c_form and str(c_form).startswith('='))
         es_cuenta = bool(patron)
 
         reporte.append({
             'CUENTA': patron if patron else '',
             'CONCEPTO': concepto,
-            'DEL MES': v_m if (es_cuenta or es_formula) else None,
-            '% MES': pct_mes if (es_cuenta or es_formula) else None,
-            'ACUMULADO': v_a if (es_cuenta or es_formula) else None,
-            '% ACUM': pct_acum if (es_cuenta or es_formula) else None,
+            col_monto_hdr: v if (es_cuenta or es_formula) else None,
+            col_pct_hdr: pct if (es_cuenta or es_formula) else None,
         })
 
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ STREAMLIT ---
+# --- INTERFAZ GRAFICA STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
@@ -278,60 +275,83 @@ if estructura:
     if empresa_seleccionada:
         df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
 
-        tab_balanzas, tab_er = st.tabs(
-            ["📑 Balanzas de Comprobación", "📈 Estado de Resultados"]
-        )
+        # MÓDULO CON PESTAÑAS SEPARADAS PARA MES Y ACUMULADO
+        tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
+            "📑 Balanzas de Comprobación",
+            "📈 Estado de Resultados (MES)",
+            "📊 Estado de Resultados (ACUM)",
+        ])
 
+        # PESTAÑA 1: BALANZAS
         with tab_balanzas:
             st.subheader(
                 f"Balanza de Comprobación - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
             )
             st.dataframe(df_balanza, use_container_width=True, hide_index=True)
 
-        with tab_er:
+        # PESTAÑA 2: ESTADO DE RESULTADOS DEL MES
+        with tab_er_mes:
             st.subheader(
-                f"Estado de Resultados - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+                f"Estado de Resultados (DEL MES) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
             )
 
             if not plantilla:
-                st.error(
-                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz del proyecto."
-                )
+                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados..."):
-                    df_er = generar_estado_resultados_completo(
-                        df_balanza, plantilla
+                with st.spinner("Procesando Estado de Resultados Del Mes..."):
+                    df_er_mes = generar_reporte_estado_resultados(
+                        df_balanza, plantilla, tipo='mes'
                     )
 
-                if not df_er.empty:
-
-                    def fmt_monto(val):
-                        if pd.isnull(val) or val == '':
-                            return ''
-                        return f"${val:,.2f}"
-
-                    def fmt_pct(val):
-                        if pd.isnull(val) or val == '':
-                            return ''
-                        return f"{val:.1f}%"
-
-                    df_disp = df_er.copy()
-                    df_disp['DEL MES'] = df_disp['DEL MES'].apply(fmt_monto)
-                    df_disp['% MES'] = df_disp['% MES'].apply(fmt_pct)
-                    df_disp['ACUMULADO'] = df_disp['ACUMULADO'].apply(fmt_monto)
-                    df_disp['% ACUM'] = df_disp['% ACUM'].apply(fmt_pct)
-
-                    st.dataframe(
-                        df_disp,
-                        use_container_width=True,
-                        hide_index=True,
+                if not df_er_mes.empty:
+                    df_disp_mes = df_er_mes.copy()
+                    df_disp_mes['DEL MES'] = df_disp_mes['DEL MES'].apply(
+                        lambda x: f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
+                    )
+                    df_disp_mes['% MES'] = df_disp_mes['% MES'].apply(
+                        lambda x: f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
                     )
 
-                    csv_er = df_er.to_csv(index=False).encode('utf-8')
+                    st.dataframe(df_disp_mes, use_container_width=True, hide_index=True)
+
+                    csv_mes = df_er_mes.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
-                        data=csv_er,
-                        file_name=f"Estado_Resultados_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
+                        label=f"📥 Descargar ER Mes ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        data=csv_mes,
+                        file_name=f"Estado_Resultados_MES_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
+                        mime="text/csv",
+                    )
+
+        # PESTAÑA 3: ESTADO DE RESULTADOS ACUMULADO
+        with tab_er_acum:
+            st.subheader(
+                f"Estado de Resultados (ACUMULADO) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+            )
+
+            if not plantilla:
+                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+            else:
+                with st.spinner("Procesando Estado de Resultados Acumulado..."):
+                    df_er_acum = generar_reporte_estado_resultados(
+                        df_balanza, plantilla, tipo='acum'
+                    )
+
+                if not df_er_acum.empty:
+                    df_disp_acum = df_er_acum.copy()
+                    df_disp_acum['ACUMULADO'] = df_disp_acum['ACUMULADO'].apply(
+                        lambda x: f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
+                    )
+                    df_disp_acum['% ACUM'] = df_disp_acum['% ACUM'].apply(
+                        lambda x: f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
+                    )
+
+                    st.dataframe(df_disp_acum, use_container_width=True, hide_index=True)
+
+                    csv_acum = df_er_acum.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label=f"📥 Descargar ER Acumulado ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        data=csv_acum,
+                        file_name=f"Estado_Resultados_ACUM_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
                         mime="text/csv",
                     )
 else:
