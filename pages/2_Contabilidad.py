@@ -94,7 +94,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
+            # 2. Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -163,13 +163,53 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO CON PRIORIDAD (EVITA DUPLICAR CON CUENTAS PADRE) ---
+# --- DETECCIÓN DINÁMICA DE COLUMNAS SEGÚN CADA BALANZA ---
+def obtener_indices_columnas(df):
+    num_cols = df.shape[1]
+    col_names = [str(c).strip().upper() for c in df.columns]
+
+    idx_cta = None
+    idx_cargos_m = None
+    idx_abonos_m = None
+    idx_deudor_f = None
+    idx_acreedor_f = None
+
+    for idx, c in enumerate(col_names):
+        if 'CUENTA' in c:
+            idx_cta = idx
+        elif ('CARGO' in c and ('DEL' in c or 'MES' in c)) or c == 'CARGOS':
+            if idx_cargos_m is None:
+                idx_cargos_m = idx
+        elif ('ABONO' in c and ('DEL' in c or 'MES' in c)) or c == 'ABONOS':
+            if idx_abonos_m is None:
+                idx_abonos_m = idx
+        elif 'DEUDOR F' in c or ('DEUDOR' in c and 'FINAL' in c):
+            idx_deudor_f = idx
+        elif 'ACREEDOR F' in c or ('ACREEDOR' in c and 'FINAL' in c):
+            idx_acreedor_f = idx
+
+    # Si alguna columna no se encuentra por nombre, se mapea por posición relativa desde el final
+    if idx_cta is None:
+        idx_cta = 0
+    if idx_acreedor_f is None:
+        idx_acreedor_f = num_cols - 1
+    if idx_deudor_f is None:
+        idx_deudor_f = num_cols - 2
+    if idx_abonos_m is None:
+        idx_abonos_m = num_cols - 3
+    if idx_cargos_m is None:
+        idx_cargos_m = num_cols - 4
+
+    return idx_cta, idx_cargos_m, idx_abonos_m, idx_deudor_f, idx_acreedor_f
+
+
+# --- BUSCADOR DE MONTO CON PRIORIDAD ---
 def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     pt = str(patron_template).strip()
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
-    # 1. Buscar si existe coincidencia exacta
+    # 1. Buscar coincidencia exacta
     exact_match = None
     for b in balanza_records:
         cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
@@ -188,7 +228,6 @@ def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            # Cargos (E) / Abonos (F)
             if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
                 monto += abs(b['cargos_m'] - b['abonos_m'])
             elif p_prefix.startswith(('4', '720', '730')):
@@ -196,7 +235,6 @@ def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
             else:
                 monto += b['cargos_m'] - b['abonos_m']
         else:
-            # Deudor F (G) / Acreedor F (H)
             if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
                 monto += abs(b['deudor_f'] - b['acreedor_f'])
             elif p_prefix.startswith(('4', '720', '730')):
@@ -212,14 +250,14 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Detección dinámica de posiciones de columnas de la balanza
-    # Col A (0): Cuenta, Col E (4): Cargos, Col F (5): Abonos, Col G (6): Deudor F, Col H (7): Acreedor F
-    num_cols = df_balanza.shape[1]
-    idx_cta = 0
-    idx_cargos_m = 4 if num_cols > 4 else 0
-    idx_abonos_m = 5 if num_cols > 5 else 0
-    idx_deudor_f = 6 if num_cols > 6 else 0
-    idx_acreedor_f = 7 if num_cols > 7 else 0
+    # Detección dinámica de posiciones según el número de columnas
+    (
+        idx_cta,
+        idx_cargos_m,
+        idx_abonos_m,
+        idx_deudor_f,
+        idx_acreedor_f,
+    ) = obtener_indices_columnas(df_balanza)
 
     balanza_records = []
     for idx, row in df_balanza.iterrows():
@@ -260,10 +298,8 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
         else:
             val_map[r_idx] = 0.0
 
-    # Resolver fórmulas en cascada
     val_map = resolver_todas_las_formulas(val_map, formulas_map)
 
-    # Construir la tabla final
     ventas_totales = val_map.get(91, 0.0) or 1.0
     col_monto_hdr = 'DEL MES' if tipo == 'mes' else 'ACUMULADO'
     col_pct_hdr = '% MES' if tipo == 'mes' else '% ACUM'
