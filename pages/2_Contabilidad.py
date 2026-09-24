@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- BUSCAR BALANZAS Y EMPRESAS ---
+# --- ARCHIVOS DE BALANZA ---
 def obtener_archivos_balanzas():
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     if archivos:
@@ -34,7 +34,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- LEER ESTRUCTURA Y FÓRMULAS EXACTAS DEL FORMATO EXCEL ---
+# --- PLANTILLA EXCEL DE ESTADO DE RESULTADOS ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -62,11 +62,10 @@ def cargar_plantilla_formato():
     return plantilla
 
 
-# --- MOTOR EVALUADOR DE FÓRMULAS EN CASCADA ---
+# --- EVALUADOR DE FÓRMULAS EN CASCADA ---
 def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     vals = dict(mapa_valores)
 
-    # Resolvemos hasta 5 pasadas para encadenar subtotales -> totales -> utilidades
     for _ in range(5):
         for r_idx, f_str in mapa_formulas.items():
             f_clean = f_str.upper().replace(' ', '').replace('$', '')
@@ -78,7 +77,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # Caso 2: Expresiones algebraicas de celdas (=+C29+C23+C17+C11 o =+C7+C19-C33-C58+C45)
+            # Caso 2: Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -95,20 +94,22 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA DE CUENTAS BÚSQUEDA FLEXIBLE ---
-def coincide_cuenta(cta_balanza, patron_template):
-    if not patron_template or patron_template in ('None', 'CUENTA'):
+# --- COINCIDENCIA DE CUENTAS ROBUSTA (EXACTAS Y CON COMODINES) ---
+def coincide_cuenta_robusta(cta_balanza, patron_template):
+    if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
 
     cb = str(cta_balanza).strip()
     pt = str(patron_template).strip()
 
-    # 1. Regex directo
-    regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
-    if re.match(regex_str, cb):
-        return True
+    # Coincidencia exacta limpia (sin guiones/espacios)
+    cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
+    pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
 
-    # 2. Comparación por segmentos contables
+    if '?' not in pt_clean:
+        return cb_clean == pt_clean
+
+    # Coincidencia por comodines y niveles contables
     p_segs = pt.split('-')
     b_segs = cb.split('-')
 
@@ -121,7 +122,9 @@ def coincide_cuenta(cta_balanza, patron_template):
                     return True
             except ValueError:
                 pass
-    return False
+
+    regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
+    return bool(re.match(regex_str, cb))
 
 
 # --- GENERADOR DEL ESTADO DE RESULTADOS ---
@@ -129,33 +132,34 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Cargar movimientos de la balanza
-    # Col A (0): Cuenta, Col E (4): Cargos Mes, Col F (5): Abonos Mes
-    # Col G (6): Cargos Acum (Deudor F), Col H (7): Abonos Acum (Acreedor F)
+    # Mapeo de columnas por índice en la balanza:
+    # Col A (0): Cuenta
+    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
+    # Col G (6): Deudor F (Cargos Acum), Col H (7): Acreedor F (Abonos Acum)
     balanza_records = []
     for idx, row in df_balanza.iterrows():
         cta_raw = str(row.iloc[0]).strip()
         if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
             continue
 
-        cargos_m = pd.to_numeric(row.iloc[4], errors='coerce') or 0
-        abonos_m = pd.to_numeric(row.iloc[5], errors='coerce') or 0
-        cargos_a = pd.to_numeric(row.iloc[6], errors='coerce') or 0
-        abonos_a = pd.to_numeric(row.iloc[7], errors='coerce') or 0
+        cargos_m = pd.to_numeric(row.iloc[4], errors='coerce') or 0.0
+        abonos_m = pd.to_numeric(row.iloc[5], errors='coerce') or 0.0
+        deudor_f = pd.to_numeric(row.iloc[6], errors='coerce') or 0.0
+        acreedor_f = pd.to_numeric(row.iloc[7], errors='coerce') or 0.0
 
         balanza_records.append({
             'cta_raw': cta_raw,
             'cargos_m': cargos_m,
             'abonos_m': abonos_m,
-            'cargos_a': cargos_a,
-            'abonos_a': abonos_a,
+            'deudor_f': deudor_f,
+            'acreedor_f': acreedor_f,
         })
 
     val_mes_map = {}
     val_acum_map = {}
     formulas_map = {}
 
-    # PASO 1: Sumar saldos de las cuentas contables hojas
+    # PASO 1: Llenar saldos directos de cuentas
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
@@ -165,22 +169,22 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             formulas_map[r_idx] = c_form
             val_mes_map[r_idx] = 0.0
             val_acum_map[r_idx] = 0.0
-        elif patron and '?' in patron:
+        elif patron:
             m_mes = 0.0
             m_acum = 0.0
-            p_prefix = patron.split('-')[0].strip() if '-' in patron else ''
+            p_prefix = patron.split('-')[0].strip() if '-' in patron else patron[:3]
 
             for b in balanza_records:
-                if coincide_cuenta(b['cta_raw'], patron):
-                    # Fórmulas de la balanza:
-                    # Ingresos: Abonos - Cargos
-                    # Costos/Gastos: Cargos - Abonos
+                if coincide_cuenta_robusta(b['cta_raw'], patron):
+                    # Lógica contable:
+                    # Ingresos (4xxx, 720, 730): Mes = Abonos(F) - Cargos(E), Acum = AcreedorF(H) - DeudorF(G)
+                    # Costos/Gastos (5xxx, 6xxx, 710, 740): Mes = Cargos(E) - Abonos(F), Acum = DeudorF(G) - AcreedorF(H)
                     if p_prefix.startswith(('4', '720', '730')):
                         m_mes += b['abonos_m'] - b['cargos_m']
-                        m_acum += b['abonos_a'] - b['cargos_a']
+                        m_acum += b['acreedor_f'] - b['deudor_f']
                     else:
                         m_mes += b['cargos_m'] - b['abonos_m']
-                        m_acum += b['cargos_a'] - b['abonos_a']
+                        m_acum += b['deudor_f'] - b['acreedor_f']
 
             val_mes_map[r_idx] = m_mes
             val_acum_map[r_idx] = m_acum
@@ -188,11 +192,11 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             val_mes_map[r_idx] = 0.0
             val_acum_map[r_idx] = 0.0
 
-    # PASO 2: Resolver la cascada completa de fórmulas de Excel
+    # PASO 2: Resolver la cascada de fórmulas (Mes y Acumulado)
     val_mes_map = resolver_todas_las_formulas(val_mes_map, formulas_map)
     val_acum_map = resolver_todas_las_formulas(val_acum_map, formulas_map)
 
-    # PASO 3: Construir el DataFrame final y calcular Porcentajes % sobre Ventas Netas Totales (Fila 91)
+    # PASO 3: Construir la tabla final y calcular los Porcentajes %
     reporte = []
     ventas_totales_mes = val_mes_map.get(91, 0.0) or 1.0
     ventas_totales_acum = val_acum_map.get(91, 0.0) or 1.0
@@ -215,9 +219,8 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
         )
 
         es_formula = bool(c_form and str(c_form).startswith('='))
-        es_cuenta = bool(patron and '?' in patron)
+        es_cuenta = bool(patron)
 
-        # Si no es cuenta ni fórmula (ej. títulos o separadores de sección), dejamos celdas limpias/vacías
         reporte.append({
             'CUENTA': patron if patron else '',
             'CONCEPTO': concepto,
@@ -306,4 +309,5 @@ if archivos_balanza:
 else:
     st.error(
         "No se encontró ningún archivo de balanza dentro de la carpeta 'Balanzas/'."
+    )
     )
