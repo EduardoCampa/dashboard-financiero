@@ -79,6 +79,21 @@ def cargar_plantilla_formato():
     return plantilla
 
 
+# --- PARSER DE VALORES NUMÉRICOS (ELIMINA COMAS Y MONEDAS) ---
+def parse_monto_robusto(val):
+    if pd.isnull(val):
+        return 0.0
+    val_str = (
+        str(val).replace('$', '').replace(',', '').replace(' ', '').strip()
+    )
+    if not val_str or val_str.lower() in ('nan', 'none', '-'):
+        return 0.0
+    try:
+        return float(val_str)
+    except ValueError:
+        return 0.0
+
+
 # --- EVALUADOR DE FÓRMULAS EN CASCADA ---
 def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     vals = dict(mapa_valores)
@@ -94,7 +109,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # 2. Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
+            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -111,7 +126,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA DE CUENTAS FLEXIBLE ---
+# --- COINCIDENCIA ROBUSTA DE CUENTAS ---
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -163,53 +178,13 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- DETECCIÓN DINÁMICA DE COLUMNAS SEGÚN CADA BALANZA ---
-def obtener_indices_columnas(df):
-    num_cols = df.shape[1]
-    col_names = [str(c).strip().upper() for c in df.columns]
-
-    idx_cta = None
-    idx_cargos_m = None
-    idx_abonos_m = None
-    idx_deudor_f = None
-    idx_acreedor_f = None
-
-    for idx, c in enumerate(col_names):
-        if 'CUENTA' in c:
-            idx_cta = idx
-        elif ('CARGO' in c and ('DEL' in c or 'MES' in c)) or c == 'CARGOS':
-            if idx_cargos_m is None:
-                idx_cargos_m = idx
-        elif ('ABONO' in c and ('DEL' in c or 'MES' in c)) or c == 'ABONOS':
-            if idx_abonos_m is None:
-                idx_abonos_m = idx
-        elif 'DEUDOR F' in c or ('DEUDOR' in c and 'FINAL' in c):
-            idx_deudor_f = idx
-        elif 'ACREEDOR F' in c or ('ACREEDOR' in c and 'FINAL' in c):
-            idx_acreedor_f = idx
-
-    # Si alguna columna no se encuentra por nombre, se mapea por posición relativa desde el final
-    if idx_cta is None:
-        idx_cta = 0
-    if idx_acreedor_f is None:
-        idx_acreedor_f = num_cols - 1
-    if idx_deudor_f is None:
-        idx_deudor_f = num_cols - 2
-    if idx_abonos_m is None:
-        idx_abonos_m = num_cols - 3
-    if idx_cargos_m is None:
-        idx_cargos_m = num_cols - 4
-
-    return idx_cta, idx_cargos_m, idx_abonos_m, idx_deudor_f, idx_acreedor_f
-
-
-# --- BUSCADOR DE MONTO CON PRIORIDAD ---
+# --- BUSCADOR DE MONTO EN BALANZA ---
 def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     pt = str(patron_template).strip()
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
-    # 1. Buscar coincidencia exacta
+    # Coincidencia exacta
     exact_match = None
     for b in balanza_records:
         cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
@@ -250,27 +225,28 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Detección dinámica de posiciones según el número de columnas
-    (
-        idx_cta,
-        idx_cargos_m,
-        idx_abonos_m,
-        idx_deudor_f,
-        idx_acreedor_f,
-    ) = obtener_indices_columnas(df_balanza)
+    num_cols = df_balanza.shape[1]
+
+    # Mapeo dinámico de columnas desde el final
+    col_cta = 0
+    col_cargos_m = num_cols - 4
+    col_abonos_m = num_cols - 3
+    col_deudor_f = num_cols - 2
+    col_acreedor_f = num_cols - 1
 
     balanza_records = []
     for idx, row in df_balanza.iterrows():
-        cta_raw = str(row.iloc[idx_cta]).strip()
+        cta_raw = str(row.iloc[col_cta]).strip()
         if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
             continue
 
-        cargos_m = pd.to_numeric(row.iloc[idx_cargos_m], errors='coerce') or 0.0
-        abonos_m = pd.to_numeric(row.iloc[idx_abonos_m], errors='coerce') or 0.0
-        deudor_f = pd.to_numeric(row.iloc[idx_deudor_f], errors='coerce') or 0.0
-        acreedor_f = (
-            pd.to_numeric(row.iloc[idx_acreedor_f], errors='coerce') or 0.0
-        )
+        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+            continue
+
+        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
+        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
+        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
+        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
 
         balanza_records.append({
             'cta_raw': cta_raw,
