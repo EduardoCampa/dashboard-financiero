@@ -1,4 +1,5 @@
 import glob
+import io
 import os
 import re
 import openpyxl
@@ -79,7 +80,7 @@ def cargar_plantilla_formato():
     return plantilla
 
 
-# --- PARSER DE VALORES NUMÉRICOS (ELIMINA COMAS Y MONEDAS) ---
+# --- PARSER NUMÉRICO ROBUSTO ---
 def parse_monto_robusto(val):
     if pd.isnull(val):
         return 0.0
@@ -102,14 +103,12 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
         for r_idx, f_str in mapa_formulas.items():
             f_clean = f_str.upper().replace(' ', '').replace('$', '')
 
-            # 1. SUBTOTAL(9, Cstart:Cend)
             m_sub = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f_clean)
             if m_sub:
                 r_s, r_e = int(m_sub.group(1)), int(m_sub.group(2))
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -126,7 +125,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA ROBUSTA DE CUENTAS ---
+# --- COINCIDENCIA FLEXIBLE DE CUENTAS ---
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -178,13 +177,12 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ---
+# --- BUSCADOR DE MONTO CON PRIORIDAD ---
 def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     pt = str(patron_template).strip()
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
-    # Coincidencia exacta
     exact_match = None
     for b in balanza_records:
         cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
@@ -227,7 +225,6 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
 
     num_cols = df_balanza.shape[1]
 
-    # Mapeo dinámico de columnas desde el final
     col_cta = 0
     col_cargos_m = num_cols - 4
     col_abonos_m = num_cols - 3
@@ -296,14 +293,105 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
         es_formula = bool(c_form and str(c_form).startswith('=') and not patron)
         es_cuenta = bool(patron)
 
+        es_subtotal_o_total = any(
+            kw in concepto.lower()
+            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas']
+        )
+
         reporte.append({
             'CUENTA': patron if patron else '',
             'CONCEPTO': concepto,
             col_monto_hdr: v if (es_cuenta or es_formula) else None,
             col_pct_hdr: pct if (es_cuenta or es_formula) else None,
+            'es_total': es_subtotal_o_total or es_formula,
+            'es_encabezado': not patron and not es_formula and bool(concepto),
         })
 
     return pd.DataFrame(reporte)
+
+
+# --- FORMATO DE TABLA CON FORMATO EXCEL Y ESTILOS ---
+def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
+    if df_er.empty:
+        return
+
+    df_disp = df_er.copy()
+
+    # Función de formato con colores para resaltar totales tipo Excel
+    def aplicar_estilo_excel(row):
+        styles = [''] * len(row)
+        es_total = row.get('es_total', False)
+        es_encabezado = row.get('es_encabezado', False)
+
+        if es_total:
+            # Fondo azul oscuro / gris con negrita para totales
+            styles = [
+                'font-weight: bold; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #475569; border-bottom: 2px solid #94a3b8;'
+            ] * len(row)
+        elif es_encabezado:
+            # Fondo suave para títulos de sección
+            styles = [
+                'font-weight: bold; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
+            ] * len(row)
+
+        return styles
+
+    # Preparar DataFrame para presentación
+    df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
+
+    # Aplicar formato de moneda y porcentaje
+    styler = (
+        df_clean.style.apply(aplicar_estilo_excel, axis=1)
+        .format(
+            {
+                col_monto: lambda x: (
+                    f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
+                ),
+                col_pct: lambda x: (
+                    f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
+                ),
+            }
+        )
+        .set_properties(
+            **{
+                'padding': '6px 12px',
+                'font-family': 'Consolas, monospace',
+                'font-size': '14px',
+            }
+        )
+    )
+
+    st.dataframe(styler, use_container_width=True, hide_index=True)
+
+
+# --- GENERADOR DE EXCEL OFICIAL (.XLSX) ---
+def exportar_excel_formateado(df_er, nombre_hoja):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_clean = df_er.drop(
+            columns=['es_total', 'es_encabezado'], errors='ignore'
+        )
+        df_clean.to_excel(writer, sheet_name=nombre_hoja, index=False)
+
+        workbook = writer.book
+        worksheet = writer.sheets[nombre_hoja]
+
+        # Formatos Excel
+        hdr_format = workbook.add_format({
+            'bold': True,
+            'font_color': 'white',
+            'bg_color': '#1E293B',
+            'border': 1,
+        })
+        currency_format = workbook.add_format({'num_format': '$#,##0.00'})
+        pct_format = workbook.add_format({'num_format': '0.0%'})
+
+        worksheet.set_column('A:A', 22)
+        worksheet.set_column('B:B', 40)
+        worksheet.set_column('C:C', 18, currency_format)
+        worksheet.set_column('D:D', 12, pct_format)
+
+    return output.getvalue()
 
 
 # --- INTERFAZ STREAMLIT ---
@@ -365,22 +453,16 @@ if estructura:
                     )
 
                 if not df_er_mes.empty:
-                    df_disp_mes = df_er_mes.copy()
-                    df_disp_mes['DEL MES'] = df_disp_mes['DEL MES'].apply(
-                        lambda x: f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
-                    )
-                    df_disp_mes['% MES'] = df_disp_mes['% MES'].apply(
-                        lambda x: f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
+                    renderizar_tabla_estilo_excel(
+                        df_er_mes, 'DEL MES', '% MES'
                     )
 
-                    st.dataframe(df_disp_mes, use_container_width=True, hide_index=True)
-
-                    csv_mes = df_er_mes.to_csv(index=False).encode('utf-8')
+                    excel_mes = exportar_excel_formateado(df_er_mes, "ER_MES")
                     st.download_button(
-                        label=f"📥 Descargar ER Mes ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
-                        data=csv_mes,
-                        file_name=f"Estado_Resultados_MES_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
-                        mime="text/csv",
+                        label=f"📥 Descargar ER Mes en Excel ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        data=excel_mes,
+                        file_name=f"Estado_Resultados_MES_{empresa_seleccionada}_{mes_sel}_{anio_sel}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
         with tab_er_acum:
@@ -397,22 +479,18 @@ if estructura:
                     )
 
                 if not df_er_acum.empty:
-                    df_disp_acum = df_er_acum.copy()
-                    df_disp_acum['ACUMULADO'] = df_disp_acum['ACUMULADO'].apply(
-                        lambda x: f"${x:,.2f}" if pd.notnull(x) and x != '' else ''
-                    )
-                    df_disp_acum['% ACUM'] = df_disp_acum['% ACUM'].apply(
-                        lambda x: f"{x:.1f}%" if pd.notnull(x) and x != '' else ''
+                    renderizar_tabla_estilo_excel(
+                        df_er_acum, 'ACUMULADO', '% ACUM'
                     )
 
-                    st.dataframe(df_disp_acum, use_container_width=True, hide_index=True)
-
-                    csv_acum = df_er_acum.to_csv(index=False).encode('utf-8')
+                    excel_acum = exportar_excel_formateado(
+                        df_er_acum, "ER_ACUM"
+                    )
                     st.download_button(
-                        label=f"📥 Descargar ER Acumulado ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
-                        data=csv_acum,
-                        file_name=f"Estado_Resultados_ACUM_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
-                        mime="text/csv",
+                        label=f"📥 Descargar ER Acumulado en Excel ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        data=excel_acum,
+                        file_name=f"Estado_Resultados_ACUM_{empresa_seleccionada}_{mes_sel}_{anio_sel}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
     st.error(
