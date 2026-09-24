@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="Módulo Contable", layout="wide", initial_sidebar_state="expanded"
 )
 
-st.title("📊 Módulo Contable")
+st.title("📊 Módulo Contable - Reporte Multiempreza")
 
 
 # --- BUSCAR BALANZAS POR AÑO Y MES ---
@@ -177,7 +177,7 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO CON PRIORIDAD ---
+# --- BUSCADOR DE MONTO EN BALANZA ---
 def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     pt = str(patron_template).strip()
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
@@ -218,10 +218,10 @@ def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
     return monto
 
 
-# --- GENERADOR DE ESTADOS DE RESULTADOS ---
-def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
-    if not plantilla or df_balanza.empty:
-        return pd.DataFrame()
+# --- CALCULAR VALORES DE UNA EMPRESA INDIVIDUAL ---
+def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
+    if df_balanza.empty or not plantilla:
+        return {}
 
     num_cols = df_balanza.shape[1]
 
@@ -271,47 +271,89 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
         else:
             val_map[r_idx] = 0.0
 
-    val_map = resolver_todas_las_formulas(val_map, formulas_map)
+    return resolver_todas_las_formulas(val_map, formulas_map)
 
-    ventas_totales = val_map.get(91, 0.0) or 1.0
-    col_monto_hdr = 'DEL MES' if tipo == 'mes' else 'ACUMULADO'
-    col_pct_hdr = '% MES' if tipo == 'mes' else '% ACUM'
+
+# --- GENERADOR MULTIEMPRESA ---
+def generar_reporte_multiempresa(
+    ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
+):
+    if not empresas_seleccionadas or not plantilla:
+        return pd.DataFrame()
+
+    mapas_empresas = {}
+    for emp in empresas_seleccionadas:
+        df_b = cargar_hoja_balanza(ruta_balanza, emp)
+        mapas_empresas[emp] = calcular_mapa_valores_empresa(
+            df_b, plantilla, tipo=tipo
+        )
 
     reporte = []
+    incluir_consolidado = len(empresas_seleccionadas) > 1
+
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
         concepto = row['concepto']
         c_form = row['c_formula']
 
-        v = val_map.get(r_idx, 0.0)
-
         if not patron and not concepto and not c_form:
             continue
 
-        pct = (v / ventas_totales) * 100 if ventas_totales else 0.0
         es_formula = bool(c_form and str(c_form).startswith('=') and not patron)
         es_cuenta = bool(patron)
+        es_dato = es_cuenta or es_formula
+
+        fila_dict = {
+            'CUENTA': patron if patron else '',
+            'CONCEPTO': concepto,
+        }
+
+        monto_total_consolidado = 0.0
+
+        for emp in empresas_seleccionadas:
+            m_emp = mapas_empresas[emp].get(r_idx, 0.0)
+            ventas_emp = mapas_empresas[emp].get(91, 0.0) or 1.0
+            pct_emp = (m_emp / ventas_emp) * 100 if ventas_emp else 0.0
+
+            fila_dict[f"{emp}"] = m_emp if es_dato else None
+            fila_dict[f"% {emp}"] = pct_emp if es_dato else None
+
+            if es_dato:
+                monto_total_consolidado += m_emp
+
+        if incluir_consolidado:
+            tot_ventas_todas = sum(
+                mapas_empresas[e].get(91, 0.0) for e in empresas_seleccionadas
+            ) or 1.0
+            pct_total = (
+                (monto_total_consolidado / tot_ventas_todas) * 100
+                if tot_ventas_todas
+                else 0.0
+            )
+
+            fila_dict['TOTAL CONSOLIDADO'] = (
+                monto_total_consolidado if es_dato else None
+            )
+            fila_dict['% TOTAL'] = pct_total if es_dato else None
 
         es_subtotal_o_total = any(
             kw in concepto.lower()
             for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas']
         )
 
-        reporte.append({
-            'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto,
-            col_monto_hdr: v if (es_cuenta or es_formula) else None,
-            col_pct_hdr: pct if (es_cuenta or es_formula) else None,
-            'es_total': es_subtotal_o_total or es_formula,
-            'es_encabezado': not patron and not es_formula and bool(concepto),
-        })
+        fila_dict['es_total'] = es_subtotal_o_total or es_formula
+        fila_dict['es_encabezado'] = (
+            not patron and not es_formula and bool(concepto)
+        )
+
+        reporte.append(fila_dict)
 
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA CON FORMATO EXCEL Y ESTILOS ---
-def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
+# --- FORMATO DE TABLA ESTILO EXCEL ---
+def renderizar_tabla_multiempresa(df_er, empresas):
     if df_er.empty:
         return
 
@@ -335,23 +377,31 @@ def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
 
     df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
 
+    format_dict = {}
+    for emp in empresas:
+        format_dict[emp] = (
+            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
+        )
+        format_dict[f"% {emp}"] = (
+            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
+        )
+
+    if 'TOTAL CONSOLIDADO' in df_clean.columns:
+        format_dict['TOTAL CONSOLIDADO'] = (
+            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
+        )
+        format_dict['% TOTAL'] = (
+            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
+        )
+
     styler = (
         df_clean.style.apply(aplicar_estilo_excel, axis=1)
-        .format(
-            {
-                col_monto: lambda x: (
-                    f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-                ),
-                col_pct: lambda x: (
-                    f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-                ),
-            }
-        )
+        .format(format_dict)
         .set_properties(
             **{
-                'padding': '6px 12px',
+                'padding': '6px 10px',
                 'font-family': 'Consolas, monospace',
-                'font-size': '14px',
+                'font-size': '13px',
             }
         )
     )
@@ -359,8 +409,8 @@ def renderizar_tabla_estilo_excel(df_er, col_monto, col_pct):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- GENERADOR DE EXCEL USANDO OPENPYXL (SIN REQUERIR XLSXWRITER) ---
-def exportar_excel_formateado_openpyxl(df_er, nombre_hoja):
+# --- EXPORTADOR A EXCEL (.XLSX) ---
+def exportar_excel_multiempresa_openpyxl(df_er, nombre_hoja):
     output = io.BytesIO()
     df_clean = df_er.drop(
         columns=['es_total', 'es_encabezado'], errors='ignore'
@@ -400,11 +450,13 @@ if estructura:
     lista_empresas = obtener_lista_empresas(ruta_balanza)
 
     with col_e:
-        empresa_seleccionada = st.selectbox("Selecciona Empresa:", lista_empresas)
+        empresas_seleccionadas = st.multiselect(
+            "Selecciona Empresa(s):",
+            lista_empresas,
+            default=[lista_empresas[0]] if lista_empresas else [],
+        )
 
-    if empresa_seleccionada:
-        df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
-
+    if empresas_seleccionadas:
         tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
             "📑 Balanzas de Comprobación",
             "📈 Estado de Resultados (MES)",
@@ -412,65 +464,75 @@ if estructura:
         ])
 
         with tab_balanzas:
-            st.subheader(
-                f"Balanza de Comprobación - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
-            )
-            st.dataframe(df_balanza, use_container_width=True, hide_index=True)
+            for emp in empresas_seleccionadas:
+                st.subheader(
+                    f"Balanza de Comprobación - {emp} ({mes_sel}/{anio_sel})"
+                )
+                df_b = cargar_hoja_balanza(ruta_balanza, emp)
+                st.dataframe(df_b, use_container_width=True, hide_index=True)
 
         with tab_er_mes:
+            empresas_str = ", ".join(empresas_seleccionadas)
             st.subheader(
-                f"Estado de Resultados (DEL MES) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+                f"Estado de Resultados (DEL MES) - [{empresas_str}] ({mes_sel}/{anio_sel})"
             )
 
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Del Mes..."):
-                    df_er_mes = generar_reporte_estado_resultados(
-                        df_balanza, plantilla, tipo='mes'
+                with st.spinner("Procesando Estado de Resultados Comparativo (Del Mes)..."):
+                    df_er_mes = generar_reporte_multiempresa(
+                        ruta_balanza,
+                        empresas_seleccionadas,
+                        plantilla,
+                        tipo='mes',
                     )
 
                 if not df_er_mes.empty:
-                    renderizar_tabla_estilo_excel(
-                        df_er_mes, 'DEL MES', '% MES'
+                    renderizar_tabla_multiempresa(
+                        df_er_mes, empresas_seleccionadas
                     )
 
-                    excel_mes = exportar_excel_formateado_openpyxl(df_er_mes, "ER_MES")
+                    excel_mes = exportar_excel_multiempresa_openpyxl(
+                        df_er_mes, "ER_MES_CONSOLIDADO"
+                    )
                     st.download_button(
-                        label=f"📥 Descargar ER Mes en Excel ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
                         data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_{empresa_seleccionada}_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_MES_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
         with tab_er_acum:
+            empresas_str = ", ".join(empresas_seleccionadas)
             st.subheader(
-                f"Estado de Resultados (ACUMULADO) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+                f"Estado de Resultados (ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
             )
 
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Acumulado..."):
-                    df_er_acum = generar_reporte_estado_resultados(
-                        df_balanza, plantilla, tipo='acum'
+                with st.spinner("Procesando Estado de Resultados Comparativo (Acumulado)..."):
+                    df_er_acum = generar_reporte_multiempresa(
+                        ruta_balanza,
+                        empresas_seleccionadas,
+                        plantilla,
+                        tipo='acum',
                     )
 
                 if not df_er_acum.empty:
-                    renderizar_tabla_estilo_excel(
-                        df_er_acum, 'ACUMULADO', '% ACUM'
+                    renderizar_tabla_multiempresa(
+                        df_er_acum, empresas_seleccionadas
                     )
 
-                    excel_acum = exportar_excel_formateado_openpyxl(
-                        df_er_acum, "ER_ACUM"
+                    excel_acum = exportar_excel_multiempresa_openpyxl(
+                        df_er_acum, "ER_ACUM_CONSOLIDADO"
                     )
                     st.download_button(
-                        label=f"📥 Descargar ER Acumulado en Excel ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
+                        label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_{empresa_seleccionada}_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_ACUM_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
-    st.error(
-        "No se encontraron archivos de balanza en la carpeta 'Balanzas/ AÑO / MES /'."
-    )
+    st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
