@@ -94,7 +94,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # 2. Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
+            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -111,7 +111,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA DE CUENTAS FLEXIBLE (ADMITE 00000, 99999, ?????) ---
+# --- COINCIDENCIA DE CUENTAS FLEXIBLE ---
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -163,25 +163,76 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
+# --- BUSCADOR DE MONTO CON PRIORIDAD (EVITA DUPLICAR CON CUENTAS PADRE) ---
+def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
+    pt = str(patron_template).strip()
+    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
+    pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
+
+    # 1. Buscar si existe coincidencia exacta
+    exact_match = None
+    for b in balanza_records:
+        cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
+        if cb_clean == pt_clean:
+            exact_match = b
+            break
+
+    records_a_sumar = []
+    if exact_match:
+        records_a_sumar = [exact_match]
+    else:
+        for b in balanza_records:
+            if coincide_cuenta_robusta(b['cta_raw'], pt):
+                records_a_sumar.append(b)
+
+    monto = 0.0
+    for b in records_a_sumar:
+        if tipo == 'mes':
+            # Cargos (E) / Abonos (F)
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['cargos_m'] - b['abonos_m'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['abonos_m'] - b['cargos_m']
+            else:
+                monto += b['cargos_m'] - b['abonos_m']
+        else:
+            # Deudor F (G) / Acreedor F (H)
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['deudor_f'] - b['acreedor_f'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['acreedor_f'] - b['deudor_f']
+            else:
+                monto += b['deudor_f'] - b['acreedor_f']
+
+    return monto
+
+
 # --- GENERADOR DE ESTADOS DE RESULTADOS ---
 def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Columnas Balanza:
-    # Col A (0): Cuenta
-    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
-    # Col G (6): Deudor F (Cargos Acum), Col H (7): Acreedor F (Abonos Acum)
+    # Detección dinámica de posiciones de columnas de la balanza
+    # Col A (0): Cuenta, Col E (4): Cargos, Col F (5): Abonos, Col G (6): Deudor F, Col H (7): Acreedor F
+    num_cols = df_balanza.shape[1]
+    idx_cta = 0
+    idx_cargos_m = 4 if num_cols > 4 else 0
+    idx_abonos_m = 5 if num_cols > 5 else 0
+    idx_deudor_f = 6 if num_cols > 6 else 0
+    idx_acreedor_f = 7 if num_cols > 7 else 0
+
     balanza_records = []
     for idx, row in df_balanza.iterrows():
-        cta_raw = str(row.iloc[0]).strip()
+        cta_raw = str(row.iloc[idx_cta]).strip()
         if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
             continue
 
-        cargos_m = pd.to_numeric(row.iloc[4], errors='coerce') or 0.0
-        abonos_m = pd.to_numeric(row.iloc[5], errors='coerce') or 0.0
-        deudor_f = pd.to_numeric(row.iloc[6], errors='coerce') or 0.0
-        acreedor_f = pd.to_numeric(row.iloc[7], errors='coerce') or 0.0
+        cargos_m = pd.to_numeric(row.iloc[idx_cargos_m], errors='coerce') or 0.0
+        abonos_m = pd.to_numeric(row.iloc[idx_abonos_m], errors='coerce') or 0.0
+        deudor_f = pd.to_numeric(row.iloc[idx_deudor_f], errors='coerce') or 0.0
+        acreedor_f = (
+            pd.to_numeric(row.iloc[idx_acreedor_f], errors='coerce') or 0.0
+        )
 
         balanza_records.append({
             'cta_raw': cta_raw,
@@ -199,42 +250,20 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
         patron = row['cuenta_patron']
         c_form = row['c_formula']
 
-        # Si tiene patrón de cuenta contable, SIEMPRE se busca en la Balanza (incluso si en Excel tenía fórmula SUMIFS)
         if patron:
-            monto = 0.0
-            p_prefix = patron.split('-')[0].strip() if '-' in patron else patron[:3]
-
-            for b in balanza_records:
-                if coincide_cuenta_robusta(b['cta_raw'], patron):
-                    if tipo == 'mes':
-                        # Del Mes (Cols E y F)
-                        if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                            monto += abs(b['cargos_m'] - b['abonos_m'])
-                        elif p_prefix.startswith(('4', '720', '730')):
-                            monto += b['abonos_m'] - b['cargos_m']
-                        else:
-                            monto += b['cargos_m'] - b['abonos_m']
-                    else:
-                        # Acumulado (Cols G y H)
-                        if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                            monto += abs(b['deudor_f'] - b['acreedor_f'])
-                        elif p_prefix.startswith(('4', '720', '730')):
-                            monto += b['acreedor_f'] - b['deudor_f']
-                        else:
-                            monto += b['deudor_f'] - b['acreedor_f']
-
-            val_map[r_idx] = monto
+            val_map[r_idx] = obtener_monto_cuenta_balanza(
+                patron, balanza_records, tipo=tipo
+            )
         elif c_form and str(c_form).startswith('='):
-            # Es un total o subtotal interno
             formulas_map[r_idx] = c_form
             val_map[r_idx] = 0.0
         else:
             val_map[r_idx] = 0.0
 
-    # Resolver las fórmulas en cascada
+    # Resolver fórmulas en cascada
     val_map = resolver_todas_las_formulas(val_map, formulas_map)
 
-    # Construcción de la tabla
+    # Construir la tabla final
     ventas_totales = val_map.get(91, 0.0) or 1.0
     col_monto_hdr = 'DEL MES' if tipo == 'mes' else 'ACUMULADO'
     col_pct_hdr = '% MES' if tipo == 'mes' else '% ACUM'
