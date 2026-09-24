@@ -3,6 +3,8 @@ import io
 import os
 import re
 import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 
@@ -339,7 +341,7 @@ def generar_reporte_multiempresa(
 
         es_subtotal_o_total = any(
             kw in concepto.lower()
-            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas']
+            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas', 'descuentos s/']
         )
 
         fila_dict['es_total'] = es_subtotal_o_total or es_formula
@@ -352,7 +354,7 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA ESTILO EXCEL ---
+# --- FORMATO DE TABLA EN PANTALLA CON TOTALES RESALTADOS Y NEGRITAS ---
 def renderizar_tabla_multiempresa(df_er, empresas):
     if df_er.empty:
         return
@@ -365,12 +367,14 @@ def renderizar_tabla_multiempresa(df_er, empresas):
         es_encabezado = row.get('es_encabezado', False)
 
         if es_total:
+            # Estilo resaltado con negritas para totales
             styles = [
-                'font-weight: bold; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #475569; border-bottom: 2px solid #94a3b8;'
+                'font-weight: 800; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #64748b; border-bottom: 2px double #94a3b8;'
             ] * len(row)
         elif es_encabezado:
+            # Estilo para títulos de sección
             styles = [
-                'font-weight: bold; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
+                'font-weight: 700; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
             ] * len(row)
 
         return styles
@@ -399,7 +403,7 @@ def renderizar_tabla_multiempresa(df_er, empresas):
         .format(format_dict)
         .set_properties(
             **{
-                'padding': '6px 10px',
+                'padding': '8px 12px',
                 'font-family': 'Consolas, monospace',
                 'font-size': '13px',
             }
@@ -409,16 +413,128 @@ def renderizar_tabla_multiempresa(df_er, empresas):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- EXPORTADOR A EXCEL (.XLSX) ---
-def exportar_excel_multiempresa_openpyxl(df_er, nombre_hoja):
+# --- EXPORTADOR A EXCEL EJECUTIVO PROFESIONAL (OPENPYXL) ---
+def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
     output = io.BytesIO()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "EDO_RESULTADOS"
+
+    ws.views.sheetView[0].showGridLines = True
+
+    # Estilos de diseño corporativo
+    HEADER_FILL = PatternFill(
+        start_color="1F2937", end_color="1F2937", fill_type="solid"
+    )
+    HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1F2937")
+    SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="4B5563")
+
+    TOTAL_FILL = PatternFill(
+        start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
+    )
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
+    HEADER_ROW_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
+
+    REGULAR_FONT = Font(name="Calibri", size=11, color="1E293B")
+
+    THIN_BORDER = Border(
+        left=Side(style='thin', color='E2E8F0'),
+        right=Side(style='thin', color='E2E8F0'),
+        top=Side(style='thin', color='E2E8F0'),
+        bottom=Side(style='thin', color='E2E8F0'),
+    )
+
+    TOTAL_BORDER = Border(
+        top=Side(style='thin', color='475569'),
+        bottom=Side(style='double', color='0F172A'),
+        left=Side(style='thin', color='E2E8F0'),
+        right=Side(style='thin', color='E2E8F0'),
+    )
+
+    # Bloque de Título Ejecutivo
+    tipo_str = "DEL MES" if tipo == 'mes' else "ACUMULADO"
+    ws.cell(
+        row=1,
+        column=1,
+        value=f"ESTADO DE RESULTADOS CONSOLIDADO ({tipo_str})",
+    ).font = TITLE_FONT
+    ws.cell(
+        row=2,
+        column=1,
+        value=f"Periodo: {mes}/{anio} | Empresa(s): {', '.join(empresas)}",
+    ).font = SUBTITLE_FONT
+
+    start_row = 4
     df_clean = df_er.drop(
         columns=['es_total', 'es_encabezado'], errors='ignore'
-    ).copy()
+    )
+    headers = list(df_clean.columns)
 
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_clean.to_excel(writer, sheet_name=nombre_hoja, index=False)
+    # Escribir encabezados
+    for c_idx, h_text in enumerate(headers, start=1):
+        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
 
+    ws.row_dimensions[start_row].height = 26
+
+    # Escribir filas de datos con formatos y estilos
+    for r_i, row_data in df_er.iterrows():
+        curr_row = start_row + 1 + r_i
+        es_total = row_data.get('es_total', False)
+        es_encabezado = row_data.get('es_encabezado', False)
+
+        for c_i, h_col in enumerate(headers, start=1):
+            val = row_data[h_col]
+            cell = ws.cell(row=curr_row, column=c_i)
+
+            if pd.isnull(val) or str(val) == 'None':
+                cell.value = ""
+            else:
+                cell.value = val
+
+            # Estilos por tipo de fila
+            if es_total:
+                cell.font = TOTAL_FONT
+                cell.fill = TOTAL_FILL
+                cell.border = TOTAL_BORDER
+            elif es_encabezado:
+                cell.font = HEADER_ROW_FONT
+                cell.border = THIN_BORDER
+            else:
+                cell.font = REGULAR_FONT
+                cell.border = THIN_BORDER
+
+            # Formatos numéricos y alineación
+            if h_col in ('CUENTA', 'CONCEPTO'):
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            elif h_col.startswith('%'):
+                cell.alignment = Alignment(
+                    horizontal="right", vertical="center"
+                )
+                cell.number_format = '0.0%'
+                if isinstance(val, (int, float)):
+                    cell.value = val / 100.0  # Convertir para Excel
+            else:
+                cell.alignment = Alignment(
+                    horizontal="right", vertical="center"
+                )
+                cell.number_format = '$#,##0.00'
+
+    # Ajustar ancho de columnas
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 38
+
+    wb.save(output)
     return output.getvalue()
 
 
@@ -493,13 +609,17 @@ if estructura:
                         df_er_mes, empresas_seleccionadas
                     )
 
-                    excel_mes = exportar_excel_multiempresa_openpyxl(
-                        df_er_mes, "ER_MES_CONSOLIDADO"
+                    excel_mes = exportar_excel_ejecutivo_openpyxl(
+                        df_er_mes,
+                        empresas_seleccionadas,
+                        anio_sel,
+                        mes_sel,
+                        tipo='mes',
                     )
                     st.download_button(
                         label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
                         data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_MES_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
@@ -525,13 +645,17 @@ if estructura:
                         df_er_acum, empresas_seleccionadas
                     )
 
-                    excel_acum = exportar_excel_multiempresa_openpyxl(
-                        df_er_acum, "ER_ACUM_CONSOLIDADO"
+                    excel_acum = exportar_excel_ejecutivo_openpyxl(
+                        df_er_acum,
+                        empresas_seleccionadas,
+                        anio_sel,
+                        mes_sel,
+                        tipo='acum',
                     )
                     st.download_button(
                         label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_ACUM_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
