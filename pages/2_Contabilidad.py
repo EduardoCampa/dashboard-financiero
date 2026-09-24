@@ -12,12 +12,33 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 
-# --- ARCHIVOS DE BALANZA ---
-def obtener_archivos_balanzas():
+# --- EXPLORADOR DE ESTRUCTURA: Balanzas / AÑO / MES / Balanza.xlsx ---
+def obtener_estructura_balanzas():
+    """Busca todos los archivos 'Balanza.xlsx' y extrae Año, Mes y Ruta."""
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
-    if archivos:
-        archivos.sort(key=os.path.getmtime, reverse=True)
-    return archivos
+    estructura = []
+
+    for path in archivos:
+        # Normalizar barras de ruta (Windows/Linux)
+        path_norm = path.replace("\\", "/")
+        partes = path_norm.split("/")
+
+        # Estructura esperada: Balanzas / AÑO / MES / Balanza.xlsx
+        if len(partes) >= 4:
+            anio = partes[-3]
+            mes = partes[-2]
+            estructura.append({
+                'anio': str(anio),
+                'mes': str(mes),
+                'ruta': path_norm,
+                'mtime': os.path.getmtime(path),
+            })
+
+    if estructura:
+        # Ordenar por fecha de modificación más reciente
+        estructura.sort(key=lambda x: x['mtime'], reverse=True)
+
+    return estructura
 
 
 @st.cache_data(ttl=300)
@@ -34,7 +55,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- PLANTILLA EXCEL DE ESTADO DE RESULTADOS ---
+# --- PLANTILLA EXCEL ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -70,14 +91,14 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
         for r_idx, f_str in mapa_formulas.items():
             f_clean = f_str.upper().replace(' ', '').replace('$', '')
 
-            # Caso 1: SUBTOTAL(9, Cstart:Cend)
+            # 1. SUBTOTAL(9, Cstart:Cend)
             m_sub = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f_clean)
             if m_sub:
                 r_s, r_e = int(m_sub.group(1)), int(m_sub.group(2))
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # Caso 2: Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
+            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -94,7 +115,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA DE CUENTAS ROBUSTA (EXACTAS Y CON COMODINES) ---
+# --- COINCIDENCIA DE CUENTAS ROBUSTA ---
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -102,14 +123,12 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     cb = str(cta_balanza).strip()
     pt = str(patron_template).strip()
 
-    # Coincidencia exacta limpia (sin guiones/espacios)
     cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
     pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
 
     if '?' not in pt_clean:
         return cb_clean == pt_clean
 
-    # Coincidencia por comodines y niveles contables
     p_segs = pt.split('-')
     b_segs = cb.split('-')
 
@@ -132,10 +151,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Mapeo de columnas por índice en la balanza:
-    # Col A (0): Cuenta
-    # Col E (4): Cargos Mes, Col F (5): Abonos Mes
-    # Col G (6): Deudor F (Cargos Acum), Col H (7): Acreedor F (Abonos Acum)
     balanza_records = []
     for idx, row in df_balanza.iterrows():
         cta_raw = str(row.iloc[0]).strip()
@@ -159,7 +174,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     val_acum_map = {}
     formulas_map = {}
 
-    # PASO 1: Llenar saldos directos de cuentas
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
@@ -176,9 +190,6 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
 
             for b in balanza_records:
                 if coincide_cuenta_robusta(b['cta_raw'], patron):
-                    # Lógica contable:
-                    # Ingresos (4xxx, 720, 730): Mes = Abonos(F) - Cargos(E), Acum = AcreedorF(H) - DeudorF(G)
-                    # Costos/Gastos (5xxx, 6xxx, 710, 740): Mes = Cargos(E) - Abonos(F), Acum = DeudorF(G) - AcreedorF(H)
                     if p_prefix.startswith(('4', '720', '730')):
                         m_mes += b['abonos_m'] - b['cargos_m']
                         m_acum += b['acreedor_f'] - b['deudor_f']
@@ -192,11 +203,9 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
             val_mes_map[r_idx] = 0.0
             val_acum_map[r_idx] = 0.0
 
-    # PASO 2: Resolver la cascada de fórmulas (Mes y Acumulado)
     val_mes_map = resolver_todas_las_formulas(val_mes_map, formulas_map)
     val_acum_map = resolver_todas_las_formulas(val_acum_map, formulas_map)
 
-    # PASO 3: Construir la tabla final y calcular los Porcentajes %
     reporte = []
     ventas_totales_mes = val_mes_map.get(91, 0.0) or 1.0
     ventas_totales_acum = val_acum_map.get(91, 0.0) or 1.0
@@ -233,23 +242,38 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ STREAMLIT ---
-archivos_balanza = obtener_archivos_balanzas()
+# --- INTERFAZ CON SELECTORES DE AÑO, MES Y EMPRESA ---
+estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
-if archivos_balanza:
-    col1, col2 = st.columns([2, 2])
-    with col1:
-        ruta_balanza = st.selectbox(
-            "Selecciona la Balanza a consultar:",
-            archivos_balanza,
-            index=0,
-        )
+if estructura:
+    # 1. Obtener lista de Años únicos
+    anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
+
+    col_a, col_m, col_e = st.columns([1, 1, 2])
+
+    with col_a:
+        anio_sel = st.selectbox("Selecciona Año:", anios_disponibles)
+
+    # 2. Filtrar Meses disponibles para el Año seleccionado
+    meses_disponibles = sorted(
+        list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
+        reverse=True,
+    )
+
+    with col_m:
+        mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
+
+    # 3. Obtener ruta del archivo coincidente
+    ruta_balanza = next(
+        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] mes_sel),
+        estructura[0]['ruta'],
+    )
 
     lista_empresas = obtener_lista_empresas(ruta_balanza)
 
-    with col2:
-        empresa_seleccionada = st.selectbox("Selecciona la Empresa:", lista_empresas)
+    with col_e:
+        empresa_seleccionada = st.selectbox("Selecciona Empresa:", lista_empresas)
 
     if empresa_seleccionada:
         df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
@@ -259,15 +283,19 @@ if archivos_balanza:
         )
 
         with tab_balanzas:
-            st.subheader(f"Balanza de Comprobación - {empresa_seleccionada}")
+            st.subheader(
+                f"Balanza de Comprobación - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+            )
             st.dataframe(df_balanza, use_container_width=True, hide_index=True)
 
         with tab_er:
-            st.subheader(f"Estado de Resultados - {empresa_seleccionada}")
+            st.subheader(
+                f"Estado de Resultados - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
+            )
 
             if not plantilla:
                 st.error(
-                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz."
+                    "No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz del proyecto."
                 )
             else:
                 with st.spinner("Procesando Estado de Resultados..."):
@@ -301,13 +329,12 @@ if archivos_balanza:
 
                     csv_er = df_er.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada})",
+                        label=f"📥 Descargar Estado de Resultados ({empresa_seleccionada}_{mes_sel}_{anio_sel})",
                         data=csv_er,
-                        file_name=f"Estado_Resultados_{empresa_seleccionada}.csv",
+                        file_name=f"Estado_Resultados_{empresa_seleccionada}_{mes_sel}_{anio_sel}.csv",
                         mime="text/csv",
                     )
 else:
     st.error(
-        "No se encontró ningún archivo de balanza dentro de la carpeta 'Balanzas/'."
-    )
+        "No se encontraron archivos de balanza en la carpeta 'Balanzas/ AÑO / MES /'."
     )
