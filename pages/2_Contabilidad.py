@@ -14,7 +14,6 @@ st.title("📊 Módulo Contable")
 
 # --- EXPLORADOR DE ESTRUCTURA: Balanzas / AÑO / MES / Balanza.xlsx ---
 def obtener_estructura_balanzas():
-    """Busca todos los archivos 'Balanza.xlsx' y extrae Año, Mes y Ruta."""
     archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
     estructura = []
 
@@ -187,10 +186,17 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
 
             for b in balanza_records:
                 if coincide_cuenta_robusta(b['cta_raw'], patron):
-                    if p_prefix.startswith(('4', '720', '730')):
+                    # Fórmulas de la balanza contable:
+                    if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                        # Descuentos y Penalizaciones S/ Ventas: Mostrar en positivo
+                        m_mes += abs(b['cargos_m'] - b['abonos_m'])
+                        m_acum += abs(b['deudor_f'] - b['acreedor_f'])
+                    elif p_prefix.startswith(('4', '720', '730')):
+                        # Ingresos: Abonos - Cargos
                         m_mes += b['abonos_m'] - b['cargos_m']
                         m_acum += b['acreedor_f'] - b['deudor_f']
                     else:
+                        # Costos/Gastos: Cargos - Abonos
                         m_mes += b['cargos_m'] - b['abonos_m']
                         m_acum += b['deudor_f'] - b['acreedor_f']
 
@@ -239,7 +245,7 @@ def generar_estado_resultados_completo(df_balanza, plantilla):
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ CON SELECTORES DE AÑO, MES Y EMPRESA ---
+# --- INTERFAZ STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
@@ -259,7 +265,6 @@ if estructura:
     with col_m:
         mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
 
-    # Corregido: Uso correcto del operador '==' en la comparación
     ruta_balanza = next(
         (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
         estructura[0]['ruta'],
