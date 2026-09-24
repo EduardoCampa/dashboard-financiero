@@ -94,7 +94,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
                 vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
                 continue
 
-            # 2. Expresiones algebraicas (=+C29+C23+C17+C11)
+            # 2. Expresiones algebraicas de celdas (=+C29+C23+C17+C11)
             expr_raw = re.sub(r'^=\+?', '', f_clean)
 
             def sustituir_celda(match):
@@ -111,7 +111,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA DE CUENTAS ROBUSTA ---
+# --- COINCIDENCIA DE CUENTAS FLEXIBLE (ADMITE 00000, 99999, ?????) ---
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -122,16 +122,37 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
     pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
 
-    if '?' not in pt_clean:
-        return cb_clean == pt_clean
+    if cb_clean == pt_clean:
+        return True
 
     p_segs = pt.split('-')
     b_segs = cb.split('-')
 
     if len(p_segs) >= 3 and len(b_segs) >= 3:
         if p_segs[0] == b_segs[0]:
+            p_seg2_is_wildcard = ('?' in p_segs[1]) or (
+                p_segs[1] in ('00000', '0000', '000', '99999')
+            )
+
             try:
-                if int(p_segs[2]) == int(b_segs[2]):
+                seg3_match = (p_segs[2] == b_segs[2]) or (
+                    int(p_segs[2]) == int(b_segs[2])
+                )
+            except ValueError:
+                seg3_match = p_segs[2] == b_segs[2]
+
+            if p_seg2_is_wildcard and seg3_match:
+                if len(p_segs) >= 4 and len(b_segs) >= 4:
+                    try:
+                        return (p_segs[3] == b_segs[3]) or (
+                            int(p_segs[3]) == int(b_segs[3])
+                        )
+                    except ValueError:
+                        return p_segs[3] == b_segs[3]
+                return True
+
+            try:
+                if int(p_segs[1]) == int(b_segs[1]) and seg3_match:
                     if len(p_segs) >= 4 and len(b_segs) >= 4:
                         return int(p_segs[3]) == int(b_segs[3])
                     return True
@@ -142,12 +163,12 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- GENERADOR DE ESTADOS DE RESULTADOS (MES Y ACUMULADO POR SEPARADO) ---
+# --- GENERADOR DE ESTADOS DE RESULTADOS ---
 def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     if not plantilla or df_balanza.empty:
         return pd.DataFrame()
 
-    # Mapeo de columnas de la balanza:
+    # Columnas Balanza:
     # Col A (0): Cuenta
     # Col E (4): Cargos Mes, Col F (5): Abonos Mes
     # Col G (6): Deudor F (Cargos Acum), Col H (7): Acreedor F (Abonos Acum)
@@ -178,17 +199,15 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
         patron = row['cuenta_patron']
         c_form = row['c_formula']
 
-        if c_form and str(c_form).startswith('='):
-            formulas_map[r_idx] = c_form
-            val_map[r_idx] = 0.0
-        elif patron:
+        # Si tiene patrón de cuenta contable, SIEMPRE se busca en la Balanza (incluso si en Excel tenía fórmula SUMIFS)
+        if patron:
             monto = 0.0
             p_prefix = patron.split('-')[0].strip() if '-' in patron else patron[:3]
 
             for b in balanza_records:
                 if coincide_cuenta_robusta(b['cta_raw'], patron):
                     if tipo == 'mes':
-                        # Lógica Del Mes (Cols E y F)
+                        # Del Mes (Cols E y F)
                         if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
                             monto += abs(b['cargos_m'] - b['abonos_m'])
                         elif p_prefix.startswith(('4', '720', '730')):
@@ -196,7 +215,7 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
                         else:
                             monto += b['cargos_m'] - b['abonos_m']
                     else:
-                        # Lógica Acumulada (Cols G y H)
+                        # Acumulado (Cols G y H)
                         if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
                             monto += abs(b['deudor_f'] - b['acreedor_f'])
                         elif p_prefix.startswith(('4', '720', '730')):
@@ -205,13 +224,17 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
                             monto += b['deudor_f'] - b['acreedor_f']
 
             val_map[r_idx] = monto
+        elif c_form and str(c_form).startswith('='):
+            # Es un total o subtotal interno
+            formulas_map[r_idx] = c_form
+            val_map[r_idx] = 0.0
         else:
             val_map[r_idx] = 0.0
 
-    # Resolver fórmulas en cascada
+    # Resolver las fórmulas en cascada
     val_map = resolver_todas_las_formulas(val_map, formulas_map)
 
-    # Construir la tabla final
+    # Construcción de la tabla
     ventas_totales = val_map.get(91, 0.0) or 1.0
     col_monto_hdr = 'DEL MES' if tipo == 'mes' else 'ACUMULADO'
     col_pct_hdr = '% MES' if tipo == 'mes' else '% ACUM'
@@ -229,7 +252,7 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
             continue
 
         pct = (v / ventas_totales) * 100 if ventas_totales else 0.0
-        es_formula = bool(c_form and str(c_form).startswith('='))
+        es_formula = bool(c_form and str(c_form).startswith('=') and not patron)
         es_cuenta = bool(patron)
 
         reporte.append({
@@ -242,7 +265,7 @@ def generar_reporte_estado_resultados(df_balanza, plantilla, tipo='mes'):
     return pd.DataFrame(reporte)
 
 
-# --- INTERFAZ GRAFICA STREAMLIT ---
+# --- INTERFAZ STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
@@ -275,21 +298,18 @@ if estructura:
     if empresa_seleccionada:
         df_balanza = cargar_hoja_balanza(ruta_balanza, empresa_seleccionada)
 
-        # MÓDULO CON PESTAÑAS SEPARADAS PARA MES Y ACUMULADO
         tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
             "📑 Balanzas de Comprobación",
             "📈 Estado de Resultados (MES)",
             "📊 Estado de Resultados (ACUM)",
         ])
 
-        # PESTAÑA 1: BALANZAS
         with tab_balanzas:
             st.subheader(
                 f"Balanza de Comprobación - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
             )
             st.dataframe(df_balanza, use_container_width=True, hide_index=True)
 
-        # PESTAÑA 2: ESTADO DE RESULTADOS DEL MES
         with tab_er_mes:
             st.subheader(
                 f"Estado de Resultados (DEL MES) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
@@ -322,7 +342,6 @@ if estructura:
                         mime="text/csv",
                     )
 
-        # PESTAÑA 3: ESTADO DE RESULTADOS ACUMULADO
         with tab_er_acum:
             st.subheader(
                 f"Estado de Resultados (ACUMULADO) - {empresa_seleccionada} ({mes_sel}/{anio_sel})"
