@@ -91,7 +91,7 @@ def filtrar_no_eliminados(df):
 # --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
 def mostrar_tabla_con_totales_oracle(df_entrada, cols_num):
     if df_entrada.empty:
-        st.info("No hay registros para mostrar.")
+        st.info("No hay registros que coincidan con los filtros seleccionados.")
         return
 
     df_calc = df_entrada.copy()
@@ -108,7 +108,7 @@ def mostrar_tabla_con_totales_oracle(df_entrada, cols_num):
             val = row.get(col, '')
             if col in cols_num:
                 html.append(f'<td class="text-right">{formato_mx(val)}</td>')
-            elif any(k in str(col).lower() for k in ['doc', 'folio', 'fecha', 'date', 'tipo', 'moneda', 'curr', 'periodo', 'cuenta', 'id', 'nivel']):
+            elif any(k in str(col).lower() for k in ['doc', 'folio', 'fecha', 'date', 'tipo', 'moneda', 'curr', 'periodo', 'cuenta', 'id', 'nivel', 'año', 'anio', 'mes']):
                 html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
             else:
                 html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
@@ -200,30 +200,54 @@ submodulo = st.sidebar.radio(
 if submodulo == "📊 Balanza de Comprobación":
     st.title("📊 Balanza de Comprobación Contable")
 
+    if df_balanza is None or df_balanza.empty:
+        st.warning("⚠️ No se encontraron registros automáticos de Balanza.")
+        if lista_hojas:
+            hoja_manual = st.selectbox("Selecciona manualmente la pestaña de Balanza:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_bal")
+            if hoja_manual != "-- Seleccionar --":
+                df_balanza = pd.read_excel(ruta_master, sheet_name=hoja_manual)
+
     if df_balanza is not None and not df_balanza.empty:
         df_b = df_balanza.copy()
 
+        # Normalizar columnas numéricas
         cols_num_bal = [c for c in df_b.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import', 'inicial', 'final'])]
         for col_m in cols_num_bal:
             df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
 
+        # Detectar columnas para filtros
+        col_emp = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
+        col_anio = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['año', 'anio', 'ejercicio'])), None)
+        col_mes = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['mes', 'periodo'])), None)
+        col_con = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['cuenta', 'nombre', 'concepto', 'descripcion'])), None)
+
         st.markdown("#### ⚙️ Filtros de Selección")
-        f1, f2, f3 = st.columns(3)
+        f1, f2, f3, f4 = st.columns(4)
         with f1:
-            col_emp = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
             if col_emp:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b[col_emp].dropna().unique()), key="bal_emp")
-                if emp_sel: df_b = df_b[df_b[col_emp].isin(emp_sel)]
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b[col_emp].dropna().astype(str).unique()), key="bal_emp")
+                if emp_sel: df_b = df_b[df_b[col_emp].astype(str).isin(emp_sel)]
+            else:
+                st.info("Sin col. Empresa")
+
         with f2:
-            col_per = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['periodo', 'mes', 'año', 'anio'])), None)
-            if col_per:
-                per_sel = st.multiselect("Periodo Contable:", sorted(df_b[col_per].astype(str).dropna().unique()), key="bal_per")
-                if per_sel: df_b = df_b[df_b[col_per].astype(str).isin(per_sel)]
+            if col_anio:
+                anio_sel = st.multiselect("Año:", sorted(df_b[col_anio].dropna().astype(str).unique(), reverse=True), key="bal_anio")
+                if anio_sel: df_b = df_b[df_b[col_anio].astype(str).isin(anio_sel)]
+            else:
+                st.info("Sin col. Año")
+
         with f3:
-            col_niv = next((c for c in df_b.columns if 'nivel' in str(c).lower()), None)
-            if col_niv:
-                niv_sel = st.multiselect("Nivel de Cuenta:", sorted(df_b[col_niv].dropna().unique()), key="bal_niv")
-                if niv_sel: df_b = df_b[df_b[col_niv].isin(niv_sel)]
+            if col_mes:
+                mes_sel = st.multiselect("Mes / Periodo:", sorted(df_b[col_mes].dropna().astype(str).unique()), key="bal_mes")
+                if mes_sel: df_b = df_b[df_b[col_mes].astype(str).isin(mes_sel)]
+            else:
+                st.info("Sin col. Mes")
+
+        with f4:
+            if col_con:
+                con_fil = st.text_input("Buscar Cuenta/Concepto:", key="bal_con")
+                if con_fil: df_b = df_b[df_b[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
 
         st.markdown("---")
 
@@ -235,21 +259,19 @@ if submodulo == "📊 Balanza de Comprobación":
             st.markdown("---")
 
         mostrar_tabla_con_totales_oracle(df_b, cols_num_bal)
-    else:
-        st.warning("⚠️ No se encontraron registros automáticos de Balanza.")
-        if lista_hojas:
-            hoja_manual = st.selectbox("Selecciona manualmente la pestaña de Balanza:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_bal")
-            if hoja_manual != "-- Seleccionar --":
-                df_b_man = pd.read_excel(ruta_master, sheet_name=hoja_manual)
-                cols_man = [c for c in df_b_man.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'monto', 'total', 'import'])]
-                for c in cols_man: df_b_man[c] = pd.to_numeric(df_b_man[c], errors='coerce').fillna(0.0)
-                mostrar_tabla_con_totales_oracle(df_b_man, cols_man)
 
 # ==========================================
 # 2. ESTADO DE RESULTADOS MENSUAL
 # ==========================================
 elif submodulo == "📅 Estado de Resultados Mensual":
     st.title("📅 Estado de Resultados Mensual")
+
+    if df_er_men is None or df_er_men.empty:
+        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Mensual.")
+        if lista_hojas:
+            hoja_manual_m = st.selectbox("Selecciona manualmente la pestaña del ER Mensual:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_erm")
+            if hoja_manual_m != "-- Seleccionar --":
+                df_er_men = pd.read_excel(ruta_master, sheet_name=hoja_manual_m)
 
     if df_er_men is not None and not df_er_men.empty:
         df_m = df_er_men.copy()
@@ -258,36 +280,54 @@ elif submodulo == "📅 Estado de Resultados Mensual":
         for col_m in cols_num_m:
             df_m[col_m] = pd.to_numeric(df_m[col_m], errors='coerce').fillna(0.0)
 
+        col_emp_m = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
+        col_anio_m = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['año', 'anio', 'ejercicio'])), None)
+        col_mes_m = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['mes', 'periodo'])), None)
+        col_con_m = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
+
         st.markdown("#### ⚙️ Filtros de Selección")
-        m1, m2 = st.columns(2)
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
-            col_emp = next((c for c in df_m.columns if 'empresa' in str(c).lower()), None)
-            if col_emp:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_m[col_emp].dropna().unique()), key="er_m_emp")
-                if emp_sel: df_m = df_m[df_m[col_emp].isin(emp_sel)]
+            if col_emp_m:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_m[col_emp_m].dropna().astype(str).unique()), key="er_m_emp")
+                if emp_sel: df_m = df_m[df_m[col_emp_m].astype(str).isin(emp_sel)]
+            else:
+                st.info("Sin col. Empresa")
+
         with m2:
-            col_con = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
-            if col_con:
+            if col_anio_m:
+                anio_sel = st.multiselect("Año:", sorted(df_m[col_anio_m].dropna().astype(str).unique(), reverse=True), key="er_m_anio")
+                if anio_sel: df_m = df_m[df_m[col_anio_m].astype(str).isin(anio_sel)]
+            else:
+                st.info("Sin col. Año")
+
+        with m3:
+            if col_mes_m:
+                mes_sel = st.multiselect("Mes / Periodo:", sorted(df_m[col_mes_m].dropna().astype(str).unique()), key="er_m_mes")
+                if mes_sel: df_m = df_m[df_m[col_mes_m].astype(str).isin(mes_sel)]
+            else:
+                st.info("Sin col. Mes")
+
+        with m4:
+            if col_con_m:
                 con_fil = st.text_input("Buscar Concepto/Cuenta:", key="er_m_con")
-                if con_fil: df_m = df_m[df_m[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
+                if con_fil: df_m = df_m[df_m[col_con_m].astype(str).str.contains(con_fil, case=False, na=False)]
 
         st.markdown("---")
         mostrar_tabla_con_totales_oracle(df_m, cols_num_m)
-    else:
-        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Mensual.")
-        if lista_hojas:
-            hoja_manual_m = st.selectbox("Selecciona manualmente la pestaña del ER Mensual:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_erm")
-            if hoja_manual_m != "-- Seleccionar --":
-                df_m_man = pd.read_excel(ruta_master, sheet_name=hoja_manual_m)
-                cols_man_m = [c for c in df_m_man.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'saldo'])]
-                for c in cols_man_m: df_m_man[c] = pd.to_numeric(df_m_man[c], errors='coerce').fillna(0.0)
-                mostrar_tabla_con_totales_oracle(df_m_man, cols_man_m)
 
 # ==========================================
 # 3. ESTADO DE RESULTADOS ACUMULADO
 # ==========================================
 elif submodulo == "📈 Estado de Resultados Acumulado":
     st.title("📈 Estado de Resultados Acumulado")
+
+    if df_er_acu is None or df_er_acu.empty:
+        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Acumulado.")
+        if lista_hojas:
+            hoja_manual_a = st.selectbox("Selecciona manualmente la pestaña del ER Acumulado:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_era")
+            if hoja_manual_a != "-- Seleccionar --":
+                df_er_acu = pd.read_excel(ruta_master, sheet_name=hoja_manual_a)
 
     if df_er_acu is not None and not df_er_acu.empty:
         df_a = df_er_acu.copy()
@@ -296,27 +336,38 @@ elif submodulo == "📈 Estado de Resultados Acumulado":
         for col_m in cols_num_a:
             df_a[col_m] = pd.to_numeric(df_a[col_m], errors='coerce').fillna(0.0)
 
+        col_emp_a = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
+        col_anio_a = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['año', 'anio', 'ejercicio'])), None)
+        col_mes_a = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['mes', 'periodo'])), None)
+        col_con_a = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
+
         st.markdown("#### ⚙️ Filtros de Selección")
-        a1, a2 = st.columns(2)
+        a1, a2, a3, a4 = st.columns(4)
         with a1:
-            col_emp = next((c for c in df_a.columns if 'empresa' in str(c).lower()), None)
-            if col_emp:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_a[col_emp].dropna().unique()), key="er_a_emp")
-                if emp_sel: df_a = df_a[df_a[col_emp].isin(emp_sel)]
+            if col_emp_a:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_a[col_emp_a].dropna().astype(str).unique()), key="er_a_emp")
+                if emp_sel: df_a = df_a[df_a[col_emp_a].astype(str).isin(emp_sel)]
+            else:
+                st.info("Sin col. Empresa")
+
         with a2:
-            col_con = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
-            if col_con:
+            if col_anio_a:
+                anio_sel = st.multiselect("Año:", sorted(df_a[col_anio_a].dropna().astype(str).unique(), reverse=True), key="er_a_anio")
+                if anio_sel: df_a = df_a[df_a[col_anio_a].astype(str).isin(anio_sel)]
+            else:
+                st.info("Sin col. Año")
+
+        with a3:
+            if col_mes_a:
+                mes_sel = st.multiselect("Mes / Periodo:", sorted(df_a[col_mes_a].dropna().astype(str).unique()), key="er_a_mes")
+                if mes_sel: df_a = df_a[df_a[col_mes_a].astype(str).isin(mes_sel)]
+            else:
+                st.info("Sin col. Mes")
+
+        with a4:
+            if col_con_a:
                 con_fil = st.text_input("Buscar Concepto/Cuenta:", key="er_a_con")
-                if con_fil: df_a = df_a[df_a[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
+                if con_fil: df_a = df_a[df_a[col_con_a].astype(str).str.contains(con_fil, case=False, na=False)]
 
         st.markdown("---")
         mostrar_tabla_con_totales_oracle(df_a, cols_num_a)
-    else:
-        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Acumulado.")
-        if lista_hojas:
-            hoja_manual_a = st.selectbox("Selecciona manualmente la pestaña del ER Acumulado:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_era")
-            if hoja_manual_a != "-- Seleccionar --":
-                df_a_man = pd.read_excel(ruta_master, sheet_name=hoja_manual_a)
-                cols_man_a = [c for c in df_a_man.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'acumulado', 'saldo'])]
-                for c in cols_man_a: df_a_man[c] = pd.to_numeric(df_a_man[c], errors='coerce').fillna(0.0)
-                mostrar_tabla_con_totales_oracle(df_a_man, cols_man_a)
