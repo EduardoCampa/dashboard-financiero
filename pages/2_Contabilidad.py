@@ -1,538 +1,322 @@
-import glob
+import streamlit as st
+import pandas as pd
 import io
 import os
-import re
-import openpyxl
-import pandas as pd
-import streamlit as st
-
-st.set_page_config(
-    page_title="Módulo Contable", layout="wide", initial_sidebar_state="expanded"
-)
-
-st.title("📊 Módulo Contable - Reporte Multiempreza")
-
-
-# --- BUSCAR BALANZAS POR AÑO Y MES ---
-def obtener_estructura_balanzas():
-    archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
-    estructura = []
-
-    for path in archivos:
-        path_norm = path.replace("\\", "/")
-        partes = path_norm.split("/")
-
-        if len(partes) >= 4:
-            anio = partes[-3]
-            mes = partes[-2]
-            estructura.append({
-                'anio': str(anio),
-                'mes': str(mes),
-                'ruta': path_norm,
-                'mtime': os.path.getmtime(path),
-            })
-
-    if estructura:
-        estructura.sort(key=lambda x: x['mtime'], reverse=True)
-
-    return estructura
-
-
-@st.cache_data(ttl=300)
-def obtener_lista_empresas(ruta):
-    xls = pd.ExcelFile(ruta)
-    sheets = xls.sheet_names
-    if len(sheets) > 1 and "Hoja1" in sheets:
-        sheets.remove("Hoja1")
-    return sheets
-
-
-@st.cache_data(ttl=300)
-def cargar_hoja_balanza(ruta, nombre_hoja):
-    return pd.read_excel(ruta, sheet_name=nombre_hoja)
-
-
-# --- PLANTILLA DE EXCEL ---
-@st.cache_data(ttl=3600)
-def cargar_plantilla_formato():
-    ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
-    if not os.path.exists(ruta_formato):
-        return []
-
-    wb = openpyxl.load_workbook(ruta_formato, data_only=False)
-    sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
-
-    plantilla = []
-    for i in range(4, sheet.max_row + 1):
-        cta = sheet.cell(row=i, column=1).value
-        concepto = sheet.cell(row=i, column=2).value
-        c_formula = sheet.cell(row=i, column=3).value
-        d_formula = sheet.cell(row=i, column=4).value
-
-        if cta or concepto or c_formula:
-            plantilla.append({
-                'row_idx': i,
-                'cuenta_patron': str(cta).strip() if cta else None,
-                'concepto': str(concepto).strip() if concepto else '',
-                'c_formula': str(c_formula).strip() if c_formula else None,
-                'd_formula': str(d_formula).strip() if d_formula else None,
-            })
-    return plantilla
-
-
-# --- PARSER NUMÉRICO ROBUSTO ---
-def parse_monto_robusto(val):
-    if pd.isnull(val):
-        return 0.0
-    val_str = (
-        str(val).replace('$', '').replace(',', '').replace(' ', '').strip()
-    )
-    if not val_str or val_str.lower() in ('nan', 'none', '-'):
-        return 0.0
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0.0
-
-
-# --- EVALUADOR DE FÓRMULAS EN CASCADA ---
-def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
-    vals = dict(mapa_valores)
-
-    for _ in range(5):
-        for r_idx, f_str in mapa_formulas.items():
-            f_clean = f_str.upper().replace(' ', '').replace('$', '')
-
-            m_sub = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f_clean)
-            if m_sub:
-                r_s, r_e = int(m_sub.group(1)), int(m_sub.group(2))
-                vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
-                continue
-
-            expr_raw = re.sub(r'^=\+?', '', f_clean)
-
-            def sustituir_celda(match):
-                r_num = int(match.group(1))
-                return str(vals.get(r_num, 0.0))
-
-            expr = re.sub(r'C(\d+)', sustituir_celda, expr_raw)
-
-            try:
-                if re.match(r'^[0-9\.\+\-\*\/\(\)\s]+$', expr):
-                    vals[r_idx] = float(eval(expr))
-            except Exception:
-                pass
-    return vals
-
-
-# --- COINCIDENCIA FLEXIBLE DE CUENTAS ---
-def coincide_cuenta_robusta(cta_balanza, patron_template):
-    if not patron_template or patron_template in ('None', 'CUENTA', ''):
-        return False
-
-    cb = str(cta_balanza).strip()
-    pt = str(patron_template).strip()
-
-    cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
-    pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
-
-    if cb_clean == pt_clean:
-        return True
-
-    p_segs = pt.split('-')
-    b_segs = cb.split('-')
-
-    if len(p_segs) >= 3 and len(b_segs) >= 3:
-        if p_segs[0] == b_segs[0]:
-            p_seg2_is_wildcard = ('?' in p_segs[1]) or (
-                p_segs[1] in ('00000', '0000', '000', '99999')
-            )
-
-            try:
-                seg3_match = (p_segs[2] == b_segs[2]) or (
-                    int(p_segs[2]) == int(b_segs[2])
-                )
-            except ValueError:
-                seg3_match = p_segs[2] == b_segs[2]
-
-            if p_seg2_is_wildcard and seg3_match:
-                if len(p_segs) >= 4 and len(b_segs) >= 4:
-                    try:
-                        return (p_segs[3] == b_segs[3]) or (
-                            int(p_segs[3]) == int(b_segs[3])
-                        )
-                    except ValueError:
-                        return p_segs[3] == b_segs[3]
-                return True
-
-            try:
-                if int(p_segs[1]) == int(b_segs[1]) and seg3_match:
-                    if len(p_segs) >= 4 and len(b_segs) >= 4:
-                        return int(p_segs[3]) == int(b_segs[3])
-                    return True
-            except ValueError:
-                pass
-
-    regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
-    return bool(re.match(regex_str, cb))
-
-
-# --- BUSCADOR DE MONTO EN BALANZA ---
-def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
-    pt = str(patron_template).strip()
-    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
-    pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
-
-    exact_match = None
-    for b in balanza_records:
-        cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
-        if cb_clean == pt_clean:
-            exact_match = b
-            break
-
-    records_a_sumar = []
-    if exact_match:
-        records_a_sumar = [exact_match]
-    else:
-        for b in balanza_records:
-            if coincide_cuenta_robusta(b['cta_raw'], pt):
-                records_a_sumar.append(b)
-
-    monto = 0.0
-    for b in records_a_sumar:
-        if tipo == 'mes':
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['cargos_m'] - b['abonos_m'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['abonos_m'] - b['cargos_m']
-            else:
-                monto += b['cargos_m'] - b['abonos_m']
-        else:
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['deudor_f'] - b['acreedor_f'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['acreedor_f'] - b['deudor_f']
-            else:
-                monto += b['deudor_f'] - b['acreedor_f']
-
-    return monto
-
-
-# --- CALCULAR VALORES DE UNA EMPRESA INDIVIDUAL ---
-def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
-    if df_balanza.empty or not plantilla:
-        return {}
-
-    num_cols = df_balanza.shape[1]
-
-    col_cta = 0
-    col_cargos_m = num_cols - 4
-    col_abonos_m = num_cols - 3
-    col_deudor_f = num_cols - 2
-    col_acreedor_f = num_cols - 1
-
-    balanza_records = []
-    for idx, row in df_balanza.iterrows():
-        cta_raw = str(row.iloc[col_cta]).strip()
-        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
-            continue
-
-        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
-            continue
-
-        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
-        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
-        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
-        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-
-        balanza_records.append({
-            'cta_raw': cta_raw,
-            'cargos_m': cargos_m,
-            'abonos_m': abonos_m,
-            'deudor_f': deudor_f,
-            'acreedor_f': acreedor_f,
-        })
-
-    val_map = {}
-    formulas_map = {}
-
-    for row in plantilla:
-        r_idx = row['row_idx']
-        patron = row['cuenta_patron']
-        c_form = row['c_formula']
-
-        if patron:
-            val_map[r_idx] = obtener_monto_cuenta_balanza(
-                patron, balanza_records, tipo=tipo
-            )
-        elif c_form and str(c_form).startswith('='):
-            formulas_map[r_idx] = c_form
-            val_map[r_idx] = 0.0
-        else:
-            val_map[r_idx] = 0.0
-
-    return resolver_todas_las_formulas(val_map, formulas_map)
-
-
-# --- GENERADOR MULTIEMPRESA ---
-def generar_reporte_multiempresa(
-    ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
-):
-    if not empresas_seleccionadas or not plantilla:
-        return pd.DataFrame()
-
-    mapas_empresas = {}
-    for emp in empresas_seleccionadas:
-        df_b = cargar_hoja_balanza(ruta_balanza, emp)
-        mapas_empresas[emp] = calcular_mapa_valores_empresa(
-            df_b, plantilla, tipo=tipo
-        )
-
-    reporte = []
-    incluir_consolidado = len(empresas_seleccionadas) > 1
-
-    for row in plantilla:
-        r_idx = row['row_idx']
-        patron = row['cuenta_patron']
-        concepto = row['concepto']
-        c_form = row['c_formula']
-
-        if not patron and not concepto and not c_form:
-            continue
-
-        es_formula = bool(c_form and str(c_form).startswith('=') and not patron)
-        es_cuenta = bool(patron)
-        es_dato = es_cuenta or es_formula
-
-        fila_dict = {
-            'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto,
+import glob
+
+st.set_page_config(page_title="Contabilidad - Grupo SERVYRE", layout="wide")
+
+# ==========================================
+# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO ORACLE CLOUD / ENTERPRISE)
+# ==========================================
+st.markdown("""
+    <style>
+        .oracle-table-container {
+            width: 100%;
+            overflow-x: auto;
+            margin-bottom: 20px;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
+        .oracle-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 13px;
+            background-color: #ffffff;
+            color: #333333;
+        }
+        .oracle-table th {
+            background-color: #f0f2f5;
+            color: #1f497d;
+            font-weight: bold;
+            text-align: center;
+            padding: 8px 10px;
+            border: 1px solid #d9d9d9;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .oracle-table td {
+            padding: 6px 10px;
+            border: 1px solid #e5e5e5;
+            vertical-align: middle;
+        }
+        .oracle-table tr:nth-child(even) {
+            background-color: #fcfcfc;
+        }
+        .oracle-table tr:hover {
+            background-color: #f0f4f9;
+        }
+        .oracle-table tr.total-row {
+            background-color: #e6ecf5 !important;
+            font-weight: bold;
+            color: #000000;
+            border-top: 2px solid #1f497d;
+            border-bottom: 2px solid #1f497d;
+        }
+        .oracle-table tr.total-row td {
+            border: 1px solid #b0c4de;
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
+    </style>
+""", unsafe_allow_html=True)
 
-        monto_total_consolidado = 0.0
+# --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
+def formato_mx(val):
+    if pd.isnull(val):
+        return "$0.00"
+    try:
+        num = float(val)
+        partes = f"{num:,.2f}".split(".")
+        entero_formateado = f"{int(partes[0].replace(',', '')):,}"
+        decimales = partes[1] if len(partes) > 1 else "00"
+        prefix = "-$" if num < 0 else "$"
+        return f"{prefix}{abs(int(partes[0].replace(',', ''))):,}.{decimales}"
+    except (ValueError, TypeError):
+        return str(val)
 
-        for emp in empresas_seleccionadas:
-            m_emp = mapas_empresas[emp].get(r_idx, 0.0)
-            ventas_emp = mapas_empresas[emp].get(91, 0.0) or 1.0
-            pct_emp = (m_emp / ventas_emp) * 100 if ventas_emp else 0.0
+# --- FUNCIÓN AUXILIAR DE FILTRADO DE REGISTROS ELIMINADOS ---
+def filtrar_no_eliminados(df):
+    if df is None or df.empty:
+        return df
+    col_del = next((c for c in ['Deleted', 'Delete', 'deleted', 'delete'] if c in df.columns), None)
+    if col_del:
+        df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
+    return df
 
-            fila_dict[f"{emp}"] = m_emp if es_dato else None
-            fila_dict[f"% {emp}"] = pct_emp if es_dato else None
-
-            if es_dato:
-                monto_total_consolidado += m_emp
-
-        if incluir_consolidado:
-            tot_ventas_todas = sum(
-                mapas_empresas[e].get(91, 0.0) for e in empresas_seleccionadas
-            ) or 1.0
-            pct_total = (
-                (monto_total_consolidado / tot_ventas_todas) * 100
-                if tot_ventas_todas
-                else 0.0
-            )
-
-            fila_dict['TOTAL CONSOLIDADO'] = (
-                monto_total_consolidado if es_dato else None
-            )
-            fila_dict['% TOTAL'] = pct_total if es_dato else None
-
-        es_subtotal_o_total = any(
-            kw in concepto.lower()
-            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas']
-        )
-
-        fila_dict['es_total'] = es_subtotal_o_total or es_formula
-        fila_dict['es_encabezado'] = (
-            not patron and not es_formula and bool(concepto)
-        )
-
-        reporte.append(fila_dict)
-
-    return pd.DataFrame(reporte)
-
-
-# --- FORMATO DE TABLA ESTILO EXCEL ---
-def renderizar_tabla_multiempresa(df_er, empresas):
-    if df_er.empty:
+# --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
+def mostrar_tabla_con_totales_oracle(df_entrada, cols_num):
+    if df_entrada.empty:
+        st.info("No hay registros para mostrar.")
         return
 
-    df_disp = df_er.copy()
+    df_calc = df_entrada.copy()
+    cols_existentes = list(df_calc.columns)
+    
+    html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
+    for col in cols_existentes:
+        html.append(f'<th>{col}</th>')
+    html.append('</tr></thead><tbody>')
 
-    def aplicar_estilo_excel(row):
-        styles = [''] * len(row)
-        es_total = row.get('es_total', False)
-        es_encabezado = row.get('es_encabezado', False)
-
-        if es_total:
-            styles = [
-                'font-weight: bold; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #475569; border-bottom: 2px solid #94a3b8;'
-            ] * len(row)
-        elif es_encabezado:
-            styles = [
-                'font-weight: bold; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
-            ] * len(row)
-
-        return styles
-
-    df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
-
-    format_dict = {}
-    for emp in empresas:
-        format_dict[emp] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict[f"% {emp}"] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-
-    if 'TOTAL CONSOLIDADO' in df_clean.columns:
-        format_dict['TOTAL CONSOLIDADO'] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict['% TOTAL'] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-
-    styler = (
-        df_clean.style.apply(aplicar_estilo_excel, axis=1)
-        .format(format_dict)
-        .set_properties(
-            **{
-                'padding': '6px 10px',
-                'font-family': 'Consolas, monospace',
-                'font-size': '13px',
-            }
-        )
-    )
-
-    st.dataframe(styler, use_container_width=True, hide_index=True)
-
-
-# --- EXPORTADOR A EXCEL (.XLSX) ---
-def exportar_excel_multiempresa_openpyxl(df_er, nombre_hoja):
-    output = io.BytesIO()
-    df_clean = df_er.drop(
-        columns=['es_total', 'es_encabezado'], errors='ignore'
-    ).copy()
-
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_clean.to_excel(writer, sheet_name=nombre_hoja, index=False)
-
-    return output.getvalue()
-
-
-# --- INTERFAZ STREAMLIT ---
-estructura = obtener_estructura_balanzas()
-plantilla = cargar_plantilla_formato()
-
-if estructura:
-    anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
-
-    col_a, col_m, col_e = st.columns([1, 1, 2])
-
-    with col_a:
-        anio_sel = st.selectbox("Selecciona Año:", anios_disponibles)
-
-    meses_disponibles = sorted(
-        list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
-        reverse=True,
-    )
-
-    with col_m:
-        mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
-
-    ruta_balanza = next(
-        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
-        estructura[0]['ruta'],
-    )
-
-    lista_empresas = obtener_lista_empresas(ruta_balanza)
-
-    with col_e:
-        empresas_seleccionadas = st.multiselect(
-            "Selecciona Empresa(s):",
-            lista_empresas,
-            default=[lista_empresas[0]] if lista_empresas else [],
-        )
-
-    if empresas_seleccionadas:
-        tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
-            "📑 Balanzas de Comprobación",
-            "📈 Estado de Resultados (MES)",
-            "📊 Estado de Resultados (ACUM)",
-        ])
-
-        with tab_balanzas:
-            for emp in empresas_seleccionadas:
-                st.subheader(
-                    f"Balanza de Comprobación - {emp} ({mes_sel}/{anio_sel})"
-                )
-                df_b = cargar_hoja_balanza(ruta_balanza, emp)
-                st.dataframe(df_b, use_container_width=True, hide_index=True)
-
-        with tab_er_mes:
-            empresas_str = ", ".join(empresas_seleccionadas)
-            st.subheader(
-                f"Estado de Resultados (DEL MES) - [{empresas_str}] ({mes_sel}/{anio_sel})"
-            )
-
-            if not plantilla:
-                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+    for _, row in df_calc.iterrows():
+        html.append('<tr>')
+        for col in cols_existentes:
+            val = row.get(col, '')
+            if col in cols_num:
+                html.append(f'<td class="text-right">{formato_mx(val)}</td>')
+            elif any(k in str(col).lower() for k in ['doc', 'folio', 'fecha', 'date', 'tipo', 'moneda', 'curr', 'periodo', 'cuenta', 'id', 'nivel']):
+                html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
             else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Del Mes)..."):
-                    df_er_mes = generar_reporte_multiempresa(
-                        ruta_balanza,
-                        empresas_seleccionadas,
-                        plantilla,
-                        tipo='mes',
-                    )
+                html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
+        html.append('</tr>')
 
-                if not df_er_mes.empty:
-                    renderizar_tabla_multiempresa(
-                        df_er_mes, empresas_seleccionadas
-                    )
+    # Fila de Totales
+    html.append('<tr class="total-row">')
+    for idx, col in enumerate(cols_existentes):
+        if col in cols_num:
+            tot_val = df_calc[col].sum() if col in df_calc.columns else 0.0
+            html.append(f'<td class="text-right">{formato_mx(tot_val)}</td>')
+        elif idx == 0:
+            html.append('<td class="text-center">TOTALES</td>')
+        else:
+            html.append('<td></td>')
+    html.append('</tr></tbody></table></div>')
 
-                    excel_mes = exportar_excel_multiempresa_openpyxl(
-                        df_er_mes, "ER_MES_CONSOLIDADO"
-                    )
-                    st.download_button(
-                        label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
-                        data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+    st.markdown("".join(html), unsafe_allow_html=True)
 
-        with tab_er_acum:
-            empresas_str = ", ".join(empresas_seleccionadas)
-            st.subheader(
-                f"Estado de Resultados (ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
-            )
+# --- CARGA INTELIGENTE DE ARCHIVOS Y PESTAÑAS ---
+ruta_master = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
-            if not plantilla:
-                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
-            else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Acumulado)..."):
-                    df_er_acum = generar_reporte_multiempresa(
-                        ruta_balanza,
-                        empresas_seleccionadas,
-                        plantilla,
-                        tipo='acum',
-                    )
+@st.cache_data
+def obtener_hojas_master(path_master):
+    if os.path.exists(path_master):
+        try:
+            xls = pd.ExcelFile(path_master)
+            return xls.sheet_names
+        except Exception:
+            return []
+    return []
 
-                if not df_er_acum.empty:
-                    renderizar_tabla_multiempresa(
-                        df_er_acum, empresas_seleccionadas
-                    )
+lista_hojas = obtener_hojas_master(ruta_master)
 
-                    excel_acum = exportar_excel_multiempresa_openpyxl(
-                        df_er_acum, "ER_ACUM_CONSOLIDADO"
-                    )
-                    st.download_button(
-                        label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
-                        data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Multiempresa_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-else:
-    st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
+@st.cache_data
+def cargar_tabla_contable(path_master, palabras_clave, patron_archivo):
+    df_res = pd.DataFrame()
+
+    # 1. Buscar dentro de Consolidado_Master.xlsx
+    if os.path.exists(path_master):
+        try:
+            xls = pd.ExcelFile(path_master)
+            for s in xls.sheet_names:
+                s_clean = s.lower().replace(" ", "").replace("_", "").replace("ó", "o").replace("á", "a")
+                if any(pk in s_clean for pk in palabras_clave):
+                    df_res = pd.read_excel(path_master, sheet_name=s)
+                    if not df_res.empty:
+                        break
+        except Exception:
+            pass
+
+    # 2. Si no se encontró en Master, buscar archivos independientes en las carpetas
+    if df_res.empty:
+        archivos = glob.glob(f"**/{patron_archivo}*.xlsx", recursive=True) + glob.glob(f"../**/{patron_archivo}*.xlsx", recursive=True)
+        archivos = list(set([f for f in archivos if "~$" not in f]))
+        
+        dfs_list = []
+        for arch in archivos:
+            try:
+                xls_ind = pd.ExcelFile(arch)
+                for sheet in xls_ind.sheet_names:
+                    df_temp = pd.read_excel(arch, sheet_name=sheet)
+                    if not df_temp.empty:
+                        dfs_list.append(df_temp)
+            except Exception:
+                continue
+        if dfs_list:
+            df_res = pd.concat(dfs_list, ignore_index=True)
+
+    return filtrar_no_eliminados(df_res)
+
+# Cargar DataFrames
+df_balanza = cargar_tabla_contable(ruta_master, ['balanza'], 'Balanza')
+df_er_men = cargar_tabla_contable(ruta_master, ['ermensual', 'er_mensual', 'mensual', 'p&l', 'resultadosmensual'], 'ER_Mensual')
+df_er_acu = cargar_tabla_contable(ruta_master, ['eracumulado', 'er_acumulado', 'acumulado', 'resultadosacumulado'], 'ER_Acumulado')
+
+# --- NAVEGACIÓN DEL MÓDULO CONTABLE ---
+st.sidebar.title("📑 Módulo de Contabilidad")
+st.sidebar.markdown("---")
+submodulo = st.sidebar.radio(
+    "Seleccione Reporte Contable:",
+    ["📊 Balanza de Comprobación", "📅 Estado de Resultados Mensual", "📈 Estado de Resultados Acumulado"],
+    key="sub_contabilidad_nav"
+)
+
+# ==========================================
+# 1. BALANZA DE COMPROBACIÓN
+# ==========================================
+if submodulo == "📊 Balanza de Comprobación":
+    st.title("📊 Balanza de Comprobación Contable")
+
+    if df_balanza is not None and not df_balanza.empty:
+        df_b = df_balanza.copy()
+
+        cols_num_bal = [c for c in df_b.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import', 'inicial', 'final'])]
+        for col_m in cols_num_bal:
+            df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
+
+        st.markdown("#### ⚙️ Filtros de Selección")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            col_emp = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b[col_emp].dropna().unique()), key="bal_emp")
+                if emp_sel: df_b = df_b[df_b[col_emp].isin(emp_sel)]
+        with f2:
+            col_per = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['periodo', 'mes', 'año', 'anio'])), None)
+            if col_per:
+                per_sel = st.multiselect("Periodo Contable:", sorted(df_b[col_per].astype(str).dropna().unique()), key="bal_per")
+                if per_sel: df_b = df_b[df_b[col_per].astype(str).isin(per_sel)]
+        with f3:
+            col_niv = next((c for c in df_b.columns if 'nivel' in str(c).lower()), None)
+            if col_niv:
+                niv_sel = st.multiselect("Nivel de Cuenta:", sorted(df_b[col_niv].dropna().unique()), key="bal_niv")
+                if niv_sel: df_b = df_b[df_b[col_niv].isin(niv_sel)]
+
+        st.markdown("---")
+
+        if cols_num_bal:
+            cols_kpi = st.columns(max(1, min(4, len(cols_num_bal))))
+            for idx, col_m in enumerate(cols_num_bal[:4]):
+                with cols_kpi[idx]:
+                    st.metric(col_m, formato_mx(df_b[col_m].sum()))
+            st.markdown("---")
+
+        mostrar_tabla_con_totales_oracle(df_b, cols_num_bal)
+    else:
+        st.warning("⚠️ No se encontraron registros automáticos de Balanza.")
+        if lista_hojas:
+            hoja_manual = st.selectbox("Selecciona manualmente la pestaña de Balanza:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_bal")
+            if hoja_manual != "-- Seleccionar --":
+                df_b_man = pd.read_excel(ruta_master, sheet_name=hoja_manual)
+                cols_man = [c for c in df_b_man.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'monto', 'total', 'import'])]
+                for c in cols_man: df_b_man[c] = pd.to_numeric(df_b_man[c], errors='coerce').fillna(0.0)
+                mostrar_tabla_con_totales_oracle(df_b_man, cols_man)
+
+# ==========================================
+# 2. ESTADO DE RESULTADOS MENSUAL
+# ==========================================
+elif submodulo == "📅 Estado de Resultados Mensual":
+    st.title("📅 Estado de Resultados Mensual")
+
+    if df_er_men is not None and not df_er_men.empty:
+        df_m = df_er_men.copy()
+
+        cols_num_m = [c for c in df_m.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'saldo', 'debe', 'haber'])]
+        for col_m in cols_num_m:
+            df_m[col_m] = pd.to_numeric(df_m[col_m], errors='coerce').fillna(0.0)
+
+        st.markdown("#### ⚙️ Filtros de Selección")
+        m1, m2 = st.columns(2)
+        with m1:
+            col_emp = next((c for c in df_m.columns if 'empresa' in str(c).lower()), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_m[col_emp].dropna().unique()), key="er_m_emp")
+                if emp_sel: df_m = df_m[df_m[col_emp].isin(emp_sel)]
+        with m2:
+            col_con = next((c for c in df_m.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
+            if col_con:
+                con_fil = st.text_input("Buscar Concepto/Cuenta:", key="er_m_con")
+                if con_fil: df_m = df_m[df_m[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
+
+        st.markdown("---")
+        mostrar_tabla_con_totales_oracle(df_m, cols_num_m)
+    else:
+        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Mensual.")
+        if lista_hojas:
+            hoja_manual_m = st.selectbox("Selecciona manualmente la pestaña del ER Mensual:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_erm")
+            if hoja_manual_m != "-- Seleccionar --":
+                df_m_man = pd.read_excel(ruta_master, sheet_name=hoja_manual_m)
+                cols_man_m = [c for c in df_m_man.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre', 'saldo'])]
+                for c in cols_man_m: df_m_man[c] = pd.to_numeric(df_m_man[c], errors='coerce').fillna(0.0)
+                mostrar_tabla_con_totales_oracle(df_m_man, cols_man_m)
+
+# ==========================================
+# 3. ESTADO DE RESULTADOS ACUMULADO
+# ==========================================
+elif submodulo == "📈 Estado de Resultados Acumulado":
+    st.title("📈 Estado de Resultados Acumulado")
+
+    if df_er_acu is not None and not df_er_acu.empty:
+        df_a = df_er_acu.copy()
+
+        cols_num_a = [c for c in df_a.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'acumulado', 'saldo', 'debe', 'haber'])]
+        for col_m in cols_num_a:
+            df_a[col_m] = pd.to_numeric(df_a[col_m], errors='coerce').fillna(0.0)
+
+        st.markdown("#### ⚙️ Filtros de Selección")
+        a1, a2 = st.columns(2)
+        with a1:
+            col_emp = next((c for c in df_a.columns if 'empresa' in str(c).lower()), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_a[col_emp].dropna().unique()), key="er_a_emp")
+                if emp_sel: df_a = df_a[df_a[col_emp].isin(emp_sel)]
+        with a2:
+            col_con = next((c for c in df_a.columns if any(k in str(c).lower() for k in ['cuenta', 'concepto', 'nombre', 'descripcion'])), None)
+            if col_con:
+                con_fil = st.text_input("Buscar Concepto/Cuenta:", key="er_a_con")
+                if con_fil: df_a = df_a[df_a[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
+
+        st.markdown("---")
+        mostrar_tabla_con_totales_oracle(df_a, cols_num_a)
+    else:
+        st.warning("⚠️ No se encontraron registros automáticos para Estado de Resultados Acumulado.")
+        if lista_hojas:
+            hoja_manual_a = st.selectbox("Selecciona manualmente la pestaña del ER Acumulado:", ["-- Seleccionar --"] + lista_hojas, key="sel_manual_era")
+            if hoja_manual_a != "-- Seleccionar --":
+                df_a_man = pd.read_excel(ruta_master, sheet_name=hoja_manual_a)
+                cols_man_a = [c for c in df_a_man.columns if any(k in str(c).lower() for k in ['monto', 'total', 'import', 'acumulado', 'saldo'])]
+                for c in cols_man_a: df_a_man[c] = pd.to_numeric(df_a_man[c], errors='coerce').fillna(0.0)
+                mostrar_tabla_con_totales_oracle(df_a_man, cols_man_a)
