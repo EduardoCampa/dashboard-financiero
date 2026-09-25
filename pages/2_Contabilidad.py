@@ -346,7 +346,23 @@ def generar_reporte_multiempresa(
             for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas', 'descuentos s/']
         )
 
+        # Identificar si es un total principal del esquema (Nivel 1)
+        es_total_principal = any(
+            kw in concepto.lower()
+            for kw in [
+                'ventas netas totales',
+                'total costo',
+                'total resultado bruto',
+                'total gastos',
+                'resultado antes de depreciacion',
+                'total depreciaciones',
+                'total costo integral de financiamiento',
+                'utilidad/perdida antes de impuestos',
+            ]
+        )
+
         fila_dict['es_total'] = es_subtotal_o_total or es_formula
+        fila_dict['es_total_principal'] = es_total_principal
         fila_dict['es_encabezado'] = (
             not patron and not es_formula and bool(concepto)
         )
@@ -356,36 +372,50 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO ESTILO FINANZAS (CLARO Y NEGRITAS EN SUMAS) ---
-def renderizar_tabla_estilo_finanzas(df_er, empresas):
+# --- FORMATO DE TABLA INTERACTIVA CON FILTRADO DE NIVEL ---
+def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
     if df_er.empty:
         return
 
     df_disp = df_er.copy()
 
-    # Función para resaltar totales en negrita manteniendo el tema claro tipo Finanzas
+    # Si se selecciona la vista "Resumida", se conservan sólo las filas de Totales Principales y Secciones
+    if nivel_detalle == "Resumido (Sólo Totales)":
+        df_disp = df_disp[
+            (df_disp['es_total_principal'] == True)
+            | (df_disp['es_encabezado'] == True)
+        ]
+
     def aplicar_estilo_finanzas(row):
         styles = [''] * len(row)
         es_total = row.get('es_total', False)
+        es_total_p = row.get('es_total_principal', False)
         es_encabezado = row.get('es_encabezado', False)
 
-        if es_total:
-            # Resaltado en NEGRITA con fondo suave gris/azul para las sumas y totales
+        if es_total_p:
+            # Resaltado ejecutivo de Total Principal
             styles = [
-                'font-weight: 800; background-color: #f1f5f9; color: #0f172a; border-top: 1.5px solid #64748b; border-bottom: 2px double #0f172a;'
+                'font-weight: 800; background-color: #e2e8f0; color: #0f172a; border-top: 2px solid #475569; border-bottom: 2px double #0f172a;'
+            ] * len(row)
+        elif es_total:
+            # Resaltado de Subtotales
+            styles = [
+                'font-weight: 700; background-color: #f1f5f9; color: #1e293b; border-top: 1.5px solid #94a3b8;'
             ] * len(row)
         elif es_encabezado:
-            # Títulos de sección en negrita azul
+            # Títulos de Sección
             styles = [
-                'font-weight: 700; background-color: #f8fafc; color: #0369a1; text-transform: uppercase;'
+                'font-weight: 700; background-color: #f8fafc; color: #0284c7; text-transform: uppercase;'
             ] * len(row)
         else:
-            # Filas normales
             styles = ['font-weight: 400; color: #334155;'] * len(row)
 
         return styles
 
-    df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
+    df_clean = df_disp.drop(
+        columns=['es_total', 'es_total_principal', 'es_encabezado'],
+        errors='ignore',
+    )
 
     format_dict = {}
     for emp in empresas:
@@ -410,7 +440,7 @@ def renderizar_tabla_estilo_finanzas(df_er, empresas):
         .set_properties(
             **{
                 'padding': '6px 12px',
-                'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                'font-family': 'Calibri, sans-serif',
                 'font-size': '13px',
                 'border': '1px solid #e2e8f0',
             }
@@ -420,8 +450,10 @@ def renderizar_tabla_estilo_finanzas(df_er, empresas):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- EXPORTADOR A EXCEL EJECUTIVO (OPENPYXL) ---
-def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
+# --- EXPORTADOR A EXCEL CON AGRUPACIONES NATIVAS (AGRUPAMIENTO / ESQUEMA [+]) ---
+def exportar_excel_con_agrupaciones_openpyxl(
+    df_er, empresas, anio, mes, tipo='mes'
+):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -436,13 +468,19 @@ def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
     TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
     SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
 
+    TOTAL_PRINCIPAL_FILL = PatternFill(
+        start_color="E2E8F0", end_color="E2E8F0", fill_type="solid"
+    )
+    TOTAL_PRINCIPAL_FONT = Font(
+        name="Calibri", size=11, bold=True, color="0F172A"
+    )
+
     TOTAL_FILL = PatternFill(
         start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
     )
-    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="1E293B")
     HEADER_ROW_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
-
-    REGULAR_FONT = Font(name="Calibri", size=11, color="1E293B")
+    REGULAR_FONT = Font(name="Calibri", size=11, color="334155")
 
     THIN_BORDER = Border(
         left=Side(style='thin', color='E2E8F0'),
@@ -472,7 +510,8 @@ def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
 
     start_row = 4
     df_clean = df_er.drop(
-        columns=['es_total', 'es_encabezado'], errors='ignore'
+        columns=['es_total', 'es_total_principal', 'es_encabezado'],
+        errors='ignore',
     )
     headers = list(df_clean.columns)
 
@@ -489,7 +528,13 @@ def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
     for r_i, row_data in df_er.iterrows():
         curr_row = start_row + 1 + r_i
         es_total = row_data.get('es_total', False)
+        es_total_p = row_data.get('es_total_principal', False)
         es_encabezado = row_data.get('es_encabezado', False)
+
+        # Configurar Agrupación / Esquema Nativo de Excel (+) y (-)
+        if not es_total_p and not es_encabezado:
+            ws.row_dimensions[curr_row].outlineLevel = 1
+            ws.row_dimensions[curr_row].hidden = False
 
         for c_i, h_col in enumerate(headers, start=1):
             val = row_data[h_col]
@@ -500,10 +545,14 @@ def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
             else:
                 cell.value = val
 
-            if es_total:
+            if es_total_p:
+                cell.font = TOTAL_PRINCIPAL_FONT
+                cell.fill = TOTAL_PRINCIPAL_FILL
+                cell.border = TOTAL_BORDER
+            elif es_total:
                 cell.font = TOTAL_FONT
                 cell.fill = TOTAL_FILL
-                cell.border = TOTAL_BORDER
+                cell.border = THIN_BORDER
             elif es_encabezado:
                 cell.font = HEADER_ROW_FONT
                 cell.border = THIN_BORDER
@@ -545,10 +594,10 @@ plantilla = cargar_plantilla_formato()
 if estructura:
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
 
-    col_a, col_m, col_e = st.columns([1, 1, 2])
+    col_a, col_m, col_e, col_v = st.columns([1, 1, 2, 2])
 
     with col_a:
-        anio_sel = st.selectbox("Selecciona Año:", anios_disponibles)
+        anio_sel = st.selectbox("Año:", anios_disponibles)
 
     meses_disponibles = sorted(
         list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
@@ -556,7 +605,7 @@ if estructura:
     )
 
     with col_m:
-        mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
+        mes_sel = st.selectbox("Mes:", meses_disponibles)
 
     ruta_balanza = next(
         (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
@@ -567,9 +616,16 @@ if estructura:
 
     with col_e:
         empresas_seleccionadas = st.multiselect(
-            "Selecciona Empresa(s):",
+            "Empresa(s):",
             lista_empresas,
             default=[lista_empresas[0]] if lista_empresas else [],
+        )
+
+    with col_v:
+        nivel_detalle = st.radio(
+            "Vista de Esquema:",
+            ["Detallado (Cuentas)", "Resumido (Sólo Totales)"],
+            horizontal=True,
         )
 
     if empresas_seleccionadas:
@@ -596,7 +652,7 @@ if estructura:
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Del Mes)..."):
+                with st.spinner("Procesando Estado de Resultados..."):
                     df_er_mes = generar_reporte_multiempresa(
                         ruta_balanza,
                         empresas_seleccionadas,
@@ -605,11 +661,13 @@ if estructura:
                     )
 
                 if not df_er_mes.empty:
-                    renderizar_tabla_estilo_finanzas(
-                        df_er_mes, empresas_seleccionadas
+                    renderizar_tabla_multiempresa(
+                        df_er_mes,
+                        empresas_seleccionadas,
+                        nivel_detalle=nivel_detalle,
                     )
 
-                    excel_mes = exportar_excel_ejecutivo_openpyxl(
+                    excel_mes = exportar_excel_con_agrupaciones_openpyxl(
                         df_er_mes,
                         empresas_seleccionadas,
                         anio_sel,
@@ -619,7 +677,7 @@ if estructura:
                     st.download_button(
                         label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
                         data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_MES_Agrupado_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
@@ -632,7 +690,7 @@ if estructura:
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Acumulado)..."):
+                with st.spinner("Procesando Estado de Resultados Acumulado..."):
                     df_er_acum = generar_reporte_multiempresa(
                         ruta_balanza,
                         empresas_seleccionadas,
@@ -641,11 +699,13 @@ if estructura:
                     )
 
                 if not df_er_acum.empty:
-                    renderizar_tabla_estilo_finanzas(
-                        df_er_acum, empresas_seleccionadas
+                    renderizar_tabla_multiempresa(
+                        df_er_acum,
+                        empresas_seleccionadas,
+                        nivel_detalle=nivel_detalle,
                     )
 
-                    excel_acum = exportar_excel_ejecutivo_openpyxl(
+                    excel_acum = exportar_excel_con_agrupaciones_openpyxl(
                         df_er_acum,
                         empresas_seleccionadas,
                         anio_sel,
@@ -655,7 +715,7 @@ if estructura:
                     st.download_button(
                         label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_ACUM_Agrupado_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
