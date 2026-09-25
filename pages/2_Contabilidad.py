@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import glob
 
 st.set_page_config(page_title="Contabilidad - Grupo SERVYRE", layout="wide")
 
@@ -27,32 +28,62 @@ def filtrar_no_eliminados(df):
         df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
     return df
 
-# --- CARGA DE DATOS CONTABLES DESDE CONSOLIDADO MASTER ---
-ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
+# --- CARGA MULTIORIGEN DE DATOS CONTABLES (MASTER + RUTA BALANZAS) ---
+ruta_master = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
 @st.cache_data
-def cargar_datos_contabilidad(path):
-    if not os.path.exists(path):
-        return None, None, None
-    try:
-        xls = pd.ExcelFile(path)
-        sheets = xls.sheet_names
+def cargar_datos_contabilidad(path_master):
+    df_balanza = pd.DataFrame()
+    df_er_men = pd.DataFrame()
+    df_er_acu = pd.DataFrame()
 
-        df_balanza = pd.read_excel(path, sheet_name='BalanzaComprobacion') if 'BalanzaComprobacion' in sheets else pd.DataFrame()
-        df_balanza = filtrar_no_eliminados(df_balanza)
+    # 1. Intentar cargar desde Consolidado_Master.xlsx
+    if os.path.exists(path_master):
+        try:
+            xls = pd.ExcelFile(path_master)
+            sheets = xls.sheet_names
 
-        df_er_men = pd.read_excel(path, sheet_name='EstadoResultadosMensual') if 'EstadoResultadosMensual' in sheets else pd.DataFrame()
-        df_er_men = filtrar_no_eliminados(df_er_men)
+            for s in sheets:
+                s_clean = s.lower().replace(" ", "").replace("_", "").replace("ó", "o").replace("á", "a")
+                if 'balanza' in s_clean and df_balanza.empty:
+                    df_balanza = pd.read_excel(path_master, sheet_name=s)
+                elif 'estadoresultadosmensual' in s_clean or 'ermensual' in s_clean:
+                    df_er_men = pd.read_excel(path_master, sheet_name=s)
+                elif 'estadoresultadosacumulado' in s_clean or 'eracumulado' in s_clean:
+                    df_er_acu = pd.read_excel(path_master, sheet_name=s)
+        except Exception as e:
+            st.error(f"Error al leer Master: {e}")
 
-        df_er_acu = pd.read_excel(path, sheet_name='EstadoResultadosAcumulado') if 'EstadoResultadosAcumulado' in sheets else pd.DataFrame()
-        df_er_acu = filtrar_no_eliminados(df_er_acu)
+    # 2. Si Balanza sigue vacía, buscar archivos Balanza.xlsx en la estructura de carpetas (Balanzas/)
+    if df_balanza.empty:
+        archivos_balanza = glob.glob("**/Balanza*.xlsx", recursive=True) + glob.glob("../**/Balanza*.xlsx", recursive=True)
+        archivos_balanza = list(set([f for f in archivos_balanza if "~$" not in f])) # Excluir temporales de Excel
+        
+        dfs_list = []
+        for arch in archivos_balanza:
+            try:
+                xls_b = pd.ExcelFile(arch)
+                for sheet in xls_b.sheet_names:
+                    df_temp = pd.read_excel(arch, sheet_name=sheet)
+                    if not df_temp.empty:
+                        # Extraer año/mes del path si viene de Balanzas/2026/08/
+                        partes_path = arch.replace("\\", "/").split("/")
+                        if len(partes_path) >= 3 and 'Periodo' not in df_temp.columns:
+                            df_temp['Origen_Archivo'] = arch
+                        dfs_list.append(df_temp)
+            except Exception:
+                continue
 
-        return df_balanza, df_er_men, df_er_acu
-    except Exception as e:
-        st.error(f"Error al cargar datos contables: {e}")
-        return None, None, None
+        if dfs_list:
+            df_balanza = pd.concat(dfs_list, ignore_index=True)
 
-df_balanza, df_er_men, df_er_acu = cargar_datos_contabilidad(ruta_archivo)
+    df_balanza = filtrar_no_eliminados(df_balanza)
+    df_er_men = filtrar_no_eliminados(df_er_men)
+    df_er_acu = filtrar_no_eliminados(df_er_acu)
+
+    return df_balanza, df_er_men, df_er_acu
+
+df_balanza, df_er_men, df_er_acu = cargar_datos_contabilidad(ruta_master)
 
 # --- NAVEGACIÓN DEL MÓDULO CONTABLE ---
 st.sidebar.title("📑 Módulo de Contabilidad")
@@ -76,7 +107,7 @@ def mostrar_tabla_con_totales_nativo(df_entrada, cols_num):
     for col in df_calc.columns:
         if col in cols_num:
             row_total[col] = df_calc[col].sum()
-        elif col in ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Concepto']:
+        elif col in ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Concepto', 'Empresa']:
             row_total[col] = "TOTAL"
         else:
             row_total[col] = ""
@@ -84,7 +115,7 @@ def mostrar_tabla_con_totales_nativo(df_entrada, cols_num):
     df_tot_row = pd.DataFrame([row_total])
     df_con_totales = pd.concat([df_calc, df_tot_row], ignore_index=True)
 
-    # Formato visual
+    # Formato visual de moneda
     df_view = df_con_totales.copy()
     for col_m in cols_num:
         if col_m in df_view.columns:
@@ -101,14 +132,14 @@ if submodulo == "📊 Balanza de Comprobación":
     if df_balanza is not None and not df_balanza.empty:
         df_b = df_balanza.copy()
 
-        cols_num_bal = [c for c in df_b.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import'])]
+        cols_num_bal = [c for c in df_b.columns if any(k in str(c).lower() for k in ['saldo', 'debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import', 'inicial', 'final'])]
         for col_m in cols_num_bal:
             df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
 
         st.markdown("#### ⚙️ Filtros de Selección")
         f1, f2, f3 = st.columns(3)
         with f1:
-            col_emp = next((c for c in df_b.columns if 'empresa' in str(c).lower()), None)
+            col_emp = next((c for c in df_b.columns if any(k in str(c).lower() for k in ['empresa', 'origen'])), None)
             if col_emp:
                 emp_sel = st.multiselect("Empresa Origen:", sorted(df_b[col_emp].dropna().unique()), key="bal_emp")
                 if emp_sel: df_b = df_b[df_b[col_emp].isin(emp_sel)]
@@ -134,7 +165,7 @@ if submodulo == "📊 Balanza de Comprobación":
 
         mostrar_tabla_con_totales_nativo(df_b, cols_num_bal)
     else:
-        st.warning("No se encontraron registros para la Balanza de Comprobación en la hoja `BalanzaComprobacion`.")
+        st.warning("⚠️ No se encontraron registros de Balanzas. Revisa que exista la pestaña `BalanzaComprobacion` en el archivo consolidado o que la carpeta `Balanzas/` contenga los archivos Excel.")
 
 # ==========================================
 # 2. ESTADO DE RESULTADOS MENSUAL
@@ -165,7 +196,7 @@ elif submodulo == "📅 Estado de Resultados Mensual":
         st.markdown("---")
         mostrar_tabla_con_totales_nativo(df_m, cols_num_m)
     else:
-        st.warning("No se encontraron registros para el Estado de Resultados Mensual en la hoja `EstadoResultadosMensual`.")
+        st.warning("No se encontraron registros para el Estado de Resultados Mensual.")
 
 # ==========================================
 # 3. ESTADO DE RESULTADOS ACUMULADO
@@ -196,4 +227,4 @@ elif submodulo == "📈 Estado de Resultados Acumulado":
         st.markdown("---")
         mostrar_tabla_con_totales_nativo(df_a, cols_num_a)
     else:
-        st.warning("No se encontraron registros para el Estado de Resultados Acumulado en la hoja `EstadoResultadosAcumulado`.")
+        st.warning("No se encontraron registros para el Estado de Resultados Acumulado.")
