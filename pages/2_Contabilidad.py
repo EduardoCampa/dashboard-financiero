@@ -1,662 +1,322 @@
-import glob
+import streamlit as st
+import pandas as pd
 import io
 import os
-import re
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-import pandas as pd
-import streamlit as st
 
-st.set_page_config(
-    page_title="Módulo Contable", layout="wide", initial_sidebar_state="expanded"
-)
-
-st.title("📊 Módulo Contable - Reporte Multiempreza")
-
-
-# --- BUSCAR BALANZAS POR AÑO Y MES ---
-def obtener_estructura_balanzas():
-    archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
-    estructura = []
-
-    for path in archivos:
-        path_norm = path.replace("\\", "/")
-        partes = path_norm.split("/")
-
-        if len(partes) >= 4:
-            anio = partes[-3]
-            mes = partes[-2]
-            estructura.append({
-                'anio': str(anio),
-                'mes': str(mes),
-                'ruta': path_norm,
-                'mtime': os.path.getmtime(path),
-            })
-
-    if estructura:
-        estructura.sort(key=lambda x: x['mtime'], reverse=True)
-
-    return estructura
-
-
-@st.cache_data(ttl=300)
-def obtener_lista_empresas(ruta):
-    xls = pd.ExcelFile(ruta)
-    sheets = xls.sheet_names
-    if len(sheets) > 1 and "Hoja1" in sheets:
-        sheets.remove("Hoja1")
-    return sheets
-
-
-@st.cache_data(ttl=300)
-def cargar_hoja_balanza(ruta, nombre_hoja):
-    return pd.read_excel(ruta, sheet_name=nombre_hoja)
-
-
-# --- PLANTILLA DE EXCEL ---
-@st.cache_data(ttl=3600)
-def cargar_plantilla_formato():
-    ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
-    if not os.path.exists(ruta_formato):
-        return []
-
-    wb = openpyxl.load_workbook(ruta_formato, data_only=False)
-    sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
-
-    plantilla = []
-    for i in range(4, sheet.max_row + 1):
-        cta = sheet.cell(row=i, column=1).value
-        concepto = sheet.cell(row=i, column=2).value
-        c_formula = sheet.cell(row=i, column=3).value
-        d_formula = sheet.cell(row=i, column=4).value
-
-        if cta or concepto or c_formula:
-            plantilla.append({
-                'row_idx': i,
-                'cuenta_patron': str(cta).strip() if cta else None,
-                'concepto': str(concepto).strip() if concepto else '',
-                'c_formula': str(c_formula).strip() if c_formula else None,
-                'd_formula': str(d_formula).strip() if d_formula else None,
-            })
-    return plantilla
-
-
-# --- PARSER NUMÉRICO ROBUSTO ---
-def parse_monto_robusto(val):
-    if pd.isnull(val):
-        return 0.0
-    val_str = (
-        str(val).replace('$', '').replace(',', '').replace(' ', '').strip()
-    )
-    if not val_str or val_str.lower() in ('nan', 'none', '-'):
-        return 0.0
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0.0
-
-
-# --- EVALUADOR DE FÓRMULAS EN CASCADA ---
-def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
-    vals = dict(mapa_valores)
-
-    for _ in range(5):
-        for r_idx, f_str in mapa_formulas.items():
-            f_clean = f_str.upper().replace(' ', '').replace('$', '')
-
-            m_sub = re.match(r'^=SUBTOTAL\(9,C(\d+):C(\d+)\)$', f_clean)
-            if m_sub:
-                r_s, r_e = int(m_sub.group(1)), int(m_sub.group(2))
-                vals[r_idx] = sum(vals.get(r, 0.0) for r in range(r_s, r_e + 1))
-                continue
-
-            expr_raw = re.sub(r'^=\+?', '', f_clean)
-
-            def sustituir_celda(match):
-                r_num = int(match.group(1))
-                return str(vals.get(r_num, 0.0))
-
-            expr = re.sub(r'C(\d+)', sustituir_celda, expr_raw)
-
-            try:
-                if re.match(r'^[0-9\.\+\-\*\/\(\)\s]+$', expr):
-                    vals[r_idx] = float(eval(expr))
-            except Exception:
-                pass
-    return vals
-
-
-# --- COINCIDENCIA FLEXIBLE DE CUENTAS ---
-def coincide_cuenta_robusta(cta_balanza, patron_template):
-    if not patron_template or patron_template in ('None', 'CUENTA', ''):
-        return False
-
-    cb = str(cta_balanza).strip()
-    pt = str(patron_template).strip()
-
-    cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
-    pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
-
-    if cb_clean == pt_clean:
-        return True
-
-    p_segs = pt.split('-')
-    b_segs = cb.split('-')
-
-    if len(p_segs) >= 3 and len(b_segs) >= 3:
-        if p_segs[0] == b_segs[0]:
-            p_seg2_is_wildcard = ('?' in p_segs[1]) or (
-                p_segs[1] in ('00000', '0000', '000', '99999')
-            )
-
-            try:
-                seg3_match = (p_segs[2] == b_segs[2]) or (
-                    int(p_segs[2]) == int(b_segs[2])
-                )
-            except ValueError:
-                seg3_match = p_segs[2] == b_segs[2]
-
-            if p_seg2_is_wildcard and seg3_match:
-                if len(p_segs) >= 4 and len(b_segs) >= 4:
-                    try:
-                        return (p_segs[3] == b_segs[3]) or (
-                            int(p_segs[3]) == int(b_segs[3])
-                        )
-                    except ValueError:
-                        return p_segs[3] == b_segs[3]
-                return True
-
-            try:
-                if int(p_segs[1]) == int(b_segs[1]) and seg3_match:
-                    if len(p_segs) >= 4 and len(b_segs) >= 4:
-                        return int(p_segs[3]) == int(b_segs[3])
-                    return True
-            except ValueError:
-                pass
-
-    regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
-    return bool(re.match(regex_str, cb))
-
-
-# --- BUSCADOR DE MONTO EN BALANZA ---
-def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
-    pt = str(patron_template).strip()
-    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
-    pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
-
-    exact_match = None
-    for b in balanza_records:
-        cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
-        if cb_clean == pt_clean:
-            exact_match = b
-            break
-
-    records_a_sumar = []
-    if exact_match:
-        records_a_sumar = [exact_match]
-    else:
-        for b in balanza_records:
-            if coincide_cuenta_robusta(b['cta_raw'], pt):
-                records_a_sumar.append(b)
-
-    monto = 0.0
-    for b in records_a_sumar:
-        if tipo == 'mes':
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['cargos_m'] - b['abonos_m'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['abonos_m'] - b['cargos_m']
-            else:
-                monto += b['cargos_m'] - b['abonos_m']
-        else:
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['deudor_f'] - b['acreedor_f'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['acreedor_f'] - b['deudor_f']
-            else:
-                monto += b['deudor_f'] - b['acreedor_f']
-
-    return monto
-
-
-# --- CALCULAR VALORES DE UNA EMPRESA INDIVIDUAL ---
-def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
-    if df_balanza.empty or not plantilla:
-        return {}
-
-    num_cols = df_balanza.shape[1]
-
-    col_cta = 0
-    col_cargos_m = num_cols - 4
-    col_abonos_m = num_cols - 3
-    col_deudor_f = num_cols - 2
-    col_acreedor_f = num_cols - 1
-
-    balanza_records = []
-    for idx, row in df_balanza.iterrows():
-        cta_raw = str(row.iloc[col_cta]).strip()
-        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
-            continue
-
-        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
-            continue
-
-        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
-        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
-        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
-        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-
-        balanza_records.append({
-            'cta_raw': cta_raw,
-            'cargos_m': cargos_m,
-            'abonos_m': abonos_m,
-            'deudor_f': deudor_f,
-            'acreedor_f': acreedor_f,
-        })
-
-    val_map = {}
-    formulas_map = {}
-
-    for row in plantilla:
-        r_idx = row['row_idx']
-        patron = row['cuenta_patron']
-        c_form = row['c_formula']
-
-        if patron:
-            val_map[r_idx] = obtener_monto_cuenta_balanza(
-                patron, balanza_records, tipo=tipo
-            )
-        elif c_form and str(c_form).startswith('='):
-            formulas_map[r_idx] = c_form
-            val_map[r_idx] = 0.0
-        else:
-            val_map[r_idx] = 0.0
-
-    return resolver_todas_las_formulas(val_map, formulas_map)
-
-
-# --- GENERADOR MULTIEMPRESA ---
-def generar_reporte_multiempresa(
-    ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
-):
-    if not empresas_seleccionadas or not plantilla:
-        return pd.DataFrame()
-
-    mapas_empresas = {}
-    for emp in empresas_seleccionadas:
-        df_b = cargar_hoja_balanza(ruta_balanza, emp)
-        mapas_empresas[emp] = calcular_mapa_valores_empresa(
-            df_b, plantilla, tipo=tipo
-        )
-
-    reporte = []
-    incluir_consolidado = len(empresas_seleccionadas) > 1
-
-    for row in plantilla:
-        r_idx = row['row_idx']
-        patron = row['cuenta_patron']
-        concepto = row['concepto']
-        c_form = row['c_formula']
-
-        if not patron and not concepto and not c_form:
-            continue
-
-        es_formula = bool(c_form and str(c_form).startswith('=') and not patron)
-        es_cuenta = bool(patron)
-        es_dato = es_cuenta or es_formula
-
-        fila_dict = {
-            'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto,
+st.set_page_config(page_title="Contabilidad - Grupo SERVYRE", layout="wide")
+
+# ==========================================
+# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO ORACLE CLOUD / ENTERPRISE)
+# ==========================================
+st.markdown("""
+    <style>
+        .oracle-table-container {
+            width: 100%;
+            overflow-x: auto;
+            margin-bottom: 20px;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
+        .oracle-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 13px;
+            background-color: #ffffff;
+            color: #333333;
+        }
+        .oracle-table th {
+            background-color: #f0f2f5;
+            color: #1f497d;
+            font-weight: bold;
+            text-align: center;
+            padding: 8px 10px;
+            border: 1px solid #d9d9d9;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .oracle-table td {
+            padding: 6px 10px;
+            border: 1px solid #e5e5e5;
+            vertical-align: middle;
+        }
+        .oracle-table tr:nth-child(even) {
+            background-color: #fcfcfc;
+        }
+        .oracle-table tr:hover {
+            background-color: #f0f4f9;
+        }
+        .oracle-table tr.total-row {
+            background-color: #e6ecf5 !important;
+            font-weight: bold;
+            color: #000000;
+            border-top: 2px solid #1f497d;
+            border-bottom: 2px solid #1f497d;
+        }
+        .oracle-table tr.total-row td {
+            border: 1px solid #b0c4de;
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
+    </style>
+""", unsafe_allow_html=True)
 
-        monto_total_consolidado = 0.0
+# --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
+def formato_mx(val):
+    if pd.isnull(val):
+        return "$0.00"
+    try:
+        num = float(val)
+        partes = f"{num:,.2f}".split(".")
+        entero_formateado = f"{int(partes[0].replace(',', '')):,}"
+        decimales = partes[1] if len(partes) > 1 else "00"
+        prefix = "-$" if num < 0 else "$"
+        return f"{prefix}{abs(int(partes[0].replace(',', ''))):,}.{decimales}"
+    except (ValueError, TypeError):
+        return str(val)
 
-        for emp in empresas_seleccionadas:
-            m_emp = mapas_empresas[emp].get(r_idx, 0.0)
-            ventas_emp = mapas_empresas[emp].get(91, 0.0) or 1.0
-            pct_emp = (m_emp / ventas_emp) * 100 if ventas_emp else 0.0
+# --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS ---
+def filtrar_no_eliminados(df):
+    if df is None or df.empty:
+        return df
+    col_del = next((c for c in ['Deleted', 'Delete', 'deleted', 'delete'] if c in df.columns), None)
+    if col_del:
+        df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
+    return df
 
-            fila_dict[f"{emp}"] = m_emp if es_dato else None
-            fila_dict[f"% {emp}"] = pct_emp if es_dato else None
-
-            if es_dato:
-                monto_total_consolidado += m_emp
-
-        if incluir_consolidado:
-            tot_ventas_todas = sum(
-                mapas_empresas[e].get(91, 0.0) for e in empresas_seleccionadas
-            ) or 1.0
-            pct_total = (
-                (monto_total_consolidado / tot_ventas_todas) * 100
-                if tot_ventas_todas
-                else 0.0
-            )
-
-            fila_dict['TOTAL CONSOLIDADO'] = (
-                monto_total_consolidado if es_dato else None
-            )
-            fila_dict['% TOTAL'] = pct_total if es_dato else None
-
-        es_subtotal_o_total = any(
-            kw in concepto.lower()
-            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas', 'descuentos s/']
-        )
-
-        fila_dict['es_total'] = es_subtotal_o_total or es_formula
-        fila_dict['es_encabezado'] = (
-            not patron and not es_formula and bool(concepto)
-        )
-
-        reporte.append(fila_dict)
-
-    return pd.DataFrame(reporte)
-
-
-# --- FORMATO DE TABLA EN PANTALLA CON TOTALES RESALTADOS Y NEGRITAS ---
-def renderizar_tabla_multiempresa(df_er, empresas):
-    if df_er.empty:
+# --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
+def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
+    if df_entrada.empty:
+        st.info("No hay registros para mostrar.")
         return
 
-    df_disp = df_er.copy()
+    df_calc = df_entrada.copy()
+    cols_existentes = [c for c in cols_orden if c in df_calc.columns]
+    
+    html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
+    for col in cols_existentes:
+        html.append(f'<th>{col}</th>')
+    html.append('</tr></thead><tbody>')
 
-    def aplicar_estilo_excel(row):
-        styles = [''] * len(row)
-        es_total = row.get('es_total', False)
-        es_encabezado = row.get('es_encabezado', False)
-
-        if es_total:
-            # Estilo resaltado con negritas para totales
-            styles = [
-                'font-weight: 800; background-color: #1e293b; color: #f8fafc; border-top: 1px solid #64748b; border-bottom: 2px double #94a3b8;'
-            ] * len(row)
-        elif es_encabezado:
-            # Estilo para títulos de sección
-            styles = [
-                'font-weight: 700; background-color: #0f172a; color: #38bdf8; text-transform: uppercase;'
-            ] * len(row)
-
-        return styles
-
-    df_clean = df_disp.drop(columns=['es_total', 'es_encabezado'])
-
-    format_dict = {}
-    for emp in empresas:
-        format_dict[emp] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict[f"% {emp}"] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-
-    if 'TOTAL CONSOLIDADO' in df_clean.columns:
-        format_dict['TOTAL CONSOLIDADO'] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict['% TOTAL'] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-
-    styler = (
-        df_clean.style.apply(aplicar_estilo_excel, axis=1)
-        .format(format_dict)
-        .set_properties(
-            **{
-                'padding': '8px 12px',
-                'font-family': 'Consolas, monospace',
-                'font-size': '13px',
-            }
-        )
-    )
-
-    st.dataframe(styler, use_container_width=True, hide_index=True)
-
-
-# --- EXPORTADOR A EXCEL EJECUTIVO PROFESIONAL (OPENPYXL) ---
-def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
-    output = io.BytesIO()
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "EDO_RESULTADOS"
-
-    ws.views.sheetView[0].showGridLines = True
-
-    # Estilos de diseño corporativo
-    HEADER_FILL = PatternFill(
-        start_color="1F2937", end_color="1F2937", fill_type="solid"
-    )
-    HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1F2937")
-    SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="4B5563")
-
-    TOTAL_FILL = PatternFill(
-        start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
-    )
-    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
-    HEADER_ROW_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
-
-    REGULAR_FONT = Font(name="Calibri", size=11, color="1E293B")
-
-    THIN_BORDER = Border(
-        left=Side(style='thin', color='E2E8F0'),
-        right=Side(style='thin', color='E2E8F0'),
-        top=Side(style='thin', color='E2E8F0'),
-        bottom=Side(style='thin', color='E2E8F0'),
-    )
-
-    TOTAL_BORDER = Border(
-        top=Side(style='thin', color='475569'),
-        bottom=Side(style='double', color='0F172A'),
-        left=Side(style='thin', color='E2E8F0'),
-        right=Side(style='thin', color='E2E8F0'),
-    )
-
-    # Bloque de Título Ejecutivo
-    tipo_str = "DEL MES" if tipo == 'mes' else "ACUMULADO"
-    ws.cell(
-        row=1,
-        column=1,
-        value=f"ESTADO DE RESULTADOS CONSOLIDADO ({tipo_str})",
-    ).font = TITLE_FONT
-    ws.cell(
-        row=2,
-        column=1,
-        value=f"Periodo: {mes}/{anio} | Empresa(s): {', '.join(empresas)}",
-    ).font = SUBTITLE_FONT
-
-    start_row = 4
-    df_clean = df_er.drop(
-        columns=['es_total', 'es_encabezado'], errors='ignore'
-    )
-    headers = list(df_clean.columns)
-
-    # Escribir encabezados
-    for c_idx, h_text in enumerate(headers, start=1):
-        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
-        cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
-        cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
-        )
-
-    ws.row_dimensions[start_row].height = 26
-
-    # Escribir filas de datos con formatos y estilos
-    for r_i, row_data in df_er.iterrows():
-        curr_row = start_row + 1 + r_i
-        es_total = row_data.get('es_total', False)
-        es_encabezado = row_data.get('es_encabezado', False)
-
-        for c_i, h_col in enumerate(headers, start=1):
-            val = row_data[h_col]
-            cell = ws.cell(row=curr_row, column=c_i)
-
-            if pd.isnull(val) or str(val) == 'None':
-                cell.value = ""
+    for _, row in df_calc.iterrows():
+        html.append('<tr>')
+        for col in cols_existentes:
+            val = row.get(col, '')
+            if col in cols_num:
+                html.append(f'<td class="text-right">{formato_mx(val)}</td>')
+            elif col in ['DocFolio', 'DocumentID', 'DateDocument', 'DateOperation', 'TIPO DOC', 'Currency', 'Moneda', 'Fecha', 'Periodo', 'Cuenta']:
+                html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
             else:
-                cell.value = val
+                html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
+        html.append('</tr>')
 
-            # Estilos por tipo de fila
-            if es_total:
-                cell.font = TOTAL_FONT
-                cell.fill = TOTAL_FILL
-                cell.border = TOTAL_BORDER
-            elif es_encabezado:
-                cell.font = HEADER_ROW_FONT
-                cell.border = THIN_BORDER
-            else:
-                cell.font = REGULAR_FONT
-                cell.border = THIN_BORDER
+    html.append('<tr class="total-row">')
+    for idx, col in enumerate(cols_existentes):
+        if col in cols_num:
+            tot_val = df_calc[col].sum() if col in df_calc.columns else 0.0
+            html.append(f'<td class="text-right">{formato_mx(tot_val)}</td>')
+        elif idx == 0:
+            html.append('<td class="text-center">TOTALES</td>')
+        else:
+            html.append('<td></td>')
+    html.append('</tr></tbody></table></div>')
 
-            # Formatos numéricos y alineación
-            if h_col in ('CUENTA', 'CONCEPTO'):
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            elif h_col.startswith('%'):
-                cell.alignment = Alignment(
-                    horizontal="right", vertical="center"
-                )
-                cell.number_format = '0.0%'
-                if isinstance(val, (int, float)):
-                    cell.value = val / 100.0  # Convertir para Excel
-            else:
-                cell.alignment = Alignment(
-                    horizontal="right", vertical="center"
-                )
-                cell.number_format = '$#,##0.00'
+    st.markdown("".join(html), unsafe_allow_html=True)
 
-    # Ajustar ancho de columnas
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+# --- CARGA DE DATOS CONTABLES DESDE CONSOLIDADO MASTER ---
+ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
-    ws.column_dimensions['A'].width = 22
-    ws.column_dimensions['B'].width = 38
+@st.cache_data
+def cargar_datos_contabilidad(path):
+    if not os.path.exists(path):
+        return None, None, None
+    try:
+        xls = pd.ExcelFile(path)
+        sheets = xls.sheet_names
 
-    wb.save(output)
-    return output.getvalue()
+        df_polizas = pd.read_excel(path, sheet_name='Polizas') if 'Polizas' in sheets else pd.DataFrame()
+        df_polizas = filtrar_no_eliminados(df_polizas)
 
+        df_balanza = pd.read_excel(path, sheet_name='BalanzaComprobacion') if 'BalanzaComprobacion' in sheets else pd.DataFrame()
+        df_balanza = filtrar_no_eliminados(df_balanza)
 
-# --- INTERFAZ STREAMLIT ---
-estructura = obtener_estructura_balanzas()
-plantilla = cargar_plantilla_formato()
+        df_cuentas = pd.read_excel(path, sheet_name='CatalogoCuentas') if 'CatalogoCuentas' in sheets else pd.DataFrame()
+        df_cuentas = filtrar_no_eliminados(df_cuentas)
 
-if estructura:
-    anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
+        return df_polizas, df_balanza, df_cuentas
+    except Exception as e:
+        st.error(f"Error al cargar datos contables: {e}")
+        return None, None, None
 
-    col_a, col_m, col_e = st.columns([1, 1, 2])
+df_polizas, df_balanza, df_cuentas = cargar_datos_contabilidad(ruta_archivo)
 
-    with col_a:
-        anio_sel = st.selectbox("Selecciona Año:", anios_disponibles)
+# --- NAVEGACIÓN DEL MÓDULO CONTABLE ---
+st.sidebar.title("📑 Módulo de Contabilidad")
+st.sidebar.markdown("---")
+submodulo = st.sidebar.radio(
+    "Seleccione Submódulo:",
+    ["📊 Balanza de Comprobación", "📖 Libro Diario / Pólizas", "🗂️ Catálogo de Cuentas"],
+    key="sub_contabilidad_nav"
+)
 
-    meses_disponibles = sorted(
-        list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
-        reverse=True,
-    )
+# ==========================================
+# 1. SUBMÓDULO: BALANZA DE COMPROBACIÓN
+# ==========================================
+if submodulo == "📊 Balanza de Comprobación":
+    st.title("📊 Balanza de Comprobación Contable")
+    
+    if df_balanza is not None and not df_balanza.empty:
+        df_b = df_balanza.copy()
 
-    with col_m:
-        mes_sel = st.selectbox("Selecciona Mes:", meses_disponibles)
+        # Normalizar columnas
+        for col_m in ['SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']:
+            if col_m in df_b.columns:
+                df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
 
-    ruta_balanza = next(
-        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
-        estructura[0]['ruta'],
-    )
+        st.markdown("#### ⚙️ Filtros de Selección")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            if 'EmpresaOrigen' in df_b.columns:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b['EmpresaOrigen'].dropna().unique()), key="bal_emp")
+                if emp_sel: df_b = df_b[df_b['EmpresaOrigen'].isin(emp_sel)]
+        with f2:
+            if 'Periodo' in df_b.columns:
+                per_sel = st.multiselect("Periodo Contable:", sorted(df_b['Periodo'].astype(str).dropna().unique()), key="bal_per")
+                if per_sel: df_b = df_b[df_b['Periodo'].astype(str).isin(per_sel)]
+        with f3:
+            if 'Nivel' in df_b.columns:
+                niv_sel = st.multiselect("Nivel de Cuenta:", sorted(df_b['Nivel'].dropna().unique()), key="bal_niv")
+                if niv_sel: df_b = df_b[df_b['Nivel'].isin(niv_sel)]
 
-    lista_empresas = obtener_lista_empresas(ruta_balanza)
+        st.markdown("---")
 
-    with col_e:
-        empresas_seleccionadas = st.multiselect(
-            "Selecciona Empresa(s):",
-            lista_empresas,
-            default=[lista_empresas[0]] if lista_empresas else [],
-        )
+        # --- KPIS BALANZA ---
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.metric("Saldo Inicial Total", formato_mx(df_b['SaldoInicial'].sum() if 'SaldoInicial' in df_b.columns else 0))
+        with k2:
+            st.metric("Cargos (Debe)", formato_mx(df_b['Debe'].sum() if 'Debe' in df_b.columns else 0))
+        with k3:
+            st.metric("Abonos (Haber)", formato_mx(df_b['Haber'].sum() if 'Haber' in df_b.columns else 0))
+        with k4:
+            st.metric("Saldo Final Total", formato_mx(df_b['SaldoFinal'].sum() if 'SaldoFinal' in df_b.columns else 0))
 
-    if empresas_seleccionadas:
-        tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
-            "📑 Balanzas de Comprobación",
-            "📈 Estado de Resultados (MES)",
-            "📊 Estado de Resultados (ACUM)",
-        ])
+        st.markdown("---")
 
-        with tab_balanzas:
-            for emp in empresas_seleccionadas:
-                st.subheader(
-                    f"Balanza de Comprobación - {emp} ({mes_sel}/{anio_sel})"
-                )
-                df_b = cargar_hoja_balanza(ruta_balanza, emp)
-                st.dataframe(df_b, use_container_width=True, hide_index=True)
+        cols_num_bal = ['SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']
+        cols_orden_bal = ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Nivel', 'SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']
 
-        with tab_er_mes:
-            empresas_str = ", ".join(empresas_seleccionadas)
-            st.subheader(
-                f"Estado de Resultados (DEL MES) - [{empresas_str}] ({mes_sel}/{anio_sel})"
-            )
+        # Mostrar por Moneda si existe la columna
+        if 'Currency' in df_b.columns and df_b['Currency'].nunique() > 1:
+            for curr in sorted(df_b['Currency'].dropna().unique()):
+                st.markdown(f"### 💱 Balanza de Comprobación — Moneda: **{curr}**")
+                df_curr = df_b[df_b['Currency'] == curr]
+                mostrar_tabla_con_totales(df_curr, cols_num_bal, cols_orden_bal)
+                st.markdown("<br>", unsafe_allow_html=True)
+        else:
+            mostrar_tabla_con_totales(df_b, cols_num_bal, cols_orden_bal)
 
-            if not plantilla:
-                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
-            else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Del Mes)..."):
-                    df_er_mes = generar_reporte_multiempresa(
-                        ruta_balanza,
-                        empresas_seleccionadas,
-                        plantilla,
-                        tipo='mes',
-                    )
+    else:
+        st.info("No se encontraron registros en la hoja `BalanzaComprobacion`.")
 
-                if not df_er_mes.empty:
-                    renderizar_tabla_multiempresa(
-                        df_er_mes, empresas_seleccionadas
-                    )
+# ==========================================
+# 2. SUBMÓDULO: LIBRO DIARIO / PÓLIZAS
+# ==========================================
+elif submodulo == "📖 Libro Diario / Pólizas":
+    st.title("📖 Libro Diario y Registro de Pólizas")
 
-                    excel_mes = exportar_excel_ejecutivo_openpyxl(
-                        df_er_mes,
-                        empresas_seleccionadas,
-                        anio_sel,
-                        mes_sel,
-                        tipo='mes',
-                    )
-                    st.download_button(
-                        label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
-                        data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+    if df_polizas is not None and not df_polizas.empty:
+        df_p = df_polizas.copy()
 
-        with tab_er_acum:
-            empresas_str = ", ".join(empresas_seleccionadas)
-            st.subheader(
-                f"Estado de Resultados (ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
-            )
+        for col_m in ['Debe', 'Haber', 'Monto']:
+            if col_m in df_p.columns:
+                df_p[col_m] = pd.to_numeric(df_p[col_m], errors='coerce').fillna(0.0)
 
-            if not plantilla:
-                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
-            else:
-                with st.spinner("Procesando Estado de Resultados Comparativo (Acumulado)..."):
-                    df_er_acum = generar_reporte_multiempresa(
-                        ruta_balanza,
-                        empresas_seleccionadas,
-                        plantilla,
-                        tipo='acum',
-                    )
+        st.markdown("#### ⚙️ Filtros de Selección")
+        p1, p2, p3, p4 = st.columns(4)
+        with p1:
+            if 'EmpresaOrigen' in df_p.columns:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_p['EmpresaOrigen'].dropna().unique()), key="pol_emp")
+                if emp_sel: df_p = df_p[df_p['EmpresaOrigen'].isin(emp_sel)]
+        with p2:
+            if 'TipoPoliza' in df_p.columns:
+                tipo_sel = st.multiselect("Tipo de Póliza:", sorted(df_p['TipoPoliza'].dropna().unique()), key="pol_tipo")
+                if tipo_sel: df_p = df_p[df_p['TipoPoliza'].isin(tipo_sel)]
+        with p3:
+            if 'Folio' in df_p.columns:
+                fol_sel = st.multiselect("Folio Póliza:", sorted(df_p['Folio'].astype(str).dropna().unique()), key="pol_fol")
+                if fol_sel: df_p = df_p[df_p['Folio'].astype(str).isin(fol_sel)]
+        with p4:
+            if 'Concepto' in df_p.columns:
+                conc_filter = st.text_input("Buscar en Concepto:", key="pol_conc")
+                if conc_filter: df_p = df_p[df_p['Concepto'].astype(str).str.contains(conc_filter, case=False, na=False)]
 
-                if not df_er_acum.empty:
-                    renderizar_tabla_multiempresa(
-                        df_er_acum, empresas_seleccionadas
-                    )
+        st.markdown("---")
 
-                    excel_acum = exportar_excel_ejecutivo_openpyxl(
-                        df_er_acum,
-                        empresas_seleccionadas,
-                        anio_sel,
-                        mes_sel,
-                        tipo='acum',
-                    )
-                    st.download_button(
-                        label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
-                        data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-else:
-    st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
+        # --- KPIS PÓLIZAS ---
+        pk1, pk2, pk3 = st.columns(3)
+        with pk1:
+            st.metric("Total Pólizas Filtradas", f"{len(df_p):,}")
+        with pk2:
+            st.metric("Suma Cargos (Debe)", formato_mx(df_p['Debe'].sum() if 'Debe' in df_p.columns else 0))
+        with pk3:
+            st.metric("Suma Abonos (Haber)", formato_mx(df_p['Haber'].sum() if 'Haber' in df_p.columns else 0))
+
+        st.markdown("---")
+
+        cols_num_pol = ['Debe', 'Haber', 'Monto']
+        cols_orden_pol = ['EmpresaOrigen', 'Fecha', 'TipoPoliza', 'Folio', 'Cuenta', 'NombreCuenta', 'Concepto', 'Debe', 'Haber', 'UUID']
+
+        # Mostrar por Moneda si existe la columna
+        if 'Currency' in df_p.columns and df_p['Currency'].nunique() > 1:
+            for curr in sorted(df_p['Currency'].dropna().unique()):
+                st.markdown(f"### 💱 Pólizas — Moneda: **{curr}**")
+                df_curr = df_p[df_p['Currency'] == curr]
+                mostrar_tabla_con_totales(df_curr, cols_num_pol, cols_orden_pol)
+                st.markdown("<br>", unsafe_allow_html=True)
+        else:
+            mostrar_tabla_con_totales(df_p, cols_num_pol, cols_orden_pol)
+
+    else:
+        st.info("No se encontraron registros en la hoja `Polizas`.")
+
+# ==========================================
+# 3. SUBMÓDULO: CATÁLOGO DE CUENTAS
+# ==========================================
+elif submodulo == "🗂️ Catálogo de Cuentas":
+    st.title("🗂️ Catálogo de Cuentas Contables")
+
+    if df_cuentas is not None and not df_cuentas.empty:
+        df_c = df_cuentas.copy()
+
+        st.markdown("#### ⚙️ Filtros de Selección")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if 'EmpresaOrigen' in df_c.columns:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_c['EmpresaOrigen'].dropna().unique()), key="cat_emp")
+                if emp_sel: df_c = df_c[df_c['EmpresaOrigen'].isin(emp_sel)]
+        with c2:
+            if 'Tipo' in df_c.columns:
+                tipo_sel = st.multiselect("Naturaleza/Tipo:", sorted(df_c['Tipo'].dropna().unique()), key="cat_tipo")
+                if tipo_sel: df_c = df_c[df_c['Tipo'].isin(tipo_sel)]
+        with c3:
+            if 'Nombre' in df_c.columns or 'NombreCuenta' in df_c.columns:
+                col_n = 'NombreCuenta' if 'NombreCuenta' in df_c.columns else 'Nombre'
+                nom_filter = st.text_input("Buscar por Nombre de Cuenta:", key="cat_nom")
+                if nom_filter: df_c = df_c[df_c[col_n].astype(str).str.contains(nom_filter, case=False, na=False)]
+
+        st.markdown("---")
+
+        cols_orden_cat = ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Naturaleza', 'Nivel', 'Estatus']
+        cols_num_cat = []
+
+        mostrar_tabla_con_totales(df_c, cols_num_cat, cols_orden_cat)
+
+    else:
+        st.info("No se encontraron registros en la hoja `CatalogoCuentas`.")

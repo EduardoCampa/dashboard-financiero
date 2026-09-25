@@ -8,6 +8,66 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Finanzas - Grupo SERVYRE", layout="wide")
 
+# ==========================================
+# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO ORACLE CLOUD / ENTERPRISE)
+# ==========================================
+st.markdown("""
+    <style>
+        /* Estilo para tablas HTML personalizadas */
+        .oracle-table-container {
+            width: 100%;
+            overflow-x: auto;
+            margin-bottom: 20px;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .oracle-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 13px;
+            background-color: #ffffff;
+            color: #333333;
+        }
+        .oracle-table th {
+            background-color: #f0f2f5;
+            color: #1f497d;
+            font-weight: bold;
+            text-align: center;
+            padding: 8px 10px;
+            border: 1px solid #d9d9d9;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .oracle-table td {
+            padding: 6px 10px;
+            border: 1px solid #e5e5e5;
+            vertical-align: middle;
+        }
+        .oracle-table tr:nth-child(even) {
+            background-color: #fcfcfc;
+        }
+        .oracle-table tr:hover {
+            background-color: #f0f4f9;
+        }
+        .oracle-table tr.total-row {
+            background-color: #e6ecf5 !important;
+            font-weight: bold;
+            color: #000000;
+            border-top: 2px solid #1f497d;
+            border-bottom: 2px solid #1f497d;
+        }
+        .oracle-table tr.total-row td {
+            border: 1px solid #b0c4de;
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
 def formato_mx(val):
     if pd.isnull(val):
@@ -411,7 +471,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
                 sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
 
-            # Generar 1 renglón por cada factura/documento vinculado
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
@@ -421,7 +480,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 r_copy['DocumentID'] = d_id
                 r_copy['UUID'] = item['uuid'] if item['uuid'] != 'nan' else ''
                 
-                # Si hay más de 1 factura, dividimos los importes conceptuales por la proporción
                 m_fact = item['monto'] if item['monto'] > 0 else (total_doc / num_sub)
                 r_copy['Total'] = m_fact
                 r_copy['Amount'] = m_pagado
@@ -432,7 +490,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
-    # 2. ÓRDENES DE COMPRA (OC) - DESGLOSE POR RENGLÓN
+    # 2. ÓRDENES DE COMPRA (OC)
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
@@ -462,7 +520,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
                 sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
 
-            # Generar 1 renglón por cada factura vinculada
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
@@ -498,7 +555,7 @@ columnas_sp_visuales = [
     'TotalRetention', 'Total', 'UUID', 'Amount', 'SaldoPagoSP'
 ]
 
-# --- FUNCIÓN AUXILIAR PARA MOSTRAR TABLA DE DATOS CON FILA DE TOTALES ---
+# --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
 def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     if df_entrada.empty:
         st.info("No hay registros para mostrar.")
@@ -506,27 +563,41 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
 
     df_calc = df_entrada.copy()
 
+    # Construir encabezados HTML
+    cols_existentes = [c for c in cols_orden if c in df_calc.columns]
+    
+    html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
+    for col in cols_existentes:
+        html.append(f'<th>{col}</th>')
+    html.append('</tr></thead><tbody>')
+
+    # Filas de Datos
+    for _, row in df_calc.iterrows():
+        html.append('<tr>')
+        for col in cols_existentes:
+            val = row.get(col, '')
+            if col in cols_num:
+                val_fmt = formato_mx(val)
+                html.append(f'<td class="text-right">{val_fmt}</td>')
+            elif col in ['DocFolio', 'DocumentID', 'DateDocument', 'TIPO DOC', 'Currency', 'Moneda', 'Fecha Vencimiento', 'Tipo']:
+                html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
+            else:
+                html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
+        html.append('</tr>')
+
     # Fila de Totales
-    row_total = {}
-    for col in cols_orden:
+    html.append('<tr class="total-row">')
+    for idx, col in enumerate(cols_existentes):
         if col in cols_num:
-            row_total[col] = df_calc[col].sum() if col in df_calc.columns else 0.0
-        elif col in ['EmpresaOrigen', 'DocFolio', 'BusinessEntityName']:
-            row_total[col] = "TOTAL"
+            tot_val = df_calc[col].sum() if col in df_calc.columns else 0.0
+            html.append(f'<td class="text-right">{formato_mx(tot_val)}</td>')
+        elif idx == 0:
+            html.append('<td class="text-center">TOTALES</td>')
         else:
-            row_total[col] = ""
+            html.append('<td></td>')
+    html.append('</tr></tbody></table></div>')
 
-    df_tot_row = pd.DataFrame([row_total])
-    df_con_totales = pd.concat([df_calc, df_tot_row], ignore_index=True)
-
-    # Formato visual
-    df_view = df_con_totales.copy()
-    for col_m in cols_num:
-        if col_m in df_view.columns:
-            df_view[col_m] = df_view[col_m].apply(formato_mx)
-
-    cols_existentes = [c for c in cols_orden if c in df_view.columns]
-    st.dataframe(df_view[cols_existentes], use_container_width=True)
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 st.sidebar.title("💰 Módulo de Finanzas")
 st.sidebar.markdown("---")
@@ -918,7 +989,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                                     })
                                 df_tabla_det = pd.DataFrame(data_det_list)
 
-                                # Fila de Suma Total para el Proveedor por Moneda
+                                # Fila de Suma Total para el Proveedor por Moneda con diseño Oracle
                                 mostrar_tabla_con_totales(
                                     df_tabla_det,
                                     ['Saldo Pendiente'],
