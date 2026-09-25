@@ -91,13 +91,16 @@ def filtrar_no_eliminados(df):
     return df
 
 # --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
-def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
+def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden=None):
     if df_entrada.empty:
         st.info("No hay registros para mostrar.")
         return
 
     df_calc = df_entrada.copy()
-    cols_existentes = [c for c in cols_orden if c in df_calc.columns]
+    if cols_orden:
+        cols_existentes = [c for c in cols_orden if c in df_calc.columns]
+    else:
+        cols_existentes = list(df_calc.columns)
     
     html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
     for col in cols_existentes:
@@ -110,12 +113,13 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
             val = row.get(col, '')
             if col in cols_num:
                 html.append(f'<td class="text-right">{formato_mx(val)}</td>')
-            elif col in ['DocFolio', 'DocumentID', 'DateDocument', 'DateOperation', 'TIPO DOC', 'Currency', 'Moneda', 'Fecha', 'Periodo', 'Cuenta']:
+            elif any(k in col.lower() for k in ['doc', 'folio', 'fecha', 'date', 'tipo', 'moneda', 'curr', 'periodo', 'cuenta', 'id']):
                 html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
             else:
                 html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
         html.append('</tr>')
 
+    # Fila de Totales
     html.append('<tr class="total-row">')
     for idx, col in enumerate(cols_existentes):
         if col in cols_num:
@@ -129,7 +133,7 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
 
     st.markdown("".join(html), unsafe_allow_html=True)
 
-# --- CARGA DE DATOS CONTABLES DESDE CONSOLIDADO MASTER ---
+# --- BÚSQUEDA INTELIGENTE DE PESTAÑAS Y CARGA ---
 ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
 @st.cache_data
@@ -140,13 +144,25 @@ def cargar_datos_contabilidad(path):
         xls = pd.ExcelFile(path)
         sheets = xls.sheet_names
 
-        df_polizas = pd.read_excel(path, sheet_name='Polizas') if 'Polizas' in sheets else pd.DataFrame()
-        df_polizas = filtrar_no_eliminados(df_polizas)
+        # Función para buscar coincidencia flexible de hoja
+        def buscar_hoja(palabras_clave):
+            for s in sheets:
+                s_clean = s.lower().replace(" ", "").replace("_", "").replace("ó", "o").replace("á", "a")
+                if any(pk in s_clean for pk in palabras_clave):
+                    return s
+            return None
 
-        df_balanza = pd.read_excel(path, sheet_name='BalanzaComprobacion') if 'BalanzaComprobacion' in sheets else pd.DataFrame()
+        sheet_balanza = buscar_hoja(['balanza', 'balanzacomprobacion', 'balanzacomp'])
+        sheet_polizas = buscar_hoja(['poliza', 'polizas', 'librodiario', 'diario'])
+        sheet_cuentas = buscar_hoja(['catalogocuentas', 'catcuenta', 'catcuentas', 'cuentas'])
+
+        df_balanza = pd.read_excel(path, sheet_name=sheet_balanza) if sheet_balanza else pd.DataFrame()
         df_balanza = filtrar_no_eliminados(df_balanza)
 
-        df_cuentas = pd.read_excel(path, sheet_name='CatalogoCuentas') if 'CatalogoCuentas' in sheets else pd.DataFrame()
+        df_polizas = pd.read_excel(path, sheet_name=sheet_polizas) if sheet_polizas else pd.DataFrame()
+        df_polizas = filtrar_no_eliminados(df_polizas)
+
+        df_cuentas = pd.read_excel(path, sheet_name=sheet_cuentas) if sheet_cuentas else pd.DataFrame()
         df_cuentas = filtrar_no_eliminados(df_cuentas)
 
         return df_polizas, df_balanza, df_cuentas
@@ -174,56 +190,51 @@ if submodulo == "📊 Balanza de Comprobación":
     if df_balanza is not None and not df_balanza.empty:
         df_b = df_balanza.copy()
 
-        # Normalizar columnas
-        for col_m in ['SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']:
-            if col_m in df_b.columns:
-                df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
+        # Detección flexible de columnas numéricas
+        cols_num_bal = [c for c in df_b.columns if any(k in c.lower() for k in ['saldo', 'debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import'])]
+        for col_m in cols_num_bal:
+            df_b[col_m] = pd.to_numeric(df_b[col_m], errors='coerce').fillna(0.0)
 
         st.markdown("#### ⚙️ Filtros de Selección")
         f1, f2, f3 = st.columns(3)
         with f1:
-            if 'EmpresaOrigen' in df_b.columns:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b['EmpresaOrigen'].dropna().unique()), key="bal_emp")
-                if emp_sel: df_b = df_b[df_b['EmpresaOrigen'].isin(emp_sel)]
+            col_emp = next((c for c in df_b.columns if 'empresa' in c.lower()), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_b[col_emp].dropna().unique()), key="bal_emp")
+                if emp_sel: df_b = df_b[df_b[col_emp].isin(emp_sel)]
         with f2:
-            if 'Periodo' in df_b.columns:
-                per_sel = st.multiselect("Periodo Contable:", sorted(df_b['Periodo'].astype(str).dropna().unique()), key="bal_per")
-                if per_sel: df_b = df_b[df_b['Periodo'].astype(str).isin(per_sel)]
+            col_per = next((c for c in df_b.columns if any(k in c.lower() for k in ['periodo', 'mes', 'año', 'anio'])), None)
+            if col_per:
+                per_sel = st.multiselect("Periodo Contable:", sorted(df_b[col_per].astype(str).dropna().unique()), key="bal_per")
+                if per_sel: df_b = df_b[df_b[col_per].astype(str).isin(per_sel)]
         with f3:
-            if 'Nivel' in df_b.columns:
-                niv_sel = st.multiselect("Nivel de Cuenta:", sorted(df_b['Nivel'].dropna().unique()), key="bal_niv")
-                if niv_sel: df_b = df_b[df_b['Nivel'].isin(niv_sel)]
+            col_niv = next((c for c in df_b.columns if 'nivel' in c.lower()), None)
+            if col_niv:
+                niv_sel = st.multiselect("Nivel de Cuenta:", sorted(df_b[col_niv].dropna().unique()), key="bal_niv")
+                if niv_sel: df_b = df_b[df_b[col_niv].isin(niv_sel)]
 
         st.markdown("---")
 
         # --- KPIS BALANZA ---
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.metric("Saldo Inicial Total", formato_mx(df_b['SaldoInicial'].sum() if 'SaldoInicial' in df_b.columns else 0))
-        with k2:
-            st.metric("Cargos (Debe)", formato_mx(df_b['Debe'].sum() if 'Debe' in df_b.columns else 0))
-        with k3:
-            st.metric("Abonos (Haber)", formato_mx(df_b['Haber'].sum() if 'Haber' in df_b.columns else 0))
-        with k4:
-            st.metric("Saldo Final Total", formato_mx(df_b['SaldoFinal'].sum() if 'SaldoFinal' in df_b.columns else 0))
+        cols_kpi = st.columns(max(1, min(4, len(cols_num_bal))))
+        for idx, col_m in enumerate(cols_num_bal[:4]):
+            with cols_kpi[idx]:
+                st.metric(col_m, formato_mx(df_b[col_m].sum()))
 
         st.markdown("---")
 
-        cols_num_bal = ['SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']
-        cols_orden_bal = ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Nivel', 'SaldoInicial', 'Debe', 'Haber', 'SaldoFinal']
-
-        # Mostrar por Moneda si existe la columna
-        if 'Currency' in df_b.columns and df_b['Currency'].nunique() > 1:
-            for curr in sorted(df_b['Currency'].dropna().unique()):
+        col_curr = next((c for c in df_b.columns if any(k in c.lower() for k in ['moneda', 'currency'])), None)
+        if col_curr and df_b[col_curr].nunique() > 1:
+            for curr in sorted(df_b[col_curr].dropna().unique()):
                 st.markdown(f"### 💱 Balanza de Comprobación — Moneda: **{curr}**")
-                df_curr = df_b[df_b['Currency'] == curr]
-                mostrar_tabla_con_totales(df_curr, cols_num_bal, cols_orden_bal)
+                df_curr = df_b[df_b[col_curr] == curr]
+                mostrar_tabla_con_totales(df_curr, cols_num_bal)
                 st.markdown("<br>", unsafe_allow_html=True)
         else:
-            mostrar_tabla_con_totales(df_b, cols_num_bal, cols_orden_bal)
+            mostrar_tabla_con_totales(df_b, cols_num_bal)
 
     else:
-        st.info("No se encontraron registros en la hoja `BalanzaComprobacion`.")
+        st.warning("⚠️ No se encontró la hoja de Balanza en `Consolidado_Master.xlsx`. Verifica que la pestaña se llame `BalanzaComprobacion` o `Balanza Comprobación`.")
 
 # ==========================================
 # 2. SUBMÓDULO: LIBRO DIARIO / PÓLIZAS
@@ -234,57 +245,56 @@ elif submodulo == "📖 Libro Diario / Pólizas":
     if df_polizas is not None and not df_polizas.empty:
         df_p = df_polizas.copy()
 
-        for col_m in ['Debe', 'Haber', 'Monto']:
-            if col_m in df_p.columns:
-                df_p[col_m] = pd.to_numeric(df_p[col_m], errors='coerce').fillna(0.0)
+        cols_num_pol = [c for c in df_p.columns if any(k in c.lower() for k in ['debe', 'haber', 'cargo', 'abono', 'monto', 'total', 'import'])]
+        for col_m in cols_num_pol:
+            df_p[col_m] = pd.to_numeric(df_p[col_m], errors='coerce').fillna(0.0)
 
         st.markdown("#### ⚙️ Filtros de Selección")
         p1, p2, p3, p4 = st.columns(4)
         with p1:
-            if 'EmpresaOrigen' in df_p.columns:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_p['EmpresaOrigen'].dropna().unique()), key="pol_emp")
-                if emp_sel: df_p = df_p[df_p['EmpresaOrigen'].isin(emp_sel)]
+            col_emp = next((c for c in df_p.columns if 'empresa' in c.lower()), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_p[col_emp].dropna().unique()), key="pol_emp")
+                if emp_sel: df_p = df_p[df_p[col_emp].isin(emp_sel)]
         with p2:
-            if 'TipoPoliza' in df_p.columns:
-                tipo_sel = st.multiselect("Tipo de Póliza:", sorted(df_p['TipoPoliza'].dropna().unique()), key="pol_tipo")
-                if tipo_sel: df_p = df_p[df_p['TipoPoliza'].isin(tipo_sel)]
+            col_tipo = next((c for c in df_p.columns if 'tipo' in c.lower()), None)
+            if col_tipo:
+                tipo_sel = st.multiselect("Tipo de Póliza:", sorted(df_p[col_tipo].dropna().unique()), key="pol_tipo")
+                if tipo_sel: df_p = df_p[df_p[col_tipo].isin(tipo_sel)]
         with p3:
-            if 'Folio' in df_p.columns:
-                fol_sel = st.multiselect("Folio Póliza:", sorted(df_p['Folio'].astype(str).dropna().unique()), key="pol_fol")
-                if fol_sel: df_p = df_p[df_p['Folio'].astype(str).isin(fol_sel)]
+            col_fol = next((c for c in df_p.columns if any(k in c.lower() for k in ['folio', 'poliza', 'doc'])), None)
+            if col_fol:
+                fol_sel = st.multiselect("Folio Póliza:", sorted(df_p[col_fol].astype(str).dropna().unique()), key="pol_fol")
+                if fol_sel: df_p = df_p[df_p[col_fol].astype(str).isin(fol_sel)]
         with p4:
-            if 'Concepto' in df_p.columns:
+            col_conc = next((c for c in df_p.columns if any(k in c.lower() for k in ['concepto', 'descrip', 'title'])), None)
+            if col_conc:
                 conc_filter = st.text_input("Buscar en Concepto:", key="pol_conc")
-                if conc_filter: df_p = df_p[df_p['Concepto'].astype(str).str.contains(conc_filter, case=False, na=False)]
+                if conc_filter: df_p = df_p[df_p[col_conc].astype(str).str.contains(conc_filter, case=False, na=False)]
 
         st.markdown("---")
 
-        # --- KPIS PÓLIZAS ---
-        pk1, pk2, pk3 = st.columns(3)
-        with pk1:
-            st.metric("Total Pólizas Filtradas", f"{len(df_p):,}")
-        with pk2:
-            st.metric("Suma Cargos (Debe)", formato_mx(df_p['Debe'].sum() if 'Debe' in df_p.columns else 0))
-        with pk3:
-            st.metric("Suma Abonos (Haber)", formato_mx(df_p['Haber'].sum() if 'Haber' in df_p.columns else 0))
+        cols_kpi = st.columns(max(1, min(4, len(cols_num_pol) + 1)))
+        with cols_kpi[0]:
+            st.metric("Pólizas Registradas", f"{len(df_p):,}")
+        for idx, col_m in enumerate(cols_num_pol[:3], 1):
+            with cols_kpi[idx]:
+                st.metric(f"Suma {col_m}", formato_mx(df_p[col_m].sum()))
 
         st.markdown("---")
 
-        cols_num_pol = ['Debe', 'Haber', 'Monto']
-        cols_orden_pol = ['EmpresaOrigen', 'Fecha', 'TipoPoliza', 'Folio', 'Cuenta', 'NombreCuenta', 'Concepto', 'Debe', 'Haber', 'UUID']
-
-        # Mostrar por Moneda si existe la columna
-        if 'Currency' in df_p.columns and df_p['Currency'].nunique() > 1:
-            for curr in sorted(df_p['Currency'].dropna().unique()):
+        col_curr = next((c for c in df_p.columns if any(k in c.lower() for k in ['moneda', 'currency'])), None)
+        if col_curr and df_p[col_curr].nunique() > 1:
+            for curr in sorted(df_p[col_curr].dropna().unique()):
                 st.markdown(f"### 💱 Pólizas — Moneda: **{curr}**")
-                df_curr = df_p[df_p['Currency'] == curr]
-                mostrar_tabla_con_totales(df_curr, cols_num_pol, cols_orden_pol)
+                df_curr = df_p[df_p[col_curr] == curr]
+                mostrar_tabla_con_totales(df_curr, cols_num_pol)
                 st.markdown("<br>", unsafe_allow_html=True)
         else:
-            mostrar_tabla_con_totales(df_p, cols_num_pol, cols_orden_pol)
+            mostrar_tabla_con_totales(df_p, cols_num_pol)
 
     else:
-        st.info("No se encontraron registros en la hoja `Polizas`.")
+        st.warning("⚠️ No se encontró la hoja de Pólizas/Libro Diario en `Consolidado_Master.xlsx`. Verifica que la pestaña se llame `Polizas` o `Poliza`.")
 
 # ==========================================
 # 3. SUBMÓDULO: CATÁLOGO DE CUENTAS
@@ -298,25 +308,25 @@ elif submodulo == "🗂️ Catálogo de Cuentas":
         st.markdown("#### ⚙️ Filtros de Selección")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if 'EmpresaOrigen' in df_c.columns:
-                emp_sel = st.multiselect("Empresa Origen:", sorted(df_c['EmpresaOrigen'].dropna().unique()), key="cat_emp")
-                if emp_sel: df_c = df_c[df_c['EmpresaOrigen'].isin(emp_sel)]
+            col_emp = next((c for c in df_c.columns if 'empresa' in c.lower()), None)
+            if col_emp:
+                emp_sel = st.multiselect("Empresa Origen:", sorted(df_c[col_emp].dropna().unique()), key="cat_emp")
+                if emp_sel: df_c = df_c[df_c[col_emp].isin(emp_sel)]
         with c2:
-            if 'Tipo' in df_c.columns:
-                tipo_sel = st.multiselect("Naturaleza/Tipo:", sorted(df_c['Tipo'].dropna().unique()), key="cat_tipo")
-                if tipo_sel: df_c = df_c[df_c['Tipo'].isin(tipo_sel)]
+            col_tipo = next((c for c in df_c.columns if any(k in c.lower() for k in ['tipo', 'naturaleza', 'grupo'])), None)
+            if col_tipo:
+                tipo_sel = st.multiselect("Tipo / Naturaleza:", sorted(df_c[col_tipo].dropna().unique()), key="cat_tipo")
+                if tipo_sel: df_c = df_c[df_c[col_tipo].isin(tipo_sel)]
         with c3:
-            if 'Nombre' in df_c.columns or 'NombreCuenta' in df_c.columns:
-                col_n = 'NombreCuenta' if 'NombreCuenta' in df_c.columns else 'Nombre'
-                nom_filter = st.text_input("Buscar por Nombre de Cuenta:", key="cat_nom")
-                if nom_filter: df_c = df_c[df_c[col_n].astype(str).str.contains(nom_filter, case=False, na=False)]
+            col_nom = next((c for c in df_c.columns if any(k in c.lower() for k in ['nombre', 'cuenta', 'descrip'])), None)
+            if col_nom:
+                nom_filter = st.text_input("Buscar Cuenta:", key="cat_nom")
+                if nom_filter: df_c = df_c[df_c[col_nom].astype(str).str.contains(nom_filter, case=False, na=False)]
 
         st.markdown("---")
 
-        cols_orden_cat = ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Naturaleza', 'Nivel', 'Estatus']
-        cols_num_cat = []
-
-        mostrar_tabla_con_totales(df_c, cols_num_cat, cols_orden_cat)
+        cols_num_cat = [c for c in df_c.columns if any(k in c.lower() for k in ['saldo', 'monto', 'total'])]
+        mostrar_tabla_con_totales(df_c, cols_num_cat)
 
     else:
-        st.info("No se encontraron registros en la hoja `CatalogoCuentas`.")
+        st.warning("⚠️ No se encontró la hoja de Catálogo de Cuentas en `Consolidado_Master.xlsx`. Verifica que la pestaña se llame `CatalogoCuentas` o `CatCuentas`.")
