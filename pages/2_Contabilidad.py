@@ -9,12 +9,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo Contable - Oracle Style",
+    page_title="Módulo Contable",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📊 Módulo Contable - Consolidado Multiempresa (Formato Oracle)")
+st.title("📊 Módulo Contable")
 
 
 # --- BUSCAR BALANZAS POR AÑO Y MES ---
@@ -278,7 +278,7 @@ def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
     return resolver_todas_las_formulas(val_map, formulas_map)
 
 
-# --- GENERADOR MULTIEMPRESA MULTINIVEL ---
+# --- GENERADOR MULTIEMPRESA ---
 def generar_reporte_multiempresa(
     ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
 ):
@@ -308,14 +308,9 @@ def generar_reporte_multiempresa(
         es_cuenta = bool(patron)
         es_dato = es_cuenta or es_formula
 
-        # Identación jerárquica estilo Oracle ERP
-        concepto_formateado = concepto
-        if es_cuenta:
-            concepto_formateado = "    " + concepto  # Sangría de detalle
-
         fila_dict = {
             'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto_formateado,
+            'CONCEPTO': concepto,
         }
 
         monto_total_consolidado = 0.0
@@ -361,28 +356,32 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA EN PANTALLA TIPO ORACLE FINANCIALS ---
-def renderizar_tabla_multiempresa(df_er, empresas):
+# --- FORMATO ESTILO FINANZAS (CLARO Y NEGRITAS EN SUMAS) ---
+def renderizar_tabla_estilo_finanzas(df_er, empresas):
     if df_er.empty:
         return
 
     df_disp = df_er.copy()
 
-    def aplicar_estilo_oracle(row):
+    # Función para resaltar totales en negrita manteniendo el tema claro tipo Finanzas
+    def aplicar_estilo_finanzas(row):
         styles = [''] * len(row)
         es_total = row.get('es_total', False)
         es_encabezado = row.get('es_encabezado', False)
 
         if es_total:
-            # Línea de cierre contable Oracle
+            # Resaltado en NEGRITA con fondo suave gris/azul para las sumas y totales
             styles = [
-                'font-weight: 800; background-color: #0F172A; color: #FFFFFF; border-top: 2px solid #38BDF8; border-bottom: 2px double #38BDF8;'
+                'font-weight: 800; background-color: #f1f5f9; color: #0f172a; border-top: 1.5px solid #64748b; border-bottom: 2px double #0f172a;'
             ] * len(row)
         elif es_encabezado:
-            # Título de categoría Oracle
+            # Títulos de sección en negrita azul
             styles = [
-                'font-weight: 700; background-color: #1E293B; color: #38BDF8; text-transform: uppercase;'
+                'font-weight: 700; background-color: #f8fafc; color: #0369a1; text-transform: uppercase;'
             ] * len(row)
+        else:
+            # Filas normales
+            styles = ['font-weight: 400; color: #334155;'] * len(row)
 
         return styles
 
@@ -406,13 +405,14 @@ def renderizar_tabla_multiempresa(df_er, empresas):
         )
 
     styler = (
-        df_clean.style.apply(aplicar_estilo_oracle, axis=1)
+        df_clean.style.apply(aplicar_estilo_finanzas, axis=1)
         .format(format_dict)
         .set_properties(
             **{
-                'padding': '6px 10px',
-                'font-family': 'Calibri, sans-serif',
+                'padding': '6px 12px',
+                'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                 'font-size': '13px',
+                'border': '1px solid #e2e8f0',
             }
         )
     )
@@ -420,66 +420,62 @@ def renderizar_tabla_multiempresa(df_er, empresas):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- EXPORTADOR A EXCEL TIPO ORACLE SMART VIEW / HYPERION ---
-def exportar_excel_oracle_smartview(df_er, empresas, anio, mes, tipo='mes'):
+# --- EXPORTADOR A EXCEL EJECUTIVO (OPENPYXL) ---
+def exportar_excel_ejecutivo_openpyxl(df_er, empresas, anio, mes, tipo='mes'):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Oracle_Financial_Report"
+    ws.title = "EDO_RESULTADOS"
 
     ws.views.sheetView[0].showGridLines = True
 
-    # Paleta de color Oracle / Dark Navy
     HEADER_FILL = PatternFill(
-        start_color="0F2942", end_color="0F2942", fill_type="solid"
+        start_color="1E293B", end_color="1E293B", fill_type="solid"
     )
     HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="0F2942")
-    META_FONT = Font(name="Calibri", size=9, bold=True, color="475569")
+    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
 
     TOTAL_FILL = PatternFill(
-        start_color="E2E8F0", end_color="E2E8F0", fill_type="solid"
+        start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
     )
-    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F2942")
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
     HEADER_ROW_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
 
-    REGULAR_FONT = Font(name="Calibri", size=10, color="1E293B")
+    REGULAR_FONT = Font(name="Calibri", size=11, color="1E293B")
 
     THIN_BORDER = Border(
-        left=Side(style='thin', color='CBD5E1'),
-        right=Side(style='thin', color='CBD5E1'),
-        top=Side(style='thin', color='CBD5E1'),
-        bottom=Side(style='thin', color='CBD5E1'),
+        left=Side(style='thin', color='E2E8F0'),
+        right=Side(style='thin', color='E2E8F0'),
+        top=Side(style='thin', color='E2E8F0'),
+        bottom=Side(style='thin', color='E2E8F0'),
     )
 
     TOTAL_BORDER = Border(
-        top=Side(style='thin', color='0F2942'),
-        bottom=Side(style='double', color='0F2942'),
-        left=Side(style='thin', color='CBD5E1'),
-        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='475569'),
+        bottom=Side(style='double', color='0F172A'),
+        left=Side(style='thin', color='E2E8F0'),
+        right=Side(style='thin', color='E2E8F0'),
     )
 
-    # Encabezado Institucional Oracle ERP
     tipo_str = "DEL MES" if tipo == 'mes' else "ACUMULADO"
-    ws.cell(row=1, column=1, value="ORACLE FINANCIALS / SMART VIEW").font = META_FONT
+    ws.cell(
+        row=1,
+        column=1,
+        value=f"ESTADO DE RESULTADOS CONSOLIDADO ({tipo_str})",
+    ).font = TITLE_FONT
     ws.cell(
         row=2,
         column=1,
-        value=f"CONSOLIDATED FINANCIAL STATEMENT ({tipo_str})",
-    ).font = TITLE_FONT
-    ws.cell(
-        row=3,
-        column=1,
-        value=f"Period: {mes}/{anio} | Currency: MXN | Entities: {', '.join(empresas)}",
-    ).font = META_FONT
+        value=f"Periodo: {mes}/{anio} | Empresa(s): {', '.join(empresas)}",
+    ).font = SUBTITLE_FONT
 
-    start_row = 5
+    start_row = 4
     df_clean = df_er.drop(
         columns=['es_total', 'es_encabezado'], errors='ignore'
     )
     headers = list(df_clean.columns)
 
-    # Escribir encabezados
     for c_idx, h_text in enumerate(headers, start=1):
         cell = ws.cell(row=start_row, column=c_idx, value=h_text)
         cell.fill = HEADER_FILL
@@ -488,9 +484,8 @@ def exportar_excel_oracle_smartview(df_er, empresas, anio, mes, tipo='mes'):
             horizontal="center", vertical="center", wrap_text=True
         )
 
-    ws.row_dimensions[start_row].height = 28
+    ws.row_dimensions[start_row].height = 26
 
-    # Escribir datos
     for r_i, row_data in df_er.iterrows():
         curr_row = start_row + 1 + r_i
         es_total = row_data.get('es_total', False)
@@ -505,7 +500,6 @@ def exportar_excel_oracle_smartview(df_er, empresas, anio, mes, tipo='mes'):
             else:
                 cell.value = val
 
-            # Estilos por tipo de fila
             if es_total:
                 cell.font = TOTAL_FONT
                 cell.fill = TOTAL_FILL
@@ -517,7 +511,6 @@ def exportar_excel_oracle_smartview(df_er, empresas, anio, mes, tipo='mes'):
                 cell.font = REGULAR_FONT
                 cell.border = THIN_BORDER
 
-            # Formato Contable Oracle con paréntesis para negativos ($#,##0.00_);($#,##0.00);"-"
             if h_col in ('CUENTA', 'CONCEPTO'):
                 cell.alignment = Alignment(horizontal="left", vertical="center")
             elif h_col.startswith('%'):
@@ -531,16 +524,15 @@ def exportar_excel_oracle_smartview(df_er, empresas, anio, mes, tipo='mes'):
                 cell.alignment = Alignment(
                     horizontal="right", vertical="center"
                 )
-                cell.number_format = '_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)'
+                cell.number_format = '$#,##0.00'
 
-    # Autoajuste de columnas
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 13)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
     ws.column_dimensions['A'].width = 22
-    ws.column_dimensions['B'].width = 42
+    ws.column_dimensions['B'].width = 38
 
     wb.save(output)
     return output.getvalue()
@@ -613,11 +605,11 @@ if estructura:
                     )
 
                 if not df_er_mes.empty:
-                    renderizar_tabla_multiempresa(
+                    renderizar_tabla_estilo_finanzas(
                         df_er_mes, empresas_seleccionadas
                     )
 
-                    excel_mes = exportar_excel_oracle_smartview(
+                    excel_mes = exportar_excel_ejecutivo_openpyxl(
                         df_er_mes,
                         empresas_seleccionadas,
                         anio_sel,
@@ -625,9 +617,9 @@ if estructura:
                         tipo='mes',
                     )
                     st.download_button(
-                        label=f"📥 Descargar ER Mes Oracle Format ({mes_sel}_{anio_sel})",
+                        label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
                         data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Oracle_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_MES_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
@@ -649,11 +641,11 @@ if estructura:
                     )
 
                 if not df_er_acum.empty:
-                    renderizar_tabla_multiempresa(
+                    renderizar_tabla_estilo_finanzas(
                         df_er_acum, empresas_seleccionadas
                     )
 
-                    excel_acum = exportar_excel_oracle_smartview(
+                    excel_acum = exportar_excel_ejecutivo_openpyxl(
                         df_er_acum,
                         empresas_seleccionadas,
                         anio_sel,
@@ -661,9 +653,9 @@ if estructura:
                         tipo='acum',
                     )
                     st.download_button(
-                        label=f"📥 Descargar ER Acumulado Oracle Format ({mes_sel}_{anio_sel})",
+                        label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Oracle_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_ACUM_Ejecutivo_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
