@@ -1,71 +1,8 @@
 import streamlit as st
 import pandas as pd
-import io
 import os
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Contabilidad - Grupo SERVYRE", layout="wide")
-
-# ==========================================
-# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO ORACLE CLOUD / ENTERPRISE)
-# ==========================================
-st.markdown("""
-    <style>
-        .oracle-table-container {
-            width: 100%;
-            overflow-x: auto;
-            margin-bottom: 20px;
-            border: 1px solid #c0c0c0;
-            border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        .oracle-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-            font-size: 13px;
-            background-color: #ffffff;
-            color: #333333;
-        }
-        .oracle-table th {
-            background-color: #f0f2f5;
-            color: #1f497d;
-            font-weight: bold;
-            text-align: center;
-            padding: 8px 10px;
-            border: 1px solid #d9d9d9;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .oracle-table td {
-            padding: 6px 10px;
-            border: 1px solid #e5e5e5;
-            vertical-align: middle;
-        }
-        .oracle-table tr:nth-child(even) {
-            background-color: #fcfcfc;
-        }
-        .oracle-table tr:hover {
-            background-color: #f0f4f9;
-        }
-        .oracle-table tr.total-row {
-            background-color: #e6ecf5 !important;
-            font-weight: bold;
-            color: #000000;
-            border-top: 2px solid #1f497d;
-            border-bottom: 2px solid #1f497d;
-        }
-        .oracle-table tr.total-row td {
-            border: 1px solid #b0c4de;
-        }
-        .text-center { text-align: center; }
-        .text-right { text-align: right; }
-        .text-left { text-align: left; }
-    </style>
-""", unsafe_allow_html=True)
 
 # --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
 def formato_mx(val):
@@ -90,86 +27,32 @@ def filtrar_no_eliminados(df):
         df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
     return df
 
-# --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
-def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden=None):
-    if df_entrada.empty:
-        st.info("No hay registros para mostrar.")
-        return
-
-    df_calc = df_entrada.copy()
-    if cols_orden:
-        cols_existentes = [c for c in cols_orden if c in df_calc.columns]
-    else:
-        cols_existentes = list(df_calc.columns)
-    
-    html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
-    for col in cols_existentes:
-        html.append(f'<th>{col}</th>')
-    html.append('</tr></thead><tbody>')
-
-    for _, row in df_calc.iterrows():
-        html.append('<tr>')
-        for col in cols_existentes:
-            val = row.get(col, '')
-            if col in cols_num:
-                html.append(f'<td class="text-right">{formato_mx(val)}</td>')
-            elif any(k in str(col).lower() for k in ['doc', 'folio', 'fecha', 'date', 'tipo', 'moneda', 'curr', 'periodo', 'cuenta', 'id']):
-                html.append(f'<td class="text-center">{val if not pd.isnull(val) else ""}</td>')
-            else:
-                html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
-        html.append('</tr>')
-
-    # Fila de Totales
-    html.append('<tr class="total-row">')
-    for idx, col in enumerate(cols_existentes):
-        if col in cols_num:
-            tot_val = df_calc[col].sum() if col in df_calc.columns else 0.0
-            html.append(f'<td class="text-right">{formato_mx(tot_val)}</td>')
-        elif idx == 0:
-            html.append('<td class="text-center">TOTALES</td>')
-        else:
-            html.append('<td></td>')
-    html.append('</tr></tbody></table></div>')
-
-    st.markdown("".join(html), unsafe_allow_html=True)
-
-# --- BÚSQUEDA Y CARGA DE DATOS DESDE CONSOLIDADO MASTER ---
+# --- CARGA DE DATOS CONTABLES DESDE CONSOLIDADO MASTER ---
 ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
 
 @st.cache_data
 def cargar_datos_contabilidad(path):
     if not os.path.exists(path):
-        return None, None, None, []
+        return None, None, None
     try:
         xls = pd.ExcelFile(path)
         sheets = xls.sheet_names
 
-        def buscar_hoja(palabras_clave):
-            for s in sheets:
-                s_clean = s.lower().replace(" ", "").replace("_", "").replace("ó", "o").replace("á", "a")
-                if any(pk in s_clean for pk in palabras_clave):
-                    return s
-            return None
-
-        s_balanza = buscar_hoja(['balanzacomprobacion', 'balanza'])
-        s_er_men = buscar_hoja(['estadoresultadosmensual', 'ermensual', 'er_mensual', 'resultado_mensual'])
-        s_er_acu = buscar_hoja(['estadoresultadosacumulado', 'eracumulado', 'er_acumulado', 'resultado_acumulado'])
-
-        df_balanza = pd.read_excel(path, sheet_name=s_balanza) if s_balanza else pd.DataFrame()
+        df_balanza = pd.read_excel(path, sheet_name='BalanzaComprobacion') if 'BalanzaComprobacion' in sheets else pd.DataFrame()
         df_balanza = filtrar_no_eliminados(df_balanza)
 
-        df_er_men = pd.read_excel(path, sheet_name=s_er_men) if s_er_men else pd.DataFrame()
+        df_er_men = pd.read_excel(path, sheet_name='EstadoResultadosMensual') if 'EstadoResultadosMensual' in sheets else pd.DataFrame()
         df_er_men = filtrar_no_eliminados(df_er_men)
 
-        df_er_acu = pd.read_excel(path, sheet_name=s_er_acu) if s_er_acu else pd.DataFrame()
+        df_er_acu = pd.read_excel(path, sheet_name='EstadoResultadosAcumulado') if 'EstadoResultadosAcumulado' in sheets else pd.DataFrame()
         df_er_acu = filtrar_no_eliminados(df_er_acu)
 
-        return df_balanza, df_er_men, df_er_acu, sheets
+        return df_balanza, df_er_men, df_er_acu
     except Exception as e:
         st.error(f"Error al cargar datos contables: {e}")
-        return None, None, None, []
+        return None, None, None
 
-df_balanza, df_er_men, df_er_acu, lista_hojas = cargar_datos_contabilidad(ruta_archivo)
+df_balanza, df_er_men, df_er_acu = cargar_datos_contabilidad(ruta_archivo)
 
 # --- NAVEGACIÓN DEL MÓDULO CONTABLE ---
 st.sidebar.title("📑 Módulo de Contabilidad")
@@ -179,6 +62,35 @@ submodulo = st.sidebar.radio(
     ["📊 Balanza de Comprobación", "📅 Estado de Resultados Mensual", "📈 Estado de Resultados Acumulado"],
     key="sub_contabilidad_nav"
 )
+
+# --- FUNCIÓN PARA MOSTRAR TABLA CON FILA DE TOTALES EN STREAMLIT NATIVO ---
+def mostrar_tabla_con_totales_nativo(df_entrada, cols_num):
+    if df_entrada.empty:
+        st.info("No hay registros para mostrar.")
+        return
+
+    df_calc = df_entrada.copy()
+
+    # Fila de Totales
+    row_total = {}
+    for col in df_calc.columns:
+        if col in cols_num:
+            row_total[col] = df_calc[col].sum()
+        elif col in ['EmpresaOrigen', 'Cuenta', 'NombreCuenta', 'Concepto']:
+            row_total[col] = "TOTAL"
+        else:
+            row_total[col] = ""
+
+    df_tot_row = pd.DataFrame([row_total])
+    df_con_totales = pd.concat([df_calc, df_tot_row], ignore_index=True)
+
+    # Formato visual
+    df_view = df_con_totales.copy()
+    for col_m in cols_num:
+        if col_m in df_view.columns:
+            df_view[col_m] = df_view[col_m].apply(formato_mx)
+
+    st.dataframe(df_view, use_container_width=True)
 
 # ==========================================
 # 1. BALANZA DE COMPROBACIÓN
@@ -220,9 +132,9 @@ if submodulo == "📊 Balanza de Comprobación":
                     st.metric(col_m, formato_mx(df_b[col_m].sum()))
             st.markdown("---")
 
-        mostrar_tabla_con_totales(df_b, cols_num_bal)
+        mostrar_tabla_con_totales_nativo(df_b, cols_num_bal)
     else:
-        st.warning("⚠️ No se encontraron registros para la **Balanza de Comprobación**. Verifica que la pestaña se llame `BalanzaComprobacion` en el archivo Excel.")
+        st.warning("No se encontraron registros para la Balanza de Comprobación en la hoja `BalanzaComprobacion`.")
 
 # ==========================================
 # 2. ESTADO DE RESULTADOS MENSUAL
@@ -251,9 +163,9 @@ elif submodulo == "📅 Estado de Resultados Mensual":
                 if con_fil: df_m = df_m[df_m[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
 
         st.markdown("---")
-        mostrar_tabla_con_totales(df_m, cols_num_m)
+        mostrar_tabla_con_totales_nativo(df_m, cols_num_m)
     else:
-        st.warning("⚠️ No se encontraron registros para el **Estado de Resultados Mensual**. Verifica que la pestaña se llame `EstadoResultadosMensual` o similar en el archivo Excel.")
+        st.warning("No se encontraron registros para el Estado de Resultados Mensual en la hoja `EstadoResultadosMensual`.")
 
 # ==========================================
 # 3. ESTADO DE RESULTADOS ACUMULADO
@@ -282,6 +194,6 @@ elif submodulo == "📈 Estado de Resultados Acumulado":
                 if con_fil: df_a = df_a[df_a[col_con].astype(str).str.contains(con_fil, case=False, na=False)]
 
         st.markdown("---")
-        mostrar_tabla_con_totales(df_a, cols_num_a)
+        mostrar_tabla_con_totales_nativo(df_a, cols_num_a)
     else:
-        st.warning("⚠️ No se encontraron registros para el **Estado de Resultados Acumulado**. Verifica que la pestaña se llame `EstadoResultadosAcumulado` en el archivo Excel.")
+        st.warning("No se encontraron registros para el Estado de Resultados Acumulado en la hoja `EstadoResultadosAcumulado`.")
