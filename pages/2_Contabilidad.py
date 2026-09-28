@@ -931,7 +931,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo estrictamente el saldo final real de las columnas G (Deudor F) y H (Acreedor F): `{ruta_balanza}`.")
+                st.info(f"Cruces estrictos de Préstamos (101-00015 vs 202-00001) usando la lista oficial de 4 dígitos: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -958,8 +958,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Tomar el saldo deudor final menos acreedor final exacto
-                                    monto = r['deudor_f'] - r['acreedor_f']
+                                    monto = r['saldo_final']
                                     if cta.startswith("201-"):
                                         monto = -monto
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
@@ -967,7 +966,7 @@ if estructura:
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
 
-                    # --- TABLA 2: PRÉSTAMOS ---
+                    # --- TABLA 2: PRÉSTAMOS (101-00015 VS 202-00001) ---
                     st.markdown("---")
                     st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
 
@@ -980,14 +979,15 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            if cta.startswith(("101-00015", "202-")) or "00015" in cta or "202-" in cta:
+                            # Identificar estrictamente Deudores (101-00015) o Pasivo LP (202-00001)
+                            if cta.startswith(("101-00015", "202-00001")) or "00015" in cta or "202-00001" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Tomar estrictamente Deudor F (col G) menos Acreedor F (col H), respetando los 1,302.30 exactos
-                                    monto = r['deudor_f'] - r['acreedor_f']
-                                    if cta.startswith("202-"):
+                                    # Tomar el saldo final neto correcto (Deudor F - Acreedor F)
+                                    monto = r['saldo_final']
+                                    if cta.startswith("202-00001"):
                                         monto = -monto
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
@@ -1038,6 +1038,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Lectura corregida a las columnas G (Deudor F) y H (Acreedor F).")
+                    st.success("✅ Cruce de Préstamos (101-00015 vs 202-00001) configurado con la lista oficial de 4 dígitos.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
