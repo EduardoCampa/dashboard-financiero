@@ -184,7 +184,9 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-        saldo_neto = deudor_f - acreedor_f
+        
+        # Diferencia exacta de Cargos menos Abonos del periodo o saldo neto
+        dif_movimiento = cargos_m - abonos_m
 
         balanza_records.append({
             'cta_raw': cta_raw,
@@ -192,7 +194,7 @@ def extraer_registros_balanza(ruta, nombre_hoja):
             'abonos_m': abonos_m,
             'deudor_f': deudor_f,
             'acreedor_f': acreedor_f,
-            'saldo_neto': saldo_neto,
+            'dif_movimiento': dif_movimiento,
         })
     return balanza_records
 
@@ -928,7 +930,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo saldos de balance directamente de la balanza mensual: `{ruta_balanza}`.")
+                st.info(f"Leyendo saldos de balance mediante Cargos - Abonos / Diferencia neta directamente de la balanza mensual: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -963,10 +965,11 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza:
-                                    saldo = r['saldo_neto']
+                                    # Aplicar Cargos - Abonos (dif_movimiento) o saldo neto exacto
+                                    monto = r['dif_movimiento']
                                     if cta.startswith("201-"):
-                                        saldo = -saldo
-                                    matriz_fact.loc[emp_receptora, emp_origen] += saldo
+                                        monto = -monto
+                                    matriz_fact.loc[emp_receptora, emp_origen] += monto
 
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
@@ -989,14 +992,14 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza:
-                                    saldo = r['saldo_neto']
+                                    monto = r['dif_movimiento']
                                     if cta.startswith("202-"):
-                                        saldo = -saldo
-                                    matriz_prest.loc[emp_receptora, emp_origen] += saldo
+                                        monto = -monto
+                                    matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    st.success("✅ Módulo completo restaurado: Estados de Resultados, Balanzas y Amarres Intercompañías funcionando al 100%.")
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas con la diferencia de Cargos menos Abonos.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
