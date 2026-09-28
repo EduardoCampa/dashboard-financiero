@@ -67,7 +67,7 @@ def cargar_plantilla_formato():
     sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
 
     plantilla = []
-    # Comenzar a leer desde la fila 6 para omitir los encabezados "CUENTA", "CONCEPTO" y "1"
+    # Comenzar a leer desde la fila 6 para omitir encabezados "CUENTA", "CONCEPTO" y "1"
     for i in range(6, sheet.max_row + 1):
         cta = sheet.cell(row=i, column=1).value
         concepto = sheet.cell(row=i, column=2).value
@@ -77,7 +77,7 @@ def cargar_plantilla_formato():
         str_cta = str(cta).strip() if cta else ""
         str_conc = str(concepto).strip() if concepto else ""
 
-        # Omitir filas basurita o encabezados de plantilla
+        # Omitir filas de encabezado de la plantilla
         if str_cta.upper() in ['CUENTA', '1', '2', '3'] or str_conc.upper() in [
             'CONCEPTO',
             '1',
@@ -326,10 +326,9 @@ def generar_reporte_multiempresa(
         es_cuenta = bool(patron)
         es_dato = es_cuenta or es_formula
 
-        # Indentación visual de concepto basada en el nivel de agrupación (outlineLevel)
-        concepto_formateado = (
-            ("    " * outline_lvl) + concepto if outline_lvl > 0 else concepto
-        )
+        # USO DE ESPACIOS UNICODE NO COLAPSABLES (\u00A0) PARA APLICAR SANGRÍA REAL EN BROWSER
+        indent_spaces = "\u00A0\u00A0\u00A0\u00A0" * outline_lvl if es_cuenta else ""
+        concepto_formateado = f"{indent_spaces}{concepto}"
 
         fila_dict = {
             'CUENTA': patron if patron else '',
@@ -365,12 +364,10 @@ def generar_reporte_multiempresa(
             )
             fila_dict['% TOTAL'] = pct_total if es_dato else None
 
-        es_subtotal_o_total = any(
-            kw in concepto.lower()
-            for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas', 'descuentos s/']
-        )
+        # Detectar si es una fila de suma/subtotal (sin patrón de cuenta o con fórmula o palabra clave)
+        es_subtotal_o_total = es_formula or (not patron and bool(concepto))
 
-        fila_dict['es_total'] = es_subtotal_o_total or es_formula
+        fila_dict['es_total'] = es_subtotal_o_total
         fila_dict['outline_level'] = outline_lvl
         fila_dict['es_encabezado'] = (
             not patron and not es_formula and bool(concepto)
@@ -381,39 +378,34 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA CON AGRUPADORES ---
+# --- FORMATO DE TABLA INTERACTIVA CON SANGRÍA VISIBLE Y NEGRITA ---
 def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
     if df_er.empty:
         return
 
     df_disp = df_er.copy()
 
-    # Si se selecciona la vista resumida, sólo mostramos los totales de nivel superior (outline_level == 0)
+    # Filtro para la vista resumida
     if nivel_detalle == "Resumido (Sólo Totales)":
-        df_disp = df_disp[df_disp['outline_level'] == 0]
+        df_disp = df_disp[df_disp['es_total'] == True]
 
     def aplicar_estilo_finanzas(row):
         styles = [''] * len(row)
         es_total = row.get('es_total', False)
         outline_lvl = row.get('outline_level', 0)
-        es_encabezado = row.get('es_encabezado', False)
 
-        if outline_lvl == 0 and es_total:
-            # Totales Principales en Negrita Resaltada
+        if es_total and outline_lvl == 0:
+            # Gran Total Principal (Fondo destacado y Negrita)
             styles = [
-                'font-weight: 800; background-color: #f1f5f9; color: #0f172a; border-top: 1.5px solid #475569; border-bottom: 2px double #0f172a;'
+                'font-weight: 800; background-color: #e2e8f0; color: #0f172a; border-top: 2px solid #475569; border-bottom: 2px double #0f172a;'
             ] * len(row)
         elif es_total:
-            # Subtotales
+            # Subtotales de Grupo (Ventas a Terceros, Ventas Intercompañías, etc.)
             styles = [
-                'font-weight: 700; background-color: #f8fafc; color: #1e293b; border-top: 1px solid #cbd5e1;'
-            ] * len(row)
-        elif es_encabezado:
-            # Títulos de sección
-            styles = [
-                'font-weight: 700; background-color: #ffffff; color: #0284c7; text-transform: uppercase;'
+                'font-weight: 700; background-color: #f8fafc; color: #0284c7; border-top: 1.5px solid #94a3b8;'
             ] * len(row)
         else:
+            # Cuentas hijas normales
             styles = ['font-weight: 400; color: #334155;'] * len(row)
 
         return styles
@@ -456,7 +448,7 @@ def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- EXPORTADOR A EXCEL ---
+# --- EXPORTADOR A EXCEL CON AGRUPADORES NATIVOS ---
 def exportar_excel_con_agrupaciones_openpyxl(
     df_er, empresas, anio, mes, tipo='mes'
 ):
@@ -484,8 +476,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
     TOTAL_FILL = PatternFill(
         start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
     )
-    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="1E293B")
-    HEADER_ROW_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
     REGULAR_FONT = Font(name="Calibri", size=11, color="334155")
 
     THIN_BORDER = Border(
@@ -535,7 +526,6 @@ def exportar_excel_con_agrupaciones_openpyxl(
         curr_row = start_row + 1 + r_i
         es_total = row_data.get('es_total', False)
         outline_lvl = row_data.get('outline_level', 0)
-        es_encabezado = row_data.get('es_encabezado', False)
 
         ws.row_dimensions[curr_row].outlineLevel = outline_lvl
 
@@ -548,16 +538,13 @@ def exportar_excel_con_agrupaciones_openpyxl(
             else:
                 cell.value = val
 
-            if outline_lvl == 0 and es_total:
+            if es_total and outline_lvl == 0:
                 cell.font = TOTAL_PRINCIPAL_FONT
                 cell.fill = TOTAL_PRINCIPAL_FILL
                 cell.border = TOTAL_BORDER
             elif es_total:
                 cell.font = TOTAL_FONT
                 cell.fill = TOTAL_FILL
-                cell.border = THIN_BORDER
-            elif es_encabezado:
-                cell.font = HEADER_ROW_FONT
                 cell.border = THIN_BORDER
             else:
                 cell.font = REGULAR_FONT
