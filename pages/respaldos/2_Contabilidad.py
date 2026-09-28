@@ -125,7 +125,6 @@ def obtener_lista_empresas(ruta):
     if len(sheets) > 1 and "Hoja1" in sheets:
         sheets.remove("Hoja1")
 
-    # Ordenar las empresas según el orden solicitado por el usuario
     return ordenar_empresas_segun_prioridad(sheets)
 
 
@@ -275,8 +274,26 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
 
 
 # --- BUSCADOR DE MONTO EN BALANZA ---
-def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
+def obtener_monto_cuenta_balanza(
+    patron_template, balanza_records, tipo='mes', solo_intercos=False
+):
     pt = str(patron_template).strip()
+
+    # Si estamos en modo Intercos, verificar regla estricta de exclusión:
+    if solo_intercos:
+        segs_pt = pt.split('-')
+        prefix_pt = segs_pt[0].strip() if segs_pt else ''
+
+        # Si el primer nivel (3 dígitos) termina en '1' (ej. 411, 421, 441, 511, 521, 551, 561):
+        if len(prefix_pt) == 3 and prefix_pt.endswith('1'):
+            # Única excepción autorizada: la 531-?????-054-0000
+            if prefix_pt == '531':
+                if not (len(segs_pt) >= 3 and segs_pt[2] in ('054', '54', '0054')):
+                    return 0.0
+            else:
+                # Todas las demás cuentas terminadas en 1 (411, 421, 441, 551, etc.) QUEDAN EN CERO / ELIMINADAS
+                return 0.0
+
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
@@ -316,7 +333,9 @@ def obtener_monto_cuenta_balanza(patron_template, balanza_records, tipo='mes'):
 
 
 # --- CALCULAR VALORES POR EMPRESA ---
-def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
+def calcular_mapa_valores_empresa(
+    df_balanza, plantilla, tipo='mes', solo_intercos=False
+):
     if df_balanza.empty or not plantilla:
         return {}
 
@@ -360,7 +379,10 @@ def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
 
         if patron:
             val_map[r_idx] = obtener_monto_cuenta_balanza(
-                patron, balanza_records, tipo=tipo
+                patron,
+                balanza_records,
+                tipo=tipo,
+                solo_intercos=solo_intercos,
             )
         elif c_form and str(c_form).startswith('='):
             formulas_map[r_idx] = c_form
@@ -373,7 +395,11 @@ def calcular_mapa_valores_empresa(df_balanza, plantilla, tipo='mes'):
 
 # --- GENERADOR MULTIEMPRESA ---
 def generar_reporte_multiempresa(
-    ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
+    ruta_balanza,
+    empresas_seleccionadas,
+    plantilla,
+    tipo='mes',
+    solo_intercos=False,
 ):
     if not empresas_seleccionadas or not plantilla:
         return pd.DataFrame()
@@ -382,7 +408,7 @@ def generar_reporte_multiempresa(
     for emp in empresas_seleccionadas:
         df_b = cargar_hoja_balanza(ruta_balanza, emp)
         mapas_empresas[emp] = calcular_mapa_valores_empresa(
-            df_b, plantilla, tipo=tipo
+            df_b, plantilla, tipo=tipo, solo_intercos=solo_intercos
         )
 
     reporte = []
@@ -614,7 +640,13 @@ def renderizar_tabla_interactiva_agrupada(
 
 # --- EXPORTADOR A EXCEL FILTRADO ---
 def exportar_excel_con_agrupaciones_openpyxl(
-    df_er, empresas, anio, mes, tipo='mes', conceptos_a_mostrar=None
+    df_er,
+    empresas,
+    anio,
+    mes,
+    tipo='mes',
+    conceptos_a_mostrar=None,
+    titulo_custom=None,
 ):
     df_exp = df_er.copy()
     if conceptos_a_mostrar and "TODOS" not in conceptos_a_mostrar:
@@ -661,7 +693,11 @@ def exportar_excel_con_agrupaciones_openpyxl(
         right=Side(style='thin', color='E2E8F0'),
     )
 
-    tipo_str = "DEL MES" if tipo == 'mes' else "ACUMULADO"
+    tipo_str = (
+        titulo_custom
+        if titulo_custom
+        else ("DEL MES" if tipo == 'mes' else "ACUMULADO")
+    )
     ws.cell(
         row=1,
         column=1,
@@ -776,7 +812,6 @@ if estructura:
         estructura[0]['ruta'],
     )
 
-    # Empresas ordenadas según la prioridad estricta definida por el usuario
     lista_empresas = obtener_lista_empresas(ruta_balanza)
 
     col_emp1, col_emp2 = st.columns([1, 3])
@@ -815,7 +850,6 @@ if estructura:
 
         col_v1, col_v2 = st.columns([1.5, 3])
 
-        # SOLO LAS 3 OPCIONES SOLICITADAS + CUALQUIER VISTA GUARDADA CON ESTRELLA ⭐
         opciones_plantillas = [
             "📊 Resumen Ejecutivo",
             "🔍 Detalle Completo",
@@ -851,7 +885,6 @@ if estructura:
                     ],
                 )
 
-                # Guardar nuevas plantillas personalizadas
                 with st.expander("💾 Guardar esta selección como nueva vista"):
                     col_g1, col_g2 = st.columns([2, 1])
                     with col_g1:
@@ -875,10 +908,12 @@ if estructura:
 
         st.markdown("---")
 
-        tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
+        # PESTAÑAS PRINCIPALES DEL MÓDULO CONTABLE
+        tab_balanzas, tab_er_mes, tab_er_acum, tab_er_interco = st.tabs([
             "📑 Balanzas de Comprobación",
             "📈 Estado de Resultados (MES)",
             "📊 Estado de Resultados (ACUM)",
+            "🔄 Estado de Resultados (Intercos)",
         ])
 
         with tab_balanzas:
@@ -964,6 +999,50 @@ if estructura:
                         label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
                         file_name=f"Estado_Resultados_ACUM_Filtrado_{mes_sel}_{anio_sel}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+        with tab_er_interco:
+            empresas_str = ", ".join(empresas_seleccionadas)
+            st.subheader(
+                f"Estado de Resultados (INTERCOMPAÑÍAS ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
+            )
+            st.info(
+                "💡 **Filtro Aplicado:** Se eliminan todas las cuentas de Intercompañías (`411`, `421`, `441`, `511`, `521`, `551`, `561`), conservando ÚNICAMENTE la cuenta `531-?????-054-0000` y las cuentas a terceros."
+            )
+
+            if not plantilla:
+                st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+            else:
+                with st.spinner("Procesando Estado de Resultados Intercompañías (Acumulado)..."):
+                    df_er_interco = generar_reporte_multiempresa(
+                        ruta_balanza,
+                        empresas_seleccionadas,
+                        plantilla,
+                        tipo='acum',
+                        solo_intercos=True,
+                    )
+
+                if not df_er_interco.empty:
+                    renderizar_tabla_interactiva_agrupada(
+                        df_er_interco,
+                        empresas_seleccionadas,
+                        conceptos_a_mostrar=conceptos_seleccionados,
+                    )
+
+                    excel_interco = exportar_excel_con_agrupaciones_openpyxl(
+                        df_er_interco,
+                        empresas_seleccionadas,
+                        anio_sel,
+                        mes_sel,
+                        tipo='acum',
+                        conceptos_a_mostrar=conceptos_seleccionados,
+                        titulo_custom="INTERCOMPAÑIAS ACUMULADO",
+                    )
+                    st.download_button(
+                        label=f"📥 Descargar ER Intercompañías Acumulado en Excel ({mes_sel}_{anio_sel})",
+                        data=excel_interco,
+                        file_name=f"Estado_Resultados_INTERCOS_ACUM_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
