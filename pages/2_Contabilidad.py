@@ -46,30 +46,29 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL DE CÓDIGOS DE CONTPAQI (Último segmento de la cuenta) A NOMBRE DE EMPRESA
-# Nota: 0468 se asigna a LATIN para los cruces intercompañías correctos según balanza
+# MAPEO OFICIAL Y EXACTO DE CÓDIGOS DE CONTPAQI (4 DÍGITOS) PROPORCIONADO
 MAPEO_CODIGO_EMPRESA = {
+    "0468": "CIVLAT",
     "0467": "CIV",
-    "0468": "LATIN",
     "0469": "CIVMEX",
-    "0665": "COMANA",
+    "2872": "SERVYRE",
+    "1636": "SERSEÑAL",
     "0813": "EFCO",
     "0942": "FGS",
     "1127": "FERVIC",
+    "1216": "FPSB",
     "1144": "PESAZA",
     "1149": "GPO SERVYRE",
-    "1216": "FPSB",
     "1404": "INMOBILIARIA",
-    "1428": "IPV",
-    "1603": "LABORATORIOS",
-    "1616": "LAITS",
+    "1603": "LABORATORIO",
+    "1616": "LATIN",
     "1626": "LIMPIESPIN",
-    "1636": "LOGISTICA",
-    "2396": "PROINA",
     "2871": "SERVYCARGO",
-    "2872": "SERVYRE",
-    "2937": "SEVILAT",
     "3329": "VIALTECNO",
+    "2937": "SEVILAT",
+    "2396": "PROINA",
+    "1428": "IPV",
+    "0665": "COMANA",
 }
 
 
@@ -182,7 +181,7 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Resta estricta de Deudor Menos Acreedor (Saldo Neto Real)
+        # Saldo neto real (Deudor Final - Acreedor Final)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -298,7 +297,7 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
 
 def extraer_codigo_contraparte_robusto(cta_str):
     segs = cta_str.split('-')
-    # Buscar de derecha a izquierda el segmento que coincida exactamente con un código de empresa
+    # Buscar de derecha a izquierda el código exacto de la lista oficial de 4 dígitos
     for seg in reversed(segs):
         seg_clean = seg.strip()
         if seg_clean in MAPEO_CODIGO_EMPRESA:
@@ -929,7 +928,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo saldos netos reales (Deudor Final menos Acreedor Final) directamente de la balanza mensual: `{ruta_balanza}`.")
+                st.info(f"Leyendo saldos netos reales (Deudor Final menos Acreedor Final) mediante lista oficial de códigos de 4 dígitos: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -956,7 +955,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Resta exacta (Deudor Final - Acreedor Final)
+                                    # Resta exacta Deudor Final - Acreedor Final
                                     monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("201-"):
                                         monto = -monto
@@ -983,7 +982,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Resta exacta (Deudor Final - Acreedor Final) respetando estrictamente los 1,302.30 y signos reales
+                                    # Resta exacta Deudor Final - Acreedor Final respetando los 1,302.30 exactos
                                     monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("202-"):
                                         monto = -monto
@@ -1036,6 +1035,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Mapeo de LATIN (0468) y resta neta por Deudor - Acreedor aplicados correctamente.")
+                    st.success("✅ Mapeo oficial de 4 dígitos integrado y cálculo neto por resta aplicado con éxito.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
