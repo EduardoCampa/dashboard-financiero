@@ -167,7 +167,7 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     num_cols = df_b.shape[1]
     col_cta = 0
     
-    # Índices exactos según las capturas de CONTPAQi:
+    # Índices exactos según las balanzas de CONTPAQi:
     # A(0)=Cuenta, B(1)=Nombre, C(2)=Deudor I, D(3)=Acreedor I, E(4)=Cargos, F(5)=Abonos, G(6)=Deudor F, H(7)=Acreedor F
     col_deudor_f = 6 if num_cols > 6 else num_cols - 2
     col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
@@ -184,17 +184,14 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Saldo neto real estándar (Deudor Final - Acreedor Final)
+        # Saldo neto real estricto (Deudor Final - Acreedor Final)
         saldo_final = deudor_f - acreedor_f
-        # Saldo neto invertido para cuentas de pasivo/acreedoras donde el origen registra Acreedor - Deudor
-        saldo_acreedor_neto = acreedor_f - deudor_f
 
         balanza_records.append({
             'cta_raw': cta_raw,
             'deudor_f': deudor_f,
             'acreedor_f': acreedor_f,
             'saldo_final': saldo_final,
-            'saldo_acreedor_neto': saldo_acreedor_neto,
         })
     return balanza_records
 
@@ -933,7 +930,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cruces estrictos de Préstamos (101-00015 vs 202-00001) aplicando resta neta exacta: `{ruta_balanza}`.")
+                st.info(f"Lectura estricta por saldo final neto sin acumular duplicados: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -987,12 +984,11 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
+                                    # Tomar el saldo final neto exacto de la cuenta sin sumar valores cruzados
+                                    monto = r['saldo_final']
                                     if cta.startswith("202-00001") or "202-" in cta:
-                                        # Para cuentas de pasivo, el saldo neto real es Acreedor - Deudor (o saldo invertido de la columna de pasivo)
-                                        monto = r['saldo_acreedor_neto']
-                                    else:
-                                        # Para cuentas de activo (deudores), el saldo neto es Deudor - Acreedor
-                                        monto = r['saldo_final']
+                                        # Para pasivo a largo plazo, el saldo acreedor se invierte restando acreedor menos deudor (o invirtiendo signo)
+                                        monto = r['acreedor_f'] - r['deudor_f']
                                     
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
@@ -1043,6 +1039,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Cruce de Préstamos corregido con la resta neta adecuada para pasivos y deudores.")
+                    st.success("✅ Cruce de Préstamos corregido con la resta neta de pasivos (Acreedor F - Deudor F).")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
