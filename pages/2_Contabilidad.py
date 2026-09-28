@@ -46,6 +46,30 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
+# MAPEO DE ID / CÓDIGOS A NOMBRE DE EMPRESA
+MAPEO_ID_EMPRESA = {
+    "0468": "CIVLAT", "002": "CIVLAT", "2": "CIVLAT",
+    "2872": "SERVYRE", "019": "SERVYRE",
+    "1626": "LIMPIESPIN", "003": "LIMPIESPIN",
+    "1616": "LAITS", "004": "LAITS",
+    "1144": "PESAZA", "005": "PESAZA",
+    "0813": "EFCO", "006": "EFCO",
+    "1428": "IPV", "007": "IPV",
+    "1404": "INMOBILIARIA", "008": "INMOBILIARIA",
+    "1216": "FPSB", "009": "FPSB",
+    "1603": "LABORATORIOS", "010": "LABORATORIOS",
+    "1127": "FERVIC", "011": "FERVIC",
+    "0469": "CIVMEX", "012": "CIVMEX",
+    "0942": "FGS", "013": "FGS",
+    "2937": "SEVILAT", "014": "SEVILAT",
+    "0467": "CIV", "015": "CIV",
+    "2871": "SERVYCARGO", "016": "SERVYCARGO",
+    "3329": "VIALTECNO", "017": "VIALTECNO",
+    "0665": "COMANA", "018": "COMANA",
+    "1149": "GPO SERVYRE",
+    "2396": "PROINA",
+}
+
 
 def ordenar_empresas_segun_prioridad(lista_empresas):
     def obtener_posicion(emp_nombre):
@@ -1178,11 +1202,83 @@ if estructura:
                 st.info("Cruce de XMLs/Comercial Pro vs Ingresos Registrados en Cuentas 410 / 411.")
 
             with subtab_intercos:
-                st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar)")
-                st.info("Conciliación de Saldos y Operaciones Cruzadas entre Empresas del Grupo.")
+                st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar y Préstamos)")
+                st.info(f"Cruce dinámico leyendo directamente de las pestañas de la balanza mensual: `{ruta_balanza}`.")
+
+                todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
+
+                if todas_empresas_balanza:
+                    # Cargar los registros de balanza pestaña por pestaña exactamente igual que los Estados de Resultados
+                    datos_empresas_recs = {}
+                    for emp in todas_empresas_balanza:
+                        datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+
+                    # --- TABLA 1: FACTURACIÓN ---
+                    st.markdown("---")
+                    st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
+
+                    matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_recs[emp_receptora]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            if cta.startswith("101-00004-") or cta.startswith("201-00002-") or cta.startswith("201-00004-"):
+                                segs = cta.split('-')
+                                if len(segs) >= 3:
+                                    sub_cta = segs[1]
+                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
+
+                                    if not emp_origen:
+                                        for eo in todas_empresas_balanza:
+                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
+                                                emp_origen = eo
+                                                break
+
+                                    if emp_origen and emp_origen in todas_empresas_balanza:
+                                        saldo_neto = r['deudor_f'] - r['acreedor_f']
+                                        if cta.startswith("201-"):
+                                            saldo_neto = -saldo_neto
+                                        matriz_fact.loc[emp_receptora, emp_origen] += saldo_neto
+
+                    matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
+                    st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
+
+                    # --- TABLA 2: PRÉSTAMOS ---
+                    st.markdown("---")
+                    st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
+
+                    matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_recs[emp_receptora]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            if cta.startswith("101-00015-") or cta.startswith("202-00001-"):
+                                segs = cta.split('-')
+                                if len(segs) >= 3:
+                                    sub_cta = segs[1]
+                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
+
+                                    if not emp_origen:
+                                        for eo in todas_empresas_balanza:
+                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
+                                                emp_origen = eo
+                                                break
+
+                                    if emp_origen and emp_origen in todas_empresas_balanza:
+                                        saldo_neto = r['deudor_f'] - r['acreedor_f']
+                                        if cta.startswith("202-"):
+                                            saldo_neto = -saldo_neto
+                                        matriz_prest.loc[emp_receptora, emp_origen] += saldo_neto
+
+                    matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
+                    st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
+
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas leyendo correctamente pestaña por pestaña desde la balanza mensual.")
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
-                st.info("Conciliación de Ingresos (Cuentas 411/441) vs Gastos/Costos Intercompañías.")
+                st.info("Conciliación cruzada de Ingresos Intercos (Cuentas 411/441) vs Gastos y Costos Intercos (Cuenta 531).")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
