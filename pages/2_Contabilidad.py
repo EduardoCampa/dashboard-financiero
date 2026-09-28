@@ -273,11 +273,27 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA CON FILTRO PRECISO DE INTERCOS ---
+# --- BUSCADOR DE MONTO EN BALANZA ---
 def obtener_monto_cuenta_balanza(
     patron_template, balanza_records, tipo='mes', solo_intercos=False
 ):
     pt = str(patron_template).strip()
+
+    # Si estamos en modo Intercos, verificar regla estricta de exclusión:
+    if solo_intercos:
+        segs_pt = pt.split('-')
+        prefix_pt = segs_pt[0].strip() if segs_pt else ''
+
+        # Si el primer nivel (3 dígitos) termina en '1' (ej. 411, 421, 441, 511, 521, 551, 561):
+        if len(prefix_pt) == 3 and prefix_pt.endswith('1'):
+            # Única excepción autorizada: la 531-?????-054-0000
+            if prefix_pt == '531':
+                if not (len(segs_pt) >= 3 and segs_pt[2] in ('054', '54', '0054')):
+                    return 0.0
+            else:
+                # Todas las demás cuentas terminadas en 1 (411, 421, 441, 551, etc.) QUEDAN EN CERO / ELIMINADAS
+                return 0.0
+
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
@@ -295,37 +311,6 @@ def obtener_monto_cuenta_balanza(
         for b in balanza_records:
             if coincide_cuenta_robusta(b['cta_raw'], pt):
                 records_a_sumar.append(b)
-
-    # Filtrado estricto para la pestaña Intercos:
-    if solo_intercos:
-        records_filtrados = []
-        for b in records_a_sumar:
-            cb = str(b['cta_raw']).strip()
-            segs = cb.split('-')
-            prefix = segs[0] if segs else ''
-
-            # Verificar si la cuenta de primer nivel (3 dígitos) termina en '1' (ej. 411, 421, 511, 531, 551, 561)
-            if len(prefix) == 3 and prefix.endswith('1'):
-                # Regla especial para 531: únicamente conservar la subcuenta 054 (531-?????-054-0000)
-                if prefix == '531':
-                    if len(segs) >= 3 and segs[2] in ('054', '54', '0054'):
-                        records_filtrados.append(b)
-                    continue
-
-                # Para otras cuentas que terminan en 1 (411, 421, 511, 551, 561):
-                # Eliminar subcuentas a terceros (tercer segmento en 001 o 1)
-                is_terceros = False
-                if len(segs) >= 3 and segs[2] in ('001', '1', '01', '0001'):
-                    is_terceros = True
-
-                if not is_terceros:
-                    records_filtrados.append(b)
-            else:
-                # Cuentas que NO terminan en 1 en el primer nivel (ej. 530, 410, 601, 701):
-                # ¡SE CONSERVAN TODAS SUS SUBCUENTAS (ej. 530-?????-001-0000)!
-                records_filtrados.append(b)
-
-        records_a_sumar = records_filtrados
 
     monto = 0.0
     for b in records_a_sumar:
@@ -1023,7 +1008,7 @@ if estructura:
                 f"Estado de Resultados (INTERCOMPAÑÍAS ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
             )
             st.info(
-                "💡 **Filtro Aplicado:** Para cuentas con primer nivel terminado en `1` (`411`, `421`, `511`, `551`, `561`), se excluyen subcuentas a terceros. Para la `531`, únicamente se conserva `531-?????-054-0000`. La cuenta `530` y demás se conservan completas."
+                "💡 **Filtro Aplicado:** Se eliminan todas las cuentas de Intercompañías (`411`, `421`, `441`, `511`, `521`, `551`, `561`), conservando ÚNICAMENTE la cuenta `531-?????-054-0000` y las cuentas a terceros."
             )
 
             if not plantilla:
