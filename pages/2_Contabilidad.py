@@ -1,3 +1,4 @@
+import glob
 import io
 import json
 import os
@@ -18,7 +19,6 @@ st.set_page_config(
 st.title("📊 Módulo Contable")
 
 PRESETS_FILE = "vistas_personalizadas_er.json"
-EXCEL_RESUMEN_PATH = "PARTES RELACIONADAS 08-2026 RESUMEN.xlsx"
 
 # ORDEN PREFERENTE DE EMPRESAS PARA LAS MATRICES
 ORDEN_EMPRESAS_PRIORIDAD = [
@@ -48,7 +48,7 @@ ORDEN_EMPRESAS_PRIORIDAD = [
 
 # MAPEO DE CÓDIGOS DE CONTPAQI (Último segmento) A NOMBRE DE EMPRESA
 MAPEO_CODIGO_EMPRESA = {
-    "0468": "CIVLAT",
+    "0468": "CIVLAT", "2": "CIVLAT", "002": "CIVLAT",
     "2872": "SERVYRE",
     "1626": "LIMPIESPIN",
     "1616": "LAITS",
@@ -117,21 +117,70 @@ def guardar_nueva_vista(nombre_vista, lista_conceptos):
         json.dump(custom_vistas, f, ensure_ascii=False, indent=2)
 
 
-@st.cache_data(ttl=600)
-def cargar_balanzas_acumuladas():
-    if not os.path.exists(EXCEL_RESUMEN_PATH):
-        return pd.DataFrame()
-    df = pd.read_excel(EXCEL_RESUMEN_PATH, sheet_name="BALANZAS ACUMULADAS")
-    return df
+# --- BUSCAR BALANZAS POR AÑO Y MES ---
+def obtener_estructura_balanzas():
+    archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
+    estructura = []
+
+    for path in archivos:
+        path_norm = path.replace("\\", "/")
+        partes = path_norm.split("/")
+
+        if len(partes) >= 4:
+            anio = partes[-3]
+            mes = partes[-2]
+            estructura.append({
+                'anio': str(anio),
+                'mes': str(mes),
+                'ruta': path_norm,
+                'mtime': os.path.getmtime(path),
+            })
+
+    if estructura:
+        estructura.sort(key=lambda x: x['mtime'], reverse=True)
+
+    return estructura
 
 
 @st.cache_data(ttl=600)
-def obtener_lista_empresas_excel():
-    df = cargar_balanzas_acumuladas()
-    if df.empty:
+def obtener_lista_empresas(ruta):
+    xls = pd.ExcelFile(ruta)
+    sheets = xls.sheet_names
+    if len(sheets) > 1 and "Hoja1" in sheets:
+        sheets.remove("Hoja1")
+
+    return ordenar_empresas_segun_prioridad(sheets)
+
+
+@st.cache_data(ttl=600)
+def extraer_registros_balanza_pestana(ruta, nombre_hoja):
+    df_b = pd.read_excel(ruta, sheet_name=nombre_hoja)
+    if df_b.empty:
         return []
-    empresas = df['EMPRESA'].dropna().unique().tolist()
-    return ordenar_empresas_segun_prioridad(empresas)
+
+    num_cols = df_b.shape[1]
+    col_cta = 0
+    col_deudor_f = num_cols - 2
+    col_acreedor_f = num_cols - 1
+
+    balanza_records = []
+    for _, row in df_b.iterrows():
+        cta_raw = str(row.iloc[col_cta]).strip()
+        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+            continue
+
+        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+            continue
+
+        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
+        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+        saldo_neto = deudor_f - acreedor_f
+
+        balanza_records.append({
+            'cta_raw': cta_raw,
+            'saldo_neto': saldo_neto,
+        })
+    return balanza_records
 
 
 # --- PARSER NUMÉRICO ROBUSTO ---
@@ -150,9 +199,31 @@ def parse_monto_robusto(val):
 
 
 # --- INTERFAZ PRINCIPAL DE STREAMLIT ---
-lista_empresas = obtener_lista_empresas_excel()
+estructura = obtener_estructura_balanzas()
 
-if lista_empresas:
+if estructura:
+    anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
+
+    col_a, col_m = st.columns([1, 1])
+
+    with col_a:
+        anio_sel = st.selectbox("Año:", anios_disponibles)
+
+    meses_disponibles = sorted(
+        list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
+        reverse=True,
+    )
+
+    with col_m:
+        mes_sel = st.selectbox("Mes:", meses_disponibles)
+
+    ruta_balanza = next(
+        (x['ruta'] for x in estructura if x['anio'] == anio_sel and x['mes'] == mes_sel),
+        estructura[0]['ruta'],
+    )
+
+    lista_empresas = obtener_lista_empresas(ruta_balanza)
+
     col_emp1, col_emp2 = st.columns([1, 3])
     with col_emp1:
         st.write("")
@@ -176,7 +247,6 @@ if lista_empresas:
 
     st.markdown("---")
 
-    # NAVEGACIÓN PRINCIPAL DEL MÓDULO CONTABLE
     seccion_contable = st.radio(
         "📌 **Selecciona la Vista Contable:**",
         ["📊 Estados de Resultados", "🔗 Amarres Contables"],
@@ -188,7 +258,7 @@ if lista_empresas:
     if seccion_contable == "📊 Estados de Resultados":
         st.info("Módulo de Estados de Resultados activo.")
     elif seccion_contable == "🔗 Amarres Contables":
-        st.subheader("🔗 Módulo de Amarres Contables (Ejercicio Acumulado)")
+        st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
 
         subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
             "👥 Amarre RH",
@@ -207,13 +277,11 @@ if lista_empresas:
 
         with subtab_intercos:
             st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar y Préstamos)")
-            st.info("Cruce dinámico desde la pestaña `BALANZAS ACUMULADAS` del archivo Excel adjunto.")
+            st.info(f"Cruce dinámico leyendo directamente cada pestaña de la balanza mensual: `{ruta_balanza}`.")
 
-            df_balanzas = cargar_balanzas_acumuladas()
+            empresas_disp = obtener_lista_empresas(ruta_balanza)
 
-            if not df_balanzas.empty:
-                empresas_disp = obtener_lista_empresas_excel()
-
+            if empresas_disp:
                 # --- TABLA 1: FACTURACIÓN ---
                 st.markdown("---")
                 st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
@@ -222,37 +290,35 @@ if lista_empresas:
                     0.0, index=empresas_disp, columns=empresas_disp
                 )
 
-                # Iterar sobre las filas de balanzas acumuladas
-                for _, row in df_balanzas.iterrows():
-                    emp_receptora = str(row.get('EMPRESA', '')).strip()
-                    cuenta = str(row.iloc[1]).strip()
-                    saldo_final = parse_monto_robusto(row.get('Saldo final', 0.0))
+                for emp_receptora in empresas_disp:
+                    recs = extraer_registros_balanza_pestana(ruta_balanza, emp_receptora)
+                    for r in recs:
+                        cta = r['cta_raw']
+                        saldo = r['saldo_neto']
 
-                    if emp_receptora in empresas_disp:
-                        if cuenta.startswith("101-00004-") or cuenta.startswith("201-00002-") or cuenta.startswith("201-00004-"):
-                            segs = cuenta.split('-')
-                            if len(segs) >= 4:
-                                cod_contraparte = segs[3].strip()
-                                emp_origen = MAPEO_ID_EMPRESA.get(
-                                    cod_contraparte, None
-                                )
+                        if cta.startswith("101-00004-") or cta.startswith("201-00002-") or cta.startswith("201-00004-"):
+                            segs = cta.split('-')
+                            if len(segs) >= 3:
+                                # Identificar empresa origen (tercer segmento o sufijo)
+                                sub_cta = segs[2] if len(segs) >= 3 else segs[1]
+                                emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None) if 'MAPEO_ID_EMPRESA' in globals() else None
+                                
+                                if not emp_origen:
+                                    for k, v in MAPEO_CODIGO_EMPRESA.items():
+                                        if k in cta:
+                                            emp_origen = v
+                                            break
 
                                 if not emp_origen:
                                     for ed in empresas_disp:
-                                        if (
-                                            cod_contraparte in ed
-                                            or cod_contraparte.lstrip('0')
-                                            in ed.lstrip('0')
-                                        ):
+                                        if sub_cta in ed or sub_cta.lstrip('0') in ed.lstrip('0'):
                                             emp_origen = ed
                                             break
 
                                 if emp_origen and emp_origen in empresas_disp:
-                                    if cuenta.startswith("201-"):
-                                        saldo_final = -saldo_final
-                                    matriz_fact.loc[
-                                        emp_receptora, emp_origen
-                                    ] += saldo_final
+                                    if cta.startswith("201-"):
+                                        saldo = -saldo
+                                    matriz_fact.loc[emp_receptora, emp_origen] += saldo
 
                 matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                 st.dataframe(
@@ -268,36 +334,32 @@ if lista_empresas:
                     0.0, index=empresas_disp, columns=empresas_disp
                 )
 
-                for _, row in df_balanzas.iterrows():
-                    emp_receptora = str(row.get('EMPRESA', '')).strip()
-                    cuenta = str(row.iloc[1]).strip()
-                    saldo_final = parse_monto_robusto(row.get('Saldo final', 0.0))
+                for emp_receptora in empresas_disp:
+                    recs = extraer_registros_balanza_pestana(ruta_balanza, emp_receptora)
+                    for r in recs:
+                        cta = r['cta_raw']
+                        saldo = r['saldo_neto']
 
-                    if emp_receptora in empresas_disp:
-                        if cuenta.startswith("101-00015-") or cuenta.startswith("202-00001-"):
-                            segs = cuenta.split('-')
-                            if len(segs) >= 4:
-                                cod_contraparte = segs[3].strip()
-                                emp_origen = MAPEO_ID_EMPRESA.get(
-                                    cod_contraparte, None
-                                )
+                        if cta.startswith("101-00015-") or cta.startswith("202-00001-"):
+                            segs = cta.split('-')
+                            if len(segs) >= 3:
+                                sub_cta = segs[2] if len(segs) >= 3 else segs[1]
+                                emp_origen = None
+                                for k, v in MAPEO_CODIGO_EMPRESA.items():
+                                    if k in cta:
+                                        emp_origen = v
+                                        break
 
                                 if not emp_origen:
                                     for ed in empresas_disp:
-                                        if (
-                                            cod_contraparte in ed
-                                            or cod_contraparte.lstrip('0')
-                                            in ed.lstrip('0')
-                                        ):
+                                        if sub_cta in ed or sub_cta.lstrip('0') in ed.lstrip('0'):
                                             emp_origen = ed
                                             break
 
                                 if emp_origen and emp_origen in empresas_disp:
-                                    if cuenta.startswith("202-"):
-                                        saldo_final = -saldo_final
-                                    matriz_prest.loc[
-                                        emp_receptora, emp_origen
-                                    ] += saldo_final
+                                    if cta.startswith("202-"):
+                                        saldo = -saldo
+                                    matriz_prest.loc[emp_receptora, emp_origen] += saldo
 
                 matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                 st.dataframe(
@@ -305,10 +367,10 @@ if lista_empresas:
                     use_container_width=True,
                 )
 
-                st.success("✅ Matrices de Facturación y Préstamos cargadas exitosamente desde `BALANZAS ACUMULADAS`.")
+                st.success("✅ Matrices de Facturación y Préstamos generadas correctamente leyendo pestaña por pestaña de la balanza mensual.")
 
         with subtab_ig_intercos:
             st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
             st.info("Conciliación cruzada de Ingresos Intercos vs Gastos y Costos Intercos.")
 else:
-    st.info("No se encontraron empresas en el archivo de balanzas acumuladas.")
+    st.info("No se encontraron carpetas de Balanzas en la ruta especificada.")
