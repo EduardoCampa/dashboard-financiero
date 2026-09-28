@@ -133,6 +133,22 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
+# --- EXTRAER OBRAS DISPONIBLES DE LA BALANZA ---
+@st.cache_data(ttl=300)
+def obtener_lista_obras(ruta, empresas_seleccionadas):
+    obras = set()
+    for emp in empresas_seleccionadas:
+        df_b = cargar_hoja_balanza(ruta, emp)
+        if not df_b.empty:
+            for cta in df_b.iloc[:, 0].dropna():
+                segs = str(cta).strip().split('-')
+                if len(segs) >= 3:
+                    seg2 = segs[1].strip()
+                    if seg2 != '00000' and seg2.isdigit() and len(seg2) >= 3:
+                        obras.add(seg2)
+    return sorted(list(obras))
+
+
 # --- PLANTILLA DE EXCEL CON AGRUPACIONES ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
@@ -275,23 +291,23 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
 
 # --- BUSCADOR DE MONTO EN BALANZA ---
 def obtener_monto_cuenta_balanza(
-    patron_template, balanza_records, tipo='mes', solo_intercos=False
+    patron_template,
+    balanza_records,
+    tipo='mes',
+    solo_intercos=False,
+    obras_filtro=None,
 ):
     pt = str(patron_template).strip()
 
-    # Si estamos en modo Intercos, verificar regla estricta de exclusión:
     if solo_intercos:
         segs_pt = pt.split('-')
         prefix_pt = segs_pt[0].strip() if segs_pt else ''
 
-        # Si el primer nivel (3 dígitos) termina en '1' (ej. 411, 421, 441, 511, 521, 551, 561):
         if len(prefix_pt) == 3 and prefix_pt.endswith('1'):
-            # Única excepción autorizada: la 531-?????-054-0000
             if prefix_pt == '531':
                 if not (len(segs_pt) >= 3 and segs_pt[2] in ('054', '54', '0054')):
                     return 0.0
             else:
-                # Todas las demás cuentas terminadas en 1 (411, 421, 441, 551, etc.) QUEDAN EN CERO / ELIMINADAS
                 return 0.0
 
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
@@ -311,6 +327,15 @@ def obtener_monto_cuenta_balanza(
         for b in balanza_records:
             if coincide_cuenta_robusta(b['cta_raw'], pt):
                 records_a_sumar.append(b)
+
+    # Filtrado opcional por Obras específicas
+    if obras_filtro:
+        filtrados_obra = []
+        for b in records_a_sumar:
+            segs_cb = str(b['cta_raw']).strip().split('-')
+            if len(segs_cb) >= 2 and segs_cb[1] in obras_filtro:
+                filtrados_obra.append(b)
+        records_a_sumar = filtrados_obra
 
     monto = 0.0
     for b in records_a_sumar:
@@ -334,7 +359,7 @@ def obtener_monto_cuenta_balanza(
 
 # --- CALCULAR VALORES POR EMPRESA ---
 def calcular_mapa_valores_empresa(
-    df_balanza, plantilla, tipo='mes', solo_intercos=False
+    df_balanza, plantilla, tipo='mes', solo_intercos=False, obras_filtro=None
 ):
     if df_balanza.empty or not plantilla:
         return {}
@@ -383,6 +408,7 @@ def calcular_mapa_valores_empresa(
                 balanza_records,
                 tipo=tipo,
                 solo_intercos=solo_intercos,
+                obras_filtro=obras_filtro,
             )
         elif c_form and str(c_form).startswith('='):
             formulas_map[r_idx] = c_form
@@ -393,26 +419,38 @@ def calcular_mapa_valores_empresa(
     return resolver_todas_las_formulas(val_map, formulas_map)
 
 
-# --- GENERADOR MULTIEMPRESA ---
+# --- GENERADOR MULTIEMPRESA CON OPCIÓN DE EXCLUSIÓN DE OBRAS ---
 def generar_reporte_multiempresa(
     ruta_balanza,
     empresas_seleccionadas,
     plantilla,
     tipo='mes',
     solo_intercos=False,
+    obras_a_excluir=None,
 ):
     if not empresas_seleccionadas or not plantilla:
         return pd.DataFrame()
 
     mapas_empresas = {}
+    mapas_obras_excluidas = {}
+
     for emp in empresas_seleccionadas:
         df_b = cargar_hoja_balanza(ruta_balanza, emp)
         mapas_empresas[emp] = calcular_mapa_valores_empresa(
             df_b, plantilla, tipo=tipo, solo_intercos=solo_intercos
         )
 
+        if obras_a_excluir:
+            mapas_obras_excluidas[emp] = calcular_mapa_valores_empresa(
+                df_b,
+                plantilla,
+                tipo=tipo,
+                solo_intercos=solo_intercos,
+                obras_filtro=obras_a_excluir,
+            )
+
     reporte = []
-    incluir_consolidado = len(empresas_seleccionadas) > 1
+    incluir_consolidado = len(empresas_seleccionadas) > 1 or bool(obras_a_excluir)
 
     current_group_id = 0
 
@@ -443,6 +481,7 @@ def generar_reporte_multiempresa(
         }
 
         monto_total_consolidado = 0.0
+        monto_obra_excluida_total = 0.0
 
         for emp in empresas_seleccionadas:
             m_emp = mapas_empresas[emp].get(r_idx, 0.0)
@@ -454,6 +493,10 @@ def generar_reporte_multiempresa(
 
             if es_dato:
                 monto_total_consolidado += m_emp
+                if obras_a_excluir:
+                    monto_obra_excluida_total += mapas_obras_excluidas[emp].get(
+                        r_idx, 0.0
+                    )
 
         if incluir_consolidado:
             tot_ventas_todas = sum(
@@ -469,6 +512,23 @@ def generar_reporte_multiempresa(
                 monto_total_consolidado if es_dato else None
             )
             fila_dict['% TOTAL'] = pct_total if es_dato else None
+
+            if obras_a_excluir:
+                resultado_real = monto_total_consolidado - monto_obra_excluida_total
+                pct_real = (
+                    (resultado_real / tot_ventas_todas) * 100
+                    if tot_ventas_todas
+                    else 0.0
+                )
+
+                lbl_obras = ", ".join(obras_a_excluir)
+                fila_dict[f"OBRA EXCLUIDA ({lbl_obras})"] = (
+                    monto_obra_excluida_total if es_dato else None
+                )
+                fila_dict['RESULTADO REAL'] = (
+                    resultado_real if es_dato else None
+                )
+                fila_dict['% REAL'] = pct_real if es_dato else None
 
         es_subtotal_o_total = es_formula or (not patron and bool(concepto))
         fila_dict['es_total'] = es_subtotal_o_total
@@ -500,8 +560,26 @@ def renderizar_tabla_interactiva_agrupada(
     for e in cols_empresas:
         cols_header.extend([e, f"% {e}"])
 
-    if incluir_consolidado:
-        cols_header.extend(['TOTAL CONSOLIDADO', '% TOTAL'])
+    # Columnas dinámicas si se incluyó consolidado o exclusión de obras
+    extra_cols = [
+        c
+        for c in df_disp.columns
+        if c
+        not in [
+            'CUENTA',
+            'CONCEPTO',
+            'row_idx',
+            'group_id',
+            'is_detail',
+            'outline_level',
+            'es_total',
+        ]
+        and c not in cols_empresas
+        and not c.startswith('% ')
+    ]
+
+    for c in extra_cols:
+        cols_header.append(c)
 
     html_code = """
     <!DOCTYPE html>
@@ -615,20 +693,21 @@ def renderizar_tabla_interactiva_agrupada(
                 f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
             )
 
-        if incluir_consolidado:
-            val_tot = row.get('TOTAL CONSOLIDADO', None)
-            val_pct_tot = row.get('% TOTAL', None)
-            tot_str = (
-                f"${val_tot:,.2f}"
-                if pd.notnull(val_tot) and str(val_tot) != 'None'
-                else ""
-            )
-            pct_tot_str = (
-                f"{val_pct_tot:.1f}%"
-                if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
-                else ""
-            )
-            html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
+        for col_extra in extra_cols:
+            val_ex = row.get(col_extra, None)
+            if col_extra.startswith('%'):
+                ex_str = (
+                    f"{val_ex:.1f}%"
+                    if pd.notnull(val_ex) and str(val_ex) != 'None'
+                    else ""
+                )
+            else:
+                ex_str = (
+                    f"${val_ex:,.2f}"
+                    if pd.notnull(val_ex) and str(val_ex) != 'None'
+                    else ""
+                )
+            html_code += f"<td class='num-cell'>{ex_str}</td>"
 
         html_code += "</tr>"
 
@@ -836,6 +915,24 @@ if estructura:
         )
 
     if empresas_seleccionadas:
+        # Obtener lista de Obras dinámicas
+        obras_disponibles = obtener_lista_obras(
+            ruta_balanza, empresas_seleccionadas
+        )
+
+        col_ob1, col_ob2 = st.columns([1, 3])
+        with col_ob1:
+            st.write("")
+            st.write("🏗️ **Filtro de Obras:**")
+
+        with col_ob2:
+            obras_a_excluir = st.multiselect(
+                "🚫 Excluir Obra(s) del Consolidado (ej. RM CARRETERO / 26001):",
+                obras_disponibles,
+                default=[],
+                help="Selecciona una o varias obras para restarlas del Total Consolidado y generar la columna de RESULTADO REAL.",
+            )
+
         df_preview = generar_reporte_multiempresa(
             ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
         )
@@ -939,6 +1036,7 @@ if estructura:
                         empresas_seleccionadas,
                         plantilla,
                         tipo='mes',
+                        obras_a_excluir=obras_a_excluir,
                     )
 
                 if not df_er_mes.empty:
@@ -978,6 +1076,7 @@ if estructura:
                         empresas_seleccionadas,
                         plantilla,
                         tipo='acum',
+                        obras_a_excluir=obras_a_excluir,
                     )
 
                 if not df_er_acum.empty:
@@ -1021,6 +1120,7 @@ if estructura:
                         plantilla,
                         tipo='acum',
                         solo_intercos=True,
+                        obras_a_excluir=obras_a_excluir,
                     )
 
                 if not df_er_interco.empty:

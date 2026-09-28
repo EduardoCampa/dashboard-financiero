@@ -118,7 +118,7 @@ def obtener_estructura_balanzas():
     return estructura
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def obtener_lista_empresas(ruta):
     xls = pd.ExcelFile(ruta)
     sheets = xls.sheet_names
@@ -128,24 +128,66 @@ def obtener_lista_empresas(ruta):
     return ordenar_empresas_segun_prioridad(sheets)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- EXTRAER OBRAS DISPONIBLES DE LA BALANZA ---
-@st.cache_data(ttl=300)
-def obtener_lista_obras(ruta, empresas_seleccionadas):
+# --- ESTRUCTURACIÓN ULTRA-RÁPIDA DE BALANZA EN MEMORIA ---
+@st.cache_data(ttl=600)
+def indexar_balanza_en_memoria(ruta, nombre_hoja):
+    df_b = cargar_hoja_balanza(ruta, nombre_hoja)
+    if df_b.empty:
+        return []
+
+    num_cols = df_b.shape[1]
+    col_cta = 0
+    col_cargos_m = num_cols - 4
+    col_abonos_m = num_cols - 3
+    col_deudor_f = num_cols - 2
+    col_acreedor_f = num_cols - 1
+
+    records = []
+    for idx, row in df_b.iterrows():
+        cta_raw = str(row.iloc[col_cta]).strip()
+        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+            continue
+
+        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+            continue
+
+        segs = cta_raw.split('-')
+        p1 = segs[0].strip() if len(segs) >= 1 else ''
+        p2 = segs[1].strip() if len(segs) >= 2 else ''
+        p3 = segs[2].strip() if len(segs) >= 3 else ''
+
+        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
+        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
+        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
+        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+
+        records.append({
+            'cta_raw': cta_raw,
+            'p1': p1,
+            'p2': p2,
+            'p3': p3,
+            'cargos_m': cargos_m,
+            'abonos_m': abonos_m,
+            'deudor_f': deudor_f,
+            'acreedor_f': acreedor_f,
+        })
+    return records
+
+
+@st.cache_data(ttl=600)
+def obtener_lista_obras(ruta, empresas_tuple):
     obras = set()
-    for emp in empresas_seleccionadas:
-        df_b = cargar_hoja_balanza(ruta, emp)
-        if not df_b.empty:
-            for cta in df_b.iloc[:, 0].dropna():
-                segs = str(cta).strip().split('-')
-                if len(segs) >= 3:
-                    seg2 = segs[1].strip()
-                    if seg2 != '00000' and seg2.isdigit() and len(seg2) >= 3:
-                        obras.add(seg2)
+    for emp in empresas_tuple:
+        records = indexar_balanza_en_memoria(ruta, emp)
+        for r in records:
+            p2 = r['p2']
+            if p2 != '00000' and p2.isdigit() and len(p2) >= 3:
+                obras.add(p2)
     return sorted(list(obras))
 
 
@@ -237,60 +279,31 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
-# --- COINCIDENCIA FLEXIBLE DE CUENTAS ---
-def coincide_cuenta_robusta(cta_balanza, patron_template):
-    if not patron_template or patron_template in ('None', 'CUENTA', ''):
+# --- COINCIDENCIA DE CUENTAS EN MEMORIA ---
+def coincide_cuenta_rapida(b_record, pt_segs):
+    p_p1, p_p2, p_p3 = pt_segs[0], pt_segs[1], pt_segs[2]
+    b_p1, b_p2, b_p3 = b_record['p1'], b_record['p2'], b_record['p3']
+
+    if p_p1 != b_p1:
         return False
 
-    cb = str(cta_balanza).strip()
-    pt = str(patron_template).strip()
+    p2_is_wildcard = ('?' in p_p2) or (p_p2 in ('00000', '0000', '000', '99999'))
+    if not p2_is_wildcard and p_p2 != b_p2:
+        return False
 
-    cb_clean = re.sub(r'[^0-9A-Za-z]', '', cb)
-    pt_clean = re.sub(r'[^0-9A-Za-z?]', '', pt)
-
-    if cb_clean == pt_clean:
-        return True
-
-    p_segs = pt.split('-')
-    b_segs = cb.split('-')
-
-    if len(p_segs) >= 3 and len(b_segs) >= 3:
-        if p_segs[0] == b_segs[0]:
-            p_seg2_is_wildcard = ('?' in p_segs[1]) or (
-                p_segs[1] in ('00000', '0000', '000', '99999')
-            )
-
+    if p_p3 and b_p3:
+        if p_p3 != b_p3:
             try:
-                seg3_match = (p_segs[2] == b_segs[2]) or (
-                    int(p_segs[2]) == int(b_segs[2])
-                )
+                if int(p_p3) != int(b_p3):
+                    return False
             except ValueError:
-                seg3_match = p_segs[2] == b_segs[2]
+                return False
 
-            if p_seg2_is_wildcard and seg3_match:
-                if len(p_segs) >= 4 and len(b_segs) >= 4:
-                    try:
-                        return (p_segs[3] == b_segs[3]) or (
-                            int(p_segs[3]) == int(b_segs[3])
-                        )
-                    except ValueError:
-                        return p_segs[3] == b_segs[3]
-                return True
-
-            try:
-                if int(p_segs[1]) == int(b_segs[1]) and seg3_match:
-                    if len(p_segs) >= 4 and len(b_segs) >= 4:
-                        return int(p_segs[3]) == int(b_segs[3])
-                    return True
-            except ValueError:
-                pass
-
-    regex_str = "^" + pt.replace('?', '.').replace('-', r'\\-?') + "$"
-    return bool(re.match(regex_str, cb))
+    return True
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ---
-def obtener_monto_cuenta_balanza(
+# --- BUSCADOR DE MONTO HASH RÁPIDO ---
+def obtener_monto_cuenta_rapido(
     patron_template,
     balanza_records,
     tipo='mes',
@@ -298,44 +311,29 @@ def obtener_monto_cuenta_balanza(
     obras_filtro=None,
 ):
     pt = str(patron_template).strip()
+    segs_pt = pt.split('-')
+    p_prefix = segs_pt[0].strip() if segs_pt else pt[:3]
 
     if solo_intercos:
-        segs_pt = pt.split('-')
-        prefix_pt = segs_pt[0].strip() if segs_pt else ''
-
-        if len(prefix_pt) == 3 and prefix_pt.endswith('1'):
-            if prefix_pt == '531':
+        if len(p_prefix) == 3 and p_prefix.endswith('1'):
+            if p_prefix == '531':
                 if not (len(segs_pt) >= 3 and segs_pt[2] in ('054', '54', '0054')):
                     return 0.0
             else:
                 return 0.0
 
-    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
-    pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
+    p1 = segs_pt[0] if len(segs_pt) >= 1 else ''
+    p2 = segs_pt[1] if len(segs_pt) >= 2 else ''
+    p3 = segs_pt[2] if len(segs_pt) >= 3 else ''
+    pt_tuple = (p1, p2, p3)
 
-    exact_match = None
-    for b in balanza_records:
-        cb_clean = re.sub(r'[^0-9A-Za-z]', '', b['cta_raw'])
-        if cb_clean == pt_clean:
-            exact_match = b
-            break
+    records_a_sumar = [
+        b for b in balanza_records if coincide_cuenta_rapida(b, pt_tuple)
+    ]
 
-    records_a_sumar = []
-    if exact_match:
-        records_a_sumar = [exact_match]
-    else:
-        for b in balanza_records:
-            if coincide_cuenta_robusta(b['cta_raw'], pt):
-                records_a_sumar.append(b)
-
-    # Filtrado opcional por Obras específicas
     if obras_filtro:
-        filtrados_obra = []
-        for b in records_a_sumar:
-            segs_cb = str(b['cta_raw']).strip().split('-')
-            if len(segs_cb) >= 2 and segs_cb[1] in obras_filtro:
-                filtrados_obra.append(b)
-        records_a_sumar = filtrados_obra
+        obras_set = set(obras_filtro)
+        records_a_sumar = [b for b in records_a_sumar if b['p2'] in obras_set]
 
     monto = 0.0
     for b in records_a_sumar:
@@ -357,43 +355,9 @@ def obtener_monto_cuenta_balanza(
     return monto
 
 
-# --- CALCULAR VALORES POR EMPRESA ---
-def calcular_mapa_valores_empresa(
-    df_balanza, plantilla, tipo='mes', solo_intercos=False, obras_filtro=None
+def calcular_mapa_valores_empresa_rapido(
+    records_balanza, plantilla, tipo='mes', solo_intercos=False, obras_filtro=None
 ):
-    if df_balanza.empty or not plantilla:
-        return {}
-
-    num_cols = df_balanza.shape[1]
-
-    col_cta = 0
-    col_cargos_m = num_cols - 4
-    col_abonos_m = num_cols - 3
-    col_deudor_f = num_cols - 2
-    col_acreedor_f = num_cols - 1
-
-    balanza_records = []
-    for idx, row in df_balanza.iterrows():
-        cta_raw = str(row.iloc[col_cta]).strip()
-        if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
-            continue
-
-        if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
-            continue
-
-        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
-        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
-        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
-        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-
-        balanza_records.append({
-            'cta_raw': cta_raw,
-            'cargos_m': cargos_m,
-            'abonos_m': abonos_m,
-            'deudor_f': deudor_f,
-            'acreedor_f': acreedor_f,
-        })
-
     val_map = {}
     formulas_map = {}
 
@@ -403,9 +367,9 @@ def calcular_mapa_valores_empresa(
         c_form = row['c_formula']
 
         if patron:
-            val_map[r_idx] = obtener_monto_cuenta_balanza(
+            val_map[r_idx] = obtener_monto_cuenta_rapido(
                 patron,
-                balanza_records,
+                records_balanza,
                 tipo=tipo,
                 solo_intercos=solo_intercos,
                 obras_filtro=obras_filtro,
@@ -419,30 +383,34 @@ def calcular_mapa_valores_empresa(
     return resolver_todas_las_formulas(val_map, formulas_map)
 
 
-# --- GENERADOR MULTIEMPRESA CON OPCIÓN DE EXCLUSIÓN DE OBRAS ---
+# --- GENERADOR MULTIEMPRESA CACHEADO ---
+@st.cache_data(ttl=600)
 def generar_reporte_multiempresa(
     ruta_balanza,
-    empresas_seleccionadas,
+    empresas_tuple,
     plantilla,
     tipo='mes',
     solo_intercos=False,
-    obras_a_excluir=None,
+    obras_tuple=None,
 ):
-    if not empresas_seleccionadas or not plantilla:
+    if not empresas_tuple or not plantilla:
         return pd.DataFrame()
+
+    empresas_list = list(empresas_tuple)
+    obras_a_excluir = list(obras_tuple) if obras_tuple else None
 
     mapas_empresas = {}
     mapas_obras_excluidas = {}
 
-    for emp in empresas_seleccionadas:
-        df_b = cargar_hoja_balanza(ruta_balanza, emp)
-        mapas_empresas[emp] = calcular_mapa_valores_empresa(
-            df_b, plantilla, tipo=tipo, solo_intercos=solo_intercos
+    for emp in empresas_list:
+        records_b = indexar_balanza_en_memoria(ruta_balanza, emp)
+        mapas_empresas[emp] = calcular_mapa_valores_empresa_rapido(
+            records_b, plantilla, tipo=tipo, solo_intercos=solo_intercos
         )
 
         if obras_a_excluir:
-            mapas_obras_excluidas[emp] = calcular_mapa_valores_empresa(
-                df_b,
+            mapas_obras_excluidas[emp] = calcular_mapa_valores_empresa_rapido(
+                records_b,
                 plantilla,
                 tipo=tipo,
                 solo_intercos=solo_intercos,
@@ -450,8 +418,7 @@ def generar_reporte_multiempresa(
             )
 
     reporte = []
-    incluir_consolidado = len(empresas_seleccionadas) > 1 or bool(obras_a_excluir)
-
+    incluir_consolidado = len(empresas_list) > 1 or bool(obras_a_excluir)
     current_group_id = 0
 
     for row in plantilla:
@@ -483,7 +450,7 @@ def generar_reporte_multiempresa(
         monto_total_consolidado = 0.0
         monto_obra_excluida_total = 0.0
 
-        for emp in empresas_seleccionadas:
+        for emp in empresas_list:
             m_emp = mapas_empresas[emp].get(r_idx, 0.0)
             ventas_emp = mapas_empresas[emp].get(91, 0.0) or 1.0
             pct_emp = (m_emp / ventas_emp) * 100 if ventas_emp else 0.0
@@ -500,7 +467,7 @@ def generar_reporte_multiempresa(
 
         if incluir_consolidado:
             tot_ventas_todas = sum(
-                mapas_empresas[e].get(91, 0.0) for e in empresas_seleccionadas
+                mapas_empresas[e].get(91, 0.0) for e in empresas_list
             ) or 1.0
             pct_total = (
                 (monto_total_consolidado / tot_ventas_todas) * 100
@@ -554,13 +521,10 @@ def renderizar_tabla_interactiva_agrupada(
         return
 
     cols_empresas = list(empresas)
-    incluir_consolidado = 'TOTAL CONSOLIDADO' in df_disp.columns
-
     cols_header = ['CUENTA', 'CONCEPTO']
     for e in cols_empresas:
         cols_header.extend([e, f"% {e}"])
 
-    # Columnas dinámicas si se incluyó consolidado o exclusión de obras
     extra_cols = [
         c
         for c in df_disp.columns
@@ -915,10 +879,10 @@ if estructura:
         )
 
     if empresas_seleccionadas:
-        # Obtener lista de Obras dinámicas
-        obras_disponibles = obtener_lista_obras(
-            ruta_balanza, empresas_seleccionadas
-        )
+        empresas_tuple = tuple(empresas_seleccionadas)
+
+        # Extracción de Obras Ultra-Rápida
+        obras_disponibles = obtener_lista_obras(ruta_balanza, empresas_tuple)
 
         col_ob1, col_ob2 = st.columns([1, 3])
         with col_ob1:
@@ -933,14 +897,13 @@ if estructura:
                 help="Selecciona una o varias obras para restarlas del Total Consolidado y generar la columna de RESULTADO REAL.",
             )
 
-        df_preview = generar_reporte_multiempresa(
-            ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
-        )
-        todos_los_conceptos = []
-        if not df_preview.empty:
-            todos_los_conceptos = [
-                c for c in df_preview['CONCEPTO'].unique() if c
-            ]
+        obras_tuple = tuple(obras_a_excluir) if obras_a_excluir else None
+
+        # Obtener conceptos únicos de la plantilla sin relanzar balance loops
+        todos_los_conceptos = [
+            p['concepto'] for p in plantilla if p.get('concepto')
+        ]
+        todos_los_conceptos = sorted(list(set(todos_los_conceptos)))
 
         st.markdown("---")
         st.subheader("🎯 Configuración de Vista de Filtros")
@@ -1030,13 +993,14 @@ if estructura:
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados..."):
+                with st.spinner("Cargando Estado de Resultados..."):
                     df_er_mes = generar_reporte_multiempresa(
                         ruta_balanza,
-                        empresas_seleccionadas,
+                        empresas_tuple,
                         plantilla,
                         tipo='mes',
-                        obras_a_excluir=obras_a_excluir,
+                        solo_intercos=False,
+                        obras_tuple=obras_tuple,
                     )
 
                 if not df_er_mes.empty:
@@ -1070,13 +1034,14 @@ if estructura:
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Acumulado..."):
+                with st.spinner("Cargando Estado de Resultados Acumulado..."):
                     df_er_acum = generar_reporte_multiempresa(
                         ruta_balanza,
-                        empresas_seleccionadas,
+                        empresas_tuple,
                         plantilla,
                         tipo='acum',
-                        obras_a_excluir=obras_a_excluir,
+                        solo_intercos=False,
+                        obras_tuple=obras_tuple,
                     )
 
                 if not df_er_acum.empty:
@@ -1113,14 +1078,14 @@ if estructura:
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Intercompañías (Acumulado)..."):
+                with st.spinner("Cargando Estado de Resultados Intercompañías..."):
                     df_er_interco = generar_reporte_multiempresa(
                         ruta_balanza,
-                        empresas_seleccionadas,
+                        empresas_tuple,
                         plantilla,
                         tipo='acum',
                         solo_intercos=True,
-                        obras_a_excluir=obras_a_excluir,
+                        obras_tuple=obras_tuple,
                     )
 
                 if not df_er_interco.empty:
