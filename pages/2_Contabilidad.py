@@ -20,7 +20,7 @@ st.title("📊 Módulo Contable")
 
 PRESETS_FILE = "vistas_personalizadas_er.json"
 
-# ORDEN PREFERENTE DE EMPRESAS PARA EL MULTISELECT Y MATRICES
+# ORDEN PREFERENTE DE EMPRESAS PARA LAS MATRICES
 ORDEN_EMPRESAS_PRIORIDAD = [
     "CIVLAT",
     "SERVYRE",
@@ -46,31 +46,28 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO DE NÚMERO / CÓDIGO DE CONTPAQI A NOMBRE DE EMPRESA
-# (Basado en el orden y codificación estándar del grupo)
+# MAPEO DE IDENTIFICADORES Y CÓDIGOS DE EMPRESA (Tercer segmento o sufijo)
 MAPEO_ID_EMPRESA = {
-    "1": "CIVLAT", "001": "CIVLAT", "0468": "CIVLAT",
-    "2": "SERVYRE", "002": "SERVYRE",
-    "3": "LIMPIESPIN", "003": "LIMPIESPIN",
-    "4": "LAITS", "004": "LAITS",
-    "5": "PESAZA", "005": "PESAZA",
-    "6": "EFCO", "006": "EFCO",
-    "7": "IPV", "007": "IPV",
-    "8": "INMOBILIARIA", "008": "INMOBILIARIA",
-    "9": "FPSB", "009": "FPSB", "1216": "FPSB",
-    "10": "LABORATORIO", "010": "LABORATORIO",
-    "11": "FERVIC", "011": "FERVIC", "1127": "FERVIC",
-    "12": "CIVMEX", "012": "CIVMEX", "0469": "CIVMEX",
-    "13": "FGS", "013": "FGS", "0942": "FGS",
-    "14": "SEVILAT", "014": "SEVILAT",
-    "15": "CIV", "015": "CIV", "0467": "CIV",
-    "16": "SERVYCARGO", "016": "SERVYCARGO",
-    "17": "VIALTECNO", "017": "VIALTECNO",
-    "18": "COMANA", "018": "COMANA", "0665": "COMANA",
-    "19": "GPO SERVYRE", "019": "GPO SERVYRE",
-    "20": "LATIN", "020": "LATIN",
-    "21": "Q-FREE", "021": "Q-FREE",
-    "22": "PROINA", "022": "PROINA"
+    "0468": "CIVLAT", "002": "CIVLAT", "2": "CIVLAT",
+    "2872": "SERVYRE", "019": "SERVYRE",
+    "1626": "LIMPIESPIN", "003": "LIMPIESPIN",
+    "1616": "LAITS", "004": "LAITS",
+    "1144": "PESAZA", "005": "PESAZA",
+    "0813": "EFCO", "006": "EFCO",
+    "1428": "IPV", "007": "IPV",
+    "1404": "INMOBILIARIA", "008": "INMOBILIARIA",
+    "1216": "FPSB", "009": "FPSB",
+    "1603": "LABORATORIO", "010": "LABORATORIO",
+    "1127": "FERVIC", "011": "FERVIC",
+    "0469": "CIVMEX", "012": "CIVMEX",
+    "0942": "FGS", "013": "FGS",
+    "2937": "SEVILAT", "014": "SEVILAT",
+    "0467": "CIV", "015": "CIV",
+    "2871": "SERVYCARGO", "016": "SERVYCARGO",
+    "3329": "VIALTECNO", "017": "VIALTECNO",
+    "0665": "COMANA", "018": "COMANA",
+    "1149": "GPO SERVYRE",
+    "2396": "PROINA",
 }
 
 
@@ -1180,81 +1177,78 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar y Préstamos)")
-                st.info("Cruce dinámico desde Balanzas Acumuladas cruzando emisoras y receptoras según la estructura de cuentas.")
+                st.info("Cruce dinámico desde Balanzas Acumuladas: Fila = Receptora (Empresa que tiene la cuenta) vs Columna = Origen (Contraparte del grupo).")
                 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
                 
                 if todas_empresas_balanza:
-                    # Extraer registros de balanza acumulada para cada empresa
                     datos_empresas_acum = {}
                     for emp in todas_empresas_balanza:
                         datos_empresas_acum[emp] = extraer_registros_balanza(ruta_balanza, emp)
                     
-                    # --- TABLA 1: FACTURACIÓN (101-00004 vs 201-00002, 201-00004) ---
+                    # --- TABLA 1: FACTURACIÓN ---
                     st.markdown("---")
-                    st.markdown("#### 🟢 1. Amarre de Facturación (Clientes 101-00004 VS Proveedores 201-00002, 201-00004)")
+                    st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
                     
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
                     
-                    for emp_origen in todas_empresas_balanza:
-                        recs = datos_empresas_acum[emp_origen]
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_acum[emp_receptora]
                         for r in recs:
                             cta = r['cta_raw']
-                            # Verificar si es cuenta de Clientes Intercos (101-00004) o Proveedores Intercos (201-00002, 201-00004)
                             if cta.startswith("101-00004-") or cta.startswith("201-00002-") or cta.startswith("201-00004-"):
                                 segs = cta.split('-')
                                 if len(segs) >= 3:
                                     sub_cta = segs[1]
-                                    emp_destino = MAPEO_ID_EMPRESA.get(sub_cta, None)
+                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
                                     
-                                    if not emp_destino:
-                                        for ed in todas_empresas_balanza:
-                                            if sub_cta in ed or sub_cta.lstrip('0') in ed.lstrip('0'):
-                                                emp_destino = ed
+                                    if not emp_origen:
+                                        for eo in todas_empresas_balanza:
+                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
+                                                emp_origen = eo
                                                 break
                                     
-                                    if emp_destino and emp_destino in todas_empresas_balanza:
+                                    if emp_origen and emp_origen in todas_empresas_balanza:
                                         saldo_neto = r['deudor_f'] - r['acreedor_f']
-                                        # Si es proveedor (201), invertir signo o acumular correctamente según convenga al cruce
                                         if cta.startswith("201-"):
                                             saldo_neto = -saldo_neto
-                                        matriz_fact.loc[emp_origen, emp_destino] += saldo_neto
+                                        matriz_fact.loc[emp_receptora, emp_origen] += saldo_neto
                     
-                    matriz_fact['TOTAL ORIGEN'] = matriz_fact.sum(axis=1)
+                    matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
                     
-                    # --- TABLA 2: PRÉSTAMOS (101-00015 vs 202-00001) ---
+                    # --- TABLA 2: PRÉSTAMOS ---
                     st.markdown("---")
-                    st.markdown("#### 🟡 2. Amarre de Préstamos (Deudores 101-00015 VS Pasivo a Largo Plazo 202-00001)")
+                    st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
                     
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
                     
-                    for emp_origen in todas_empresas_balanza:
-                        recs = datos_empresas_acum[emp_origen]
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_acum[emp_receptora]
                         for r in recs:
                             cta = r['cta_raw']
                             if cta.startswith("101-00015-") or cta.startswith("202-00001-"):
                                 segs = cta.split('-')
                                 if len(segs) >= 3:
                                     sub_cta = segs[1]
-                                    emp_destino = MAPEO_ID_EMPRESA.get(sub_cta, None)
+                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
                                     
-                                    if not emp_destino:
-                                        for ed in todas_empresas_balanza:
-                                            if sub_cta in ed or sub_cta.lstrip('0') in ed.lstrip('0'):
-                                                emp_destino = ed
+                                    if not emp_origen:
+                                        for eo in todas_empresas_balanza:
+                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
+                                                emp_origen = eo
                                                 break
                                     
-                                    if emp_destino and emp_destino in todas_empresas_balanza:
+                                    if emp_origen and emp_origen in todas_empresas_balanza:
                                         saldo_neto = r['deudor_f'] - r['acreedor_f']
                                         if cta.startswith("202-"):
                                             saldo_neto = -saldo_neto
-                                        matriz_prest.loc[emp_origen, emp_destino] += saldo_neto
+                                        matriz_prest.loc[emp_receptora, emp_origen] += saldo_neto
                                             
-                    matriz_prest['TOTAL ORIGEN'] = matriz_prest.sum(axis=1)
+                    matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
                     
-                    st.success("✅ Cruces de Facturación y Préstamos generados y poblados correctamente.")
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas con la lógica correcta de Receptora vs Origen.")
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
