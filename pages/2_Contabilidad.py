@@ -71,6 +71,9 @@ MAPEO_CODIGO_EMPRESA = {
     "0665": "COMANA",
 }
 
+# INVERSO PARA OBTENER EL CÓDIGO A PARTIR DEL NOMBRE DE LA EMPRESA
+MAPEO_NOMBRE_A_CODIGO = {v: k for k, v in MAPEO_CODIGO_EMPRESA.items()}
+
 
 def ordenar_empresas_segun_prioridad(lista_empresas):
     def obtener_posicion(emp_nombre):
@@ -782,7 +785,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
         ws.cell(row=2, column=1, value=subtitle_text).font = SUBTITLE_FONT
 
         start_row = 4
-        headers = ["Empresa (Facturadora / Receptora) \\ Origen"] + list(df_data.columns)
+        headers = list(df_data.columns)
 
         for c_idx, h_text in enumerate(headers, start=1):
             cell = ws.cell(row=start_row, column=c_idx, value=h_text)
@@ -792,20 +795,16 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
         ws.row_dimensions[start_row].height = 28
 
-        for r_i, (emp_idx, row_data) in enumerate(df_data.iterrows()):
+        for r_i, row_data in df_data.reset_index(drop=True).iterrows():
             curr_row = start_row + 1 + r_i
-            cell_emp = ws.cell(row=curr_row, column=1, value=emp_idx)
-            cell_emp.font = TOTAL_FONT if emp_idx == 'TOTAL' else REGULAR_FONT
-            cell_emp.fill = TOTAL_FILL if emp_idx == 'TOTAL' else PatternFill(fill_type=None)
-            cell_emp.border = TOTAL_BORDER if emp_idx == 'TOTAL' else THIN_BORDER
-            cell_emp.alignment = Alignment(horizontal="left", vertical="center")
+            is_tot_row = (r_i == len(df_data) - 1)
 
-            for c_i, col_name in enumerate(df_data.columns, start=2):
+            for c_i, col_name in enumerate(headers, start=1):
                 val = row_data[col_name]
                 cell = ws.cell(row=curr_row, column=c_i)
-                cell.value = val if pd.notnull(val) else 0.0
+                cell.value = val if pd.notnull(val) else (0.0 if c_i > 1 else "")
 
-                if emp_idx == 'TOTAL' or col_name == 'TOTAL':
+                if is_tot_row:
                     cell.font = TOTAL_FONT
                     cell.fill = TOTAL_FILL
                     cell.border = TOTAL_BORDER
@@ -813,8 +812,12 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
                     cell.font = REGULAR_FONT
                     cell.border = THIN_BORDER
 
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-                cell.number_format = '$#,##0.00'
+                if c_i == 1:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    if isinstance(val, (int, float)):
+                        cell.number_format = '$#,##0.00'
 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -832,7 +835,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas 4* (Ingresos) vs 5* y 6* (Costos/Gastos con subniveles)", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Ingresos Facturados vs Costos de la Empresa (excluyendo subnivel -054-)", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1021,9 +1024,6 @@ if estructura:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
                     # --- TABLA 1: FACTURACIÓN ---
-                    st.markdown("---")
-                    st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
-
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1046,10 +1046,7 @@ if estructura:
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
 
-                    # --- TABLA 2: PRÉSTAMOS (101-00015 VS 202-00001) ---
-                    st.markdown("---")
-                    st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
-
+                    # --- TABLA 2: PRÉSTAMOS ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1072,8 +1069,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre de Ingresos VS Costos y Gastos Intercompañías (I y G)")
-                st.info("Cruza las cuentas de Ingresos (4*) y Costos/Gastos (5* y 6*) evaluando todos los subniveles de obra y contraparte registrados en las balanzas.")
+                st.markdown("### 📑 Amarre I y G Intercos (Ingresos Facturados a la Empresa VS Costos de la Empresa)")
+                st.info("Compara en una tabla consolidada por empresa los **Ingresos facturados** a dicha empresa (buscando su código en el 4to nivel de las cuentas de ingresos `4*` de las demás) contra los **Costos propios** de la empresa (cuentas `5*`, `6*` que terminen en `1`, omitiendo subniveles `-054-`).")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1082,29 +1079,79 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    matriz_ig = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+                    filas_ig = []
+                    tot_ingresos_gen = 0.0
+                    tot_costos_gen = 0.0
 
-                    for emp_facturadora in todas_empresas_balanza:
-                        recs_fact = datos_empresas_recs[emp_facturadora]
-                        for r in recs_fact:
+                    for emp_destino in todas_empresas_balanza:
+                        cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
+
+                        # 1. Sumar ingresos facturados a esta empresa desde las demás
+                        ingresos_facturados_a_emp = 0.0
+                        if cod_destino:
+                            for emp_facturadora in todas_empresas_balanza:
+                                if emp_facturadora == emp_destino:
+                                    continue
+                                recs_f = datos_empresas_recs[emp_facturadora]
+                                for r in recs_f:
+                                    cta = r['cta_raw']
+                                    if cta.startswith('4'):
+                                        cod_contra = extraer_codigo_contraparte_robusto(cta)
+                                        if cod_contra == cod_destino:
+                                            # Saldo acreedor neto de la cuenta de ingresos
+                                            ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
+
+                        # 2. Sumar costos de la propia empresa (cuentas 5*, 6* que terminan en 1, omitiendo -054-)
+                        costos_propios_emp = 0.0
+                        recs_d = datos_empresas_recs[emp_destino]
+                        for r in recs_d:
                             cta = r['cta_raw']
-                            # Considerar tanto cuentas de ingresos (4*) como costos/gastos (5*, 6*) que contengan código de contraparte
-                            if cta.startswith(('4', '5', '6')):
-                                cod_contraparte = extraer_codigo_contraparte_robusto(cta)
-                                emp_receptora = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
+                            segs = cta.split('-')
+                            prefix = segs[0].strip() if segs else ''
 
-                                if emp_receptora and emp_receptora in todas_empresas_balanza and emp_receptora != emp_facturadora:
-                                    # Saldo neto de la cuenta (Ingresos acreedores o Costos deudores)
-                                    monto_val = r['acreedor_f'] - r['deudor_f'] if cta.startswith('4') else r['saldo_final']
-                                    matriz_ig.loc[emp_facturadora, emp_receptora] += abs(monto_val)
+                            # Verificar si es cuenta de costos/gastos que termina en 1 (ej. 531, 561, 651...)
+                            if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
+                                # Omitir si el tercer segmento contiene '-054-' o '054'
+                                tiene_excepcion_054 = False
+                                if len(segs) >= 3:
+                                    seg3 = segs[2].strip()
+                                    if '054' in seg3 or seg3 in ('54', '054006'):
+                                        tiene_excepcion_054 = True
+                                
+                                if not tiene_excepcion_054:
+                                    costos_propios_emp += r['saldo_final']
 
-                    matriz_ig['TOTAL'] = matriz_ig.sum(axis=1)
-                    matriz_ig.loc['TOTAL'] = matriz_ig.sum(axis=0)
+                        tot_ingresos_gen += ingresos_facturados_a_emp
+                        tot_costos_gen += costos_propios_emp
 
-                    st.dataframe(matriz_ig.style.format("${:,.2f}"), use_container_width=True)
+                        filas_ig.append({
+                            'EMPRESA': emp_destino,
+                            'INGRESOS FACTURADOS A LA EMPRESA': ingresos_facturados_a_emp,
+                            'COSTO DE LA EMPRESA': costos_propios_emp,
+                            'DIFERENCIA': ingresos_facturados_a_emp - costos_propios_emp,
+                        })
+
+                    df_ig_resumen = pd.DataFrame(filas_ig)
+                    
+                    # Fila de Total
+                    df_ig_resumen.loc[len(df_ig_resumen)] = {
+                        'EMPRESA': 'TOTAL',
+                        'INGRESOS FACTURADOS A LA EMPRESA': tot_ingresos_gen,
+                        'COSTO DE LA EMPRESA': tot_costos_gen,
+                        'DIFERENCIA': tot_ingresos_gen - tot_costos_gen,
+                    }
+
+                    st.dataframe(
+                        df_ig_resumen.style.format({
+                            'INGRESOS FACTURADOS A LA EMPRESA': '${:,.2f}',
+                            'COSTO DE LA EMPRESA': '${:,.2f}',                             'DIFERENCIA': '${:,.2f}',
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
                     st.markdown("---")
-                    excel_todos = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, matriz_ig, anio_sel, mes_sel)
+                    excel_todos = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, df_ig_resumen, anio_sel, mes_sel)
                     st.download_button(
                         label="📥 Descargar Reporte Ejecutivo Completo (Facturación, Préstamos y I y G) en Excel",
                         data=excel_todos,
@@ -1112,6 +1159,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Amarre de I y G actualizado con inclusión de cuentas de costos/gastos y subniveles completos.")
+                    st.success("✅ Módulo de I y G Intercos configurado con desglose por empresa, validación de códigos en 4to nivel y exclusión de subniveles -054-.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
