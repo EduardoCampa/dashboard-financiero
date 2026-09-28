@@ -743,7 +743,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
                 cell.number_format = '$#,##0.00'
 
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for col in col for cell in col)
+        max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
@@ -1035,7 +1035,7 @@ if estructura:
                         )
 
         elif seccion_contable == "🔗 Amarres Contables":
-            st.subheader(f"🔗 Módulo de Amarres Contables ({messel if 'messel' in locals() else mes_sel}/{anio_sel})")
+            st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
 
             subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
                 "👥 Amarre RH",
@@ -1046,7 +1046,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos originales en negativo para pasivos: `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con resta forzada para pasivos: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1101,12 +1101,12 @@ if estructura:
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                                     monto = r['saldo_final']
+                                    # FORZAR RESTA INVIRTIENDO EL SIGNO EN PASIVOS (202-)
                                     if cta.startswith("202-00001") or "202-" in cta:
-                                        monto = r['acreedor_f'] - r['deudor_f']
+                                        monto = -abs(monto)
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                    # Eliminamos la fila de suma inferior en préstamos para evitar sumar negativos con positivos
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
                     st.markdown("---")
@@ -1118,6 +1118,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo actualizado con saldos originales en negativo para pasivos.")
+                    st.success("✅ Módulo actualizado con resta forzada para pasivos en préstamos.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
