@@ -273,7 +273,7 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ---
+# --- BUSCADOR DE MONTO EN BALANZA CON FILTRO PRECISO DE INTERCOS ---
 def obtener_monto_cuenta_balanza(
     patron_template, balanza_records, tipo='mes', solo_intercos=False
 ):
@@ -296,7 +296,7 @@ def obtener_monto_cuenta_balanza(
             if coincide_cuenta_robusta(b['cta_raw'], pt):
                 records_a_sumar.append(b)
 
-    # Si se activa el modo solo_intercos, aplicamos el filtro estricto de cuentas
+    # Filtrado estricto para la pestaña Intercos:
     if solo_intercos:
         records_filtrados = []
         for b in records_a_sumar:
@@ -304,26 +304,27 @@ def obtener_monto_cuenta_balanza(
             segs = cb.split('-')
             prefix = segs[0] if segs else ''
 
-            if prefix.startswith(('4', '5')):
-                # Regla especial para la 531: únicamente la subcuenta 054 (531-*****-054-0000)
+            # Verificar si la cuenta de primer nivel (3 dígitos) termina en '1' (ej. 411, 421, 511, 531, 551, 561)
+            if len(prefix) == 3 and prefix.endswith('1'):
+                # Regla especial para 531: únicamente conservar la subcuenta 054 (531-?????-054-0000)
                 if prefix == '531':
                     if len(segs) >= 3 and segs[2] in ('054', '54', '0054'):
                         records_filtrados.append(b)
                     continue
 
-                # Quitar cuentas de ingresos/costos que corresponden a terceros (terminan en 1-******-***-**** o segmento 001)
+                # Para otras cuentas que terminan en 1 (411, 421, 511, 551, 561):
+                # Eliminar subcuentas a terceros (tercer segmento en 001 o 1)
                 is_terceros = False
                 if len(segs) >= 3 and segs[2] in ('001', '1', '01', '0001'):
-                    is_terceros = True
-                elif re.search(r'1-[0-9\?]{3,6}-[0-9\?]{3,4}-[0-9\?]{4}$', cb):
-                    is_terceros = True
-                elif cb.endswith(('-001-0000', '-1-0000')):
                     is_terceros = True
 
                 if not is_terceros:
                     records_filtrados.append(b)
             else:
+                # Cuentas que NO terminan en 1 en el primer nivel (ej. 530, 410, 601, 701):
+                # ¡SE CONSERVAN TODAS SUS SUBCUENTAS (ej. 530-?????-001-0000)!
                 records_filtrados.append(b)
+
         records_a_sumar = records_filtrados
 
     monto = 0.0
@@ -1022,7 +1023,7 @@ if estructura:
                 f"Estado de Resultados (INTERCOMPAÑÍAS ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
             )
             st.info(
-                "💡 **Filtro Aplicado:** Se toman los saldos **ACUMULADOS**, excluyendo ventas/costos a terceros (`1-******-***-****`) y únicamente conservando la subcuenta `531-*****-054-0000`."
+                "💡 **Filtro Aplicado:** Para cuentas con primer nivel terminado en `1` (`411`, `421`, `511`, `551`, `561`), se excluyen subcuentas a terceros. Para la `531`, únicamente se conserva `531-?????-054-0000`. La cuenta `530` y demás se conservan completas."
             )
 
             if not plantilla:
@@ -1033,7 +1034,7 @@ if estructura:
                         ruta_balanza,
                         empresas_seleccionadas,
                         plantilla,
-                        tipo='acum',  # CÁLCULO SOBRE SALDOS ACUMULADOS
+                        tipo='acum',
                         solo_intercos=True,
                     )
 
