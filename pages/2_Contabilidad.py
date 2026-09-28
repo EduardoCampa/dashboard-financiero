@@ -1,5 +1,6 @@
 import glob
 import io
+import json
 import os
 import re
 import openpyxl
@@ -16,6 +17,64 @@ st.set_page_config(
 )
 
 st.title("📊 Módulo Contable")
+
+PRESETS_FILE = "vistas_personalizadas_er.json"
+
+
+# --- GESTIÓN DE VISTAS GUARDADAS (PRESETS) ---
+def cargar_vistas_guardadas():
+    vistas_predeterminadas = {
+        "📊 Resumen Ejecutivo": [
+            "Ventas Netas Totales",
+            "Total Costo",
+            "Total Resultado Bruto",
+            "Total Gastos",
+            "Resultado Antes de Depreciacion",
+            "Total Depreciaciones Y Amortización",
+            "Total Costo Integral de Financiamiento",
+            "Utilidad/Perdida antes de Impuestos",
+        ],
+        "📈 Detalle de Ingresos": [
+            "Ventas a Terceros",
+            "Ventas Intercompañías",
+            "Total Ventas",
+            "Total Descuentos S/Ventas",
+            "Ventas Netas Totales",
+        ],
+        "🏭 Costos y Gastos": [
+            "Costo Directos Planta (510)",
+            "Total Costo Directos Planta",
+            "Total Costo Indirecto De Planta",
+            "Total Costo Directos Obra",
+            "Total Costo General Planta",
+            "Total Costo",
+            "Gastos de Administración (600)",
+            "Total Gastos de Administración",
+            "Total Gastos de Ventas",
+            "Total Gastos",
+        ],
+    }
+
+    if os.path.exists(PRESETS_FILE):
+        try:
+            with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+                guardadas = json.load(f)
+                vistas_predeterminadas.update(guardadas)
+        except Exception:
+            pass
+
+    return vistas_predeterminadas
+
+
+def guardar_nueva_vista(nombre_vista, lista_conceptos):
+    vistas = cargar_vistas_guardadas()
+    # No sobrescribir las predeterminadas si tienen íconos especiales, agregar como usuario
+    vistas[f"⭐ {nombre_vista}"] = lista_conceptos
+
+    # Guardar solo las personalizadas de usuario
+    custom_vistas = {k: v for k, v in vistas.items() if k.startswith("⭐ ")}
+    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(custom_vistas, f, ensure_ascii=False, indent=2)
 
 
 # --- BUSCAR BALANZAS POR AÑO Y MES ---
@@ -375,15 +434,26 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- TABLA INTERACTIVA CON CONTROL DE DESPLIEGUE PERSONALIZADO ---
+# --- TABLA INTERACTIVA CON FILTRADO EXACTO DE SELECCIÓN ---
 def renderizar_tabla_interactiva_agrupada(
-    df_er, empresas, grupos_desplegados_sel=None
+    df_er, empresas, conceptos_a_mostrar=None
 ):
     if df_er.empty:
         return
 
+    # Si hay una lista de conceptos seleccionados, FILTRAR la tabla para mostrar SOLO ESOS
+    df_disp = df_er.copy()
+    if conceptos_a_mostrar and "TODOS" not in conceptos_a_mostrar:
+        df_disp = df_disp[df_disp['CONCEPTO'].isin(conceptos_a_mostrar)]
+
+    if df_disp.empty:
+        st.warning(
+            "No se encontraron renglones para la selección actual. Intenta seleccionar más conceptos."
+        )
+        return
+
     cols_empresas = list(empresas)
-    incluir_consolidado = 'TOTAL CONSOLIDADO' in df_er.columns
+    incluir_consolidado = 'TOTAL CONSOLIDADO' in df_disp.columns
 
     cols_header = ['CUENTA', 'CONCEPTO']
     for e in cols_empresas:
@@ -402,26 +472,6 @@ def renderizar_tabla_interactiva_agrupada(
             background-color: transparent;
             margin: 0;
             padding: 0;
-        }
-        .toolbar {
-            margin-bottom: 12px;
-            display: flex;
-            gap: 10px;
-        }
-        .btn-toggle {
-            background-color: #f1f5f9;
-            color: #0f172a;
-            border: 1px solid #cbd5e1;
-            padding: 6px 14px;
-            font-size: 12px;
-            font-weight: 600;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .btn-toggle:hover {
-            background-color: #e2e8f0;
-            border-color: #94a3b8;
         }
         .tree-table {
             width: 100%;
@@ -444,7 +494,7 @@ def renderizar_tabla_interactiva_agrupada(
             text-transform: uppercase;
         }
         .tree-table td {
-            padding: 7px 12px;
+            padding: 8px 12px;
             border-bottom: 1px solid #e2e8f0;
             border-right: 1px solid #f1f5f9;
             color: #334155;
@@ -453,12 +503,6 @@ def renderizar_tabla_interactiva_agrupada(
             background-color: #f8fafc;
             font-weight: 700;
             color: #0284c7;
-            cursor: pointer;
-            user-select: none;
-            transition: background-color 0.15s ease;
-        }
-        .group-header:hover {
-            background-color: #f1f5f9;
         }
         .grand-total {
             background-color: #e2e8f0;
@@ -473,23 +517,6 @@ def renderizar_tabla_interactiva_agrupada(
         .detail-row:hover {
             background-color: #f8fafc;
         }
-        .toggle-btn {
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            line-height: 16px;
-            text-align: center;
-            background-color: #0284c7;
-            color: #ffffff;
-            font-weight: bold;
-            border-radius: 4px;
-            margin-right: 8px;
-            font-size: 12px;
-        }
-        .indent-cell {
-            padding-left: 32px !important;
-            color: #475569;
-        }
         .num-cell {
             text-align: right;
             font-variant-numeric: tabular-nums;
@@ -498,41 +525,8 @@ def renderizar_tabla_interactiva_agrupada(
             text-align: left;
         }
     </style>
-    <script>
-        function toggleGroup(grpId) {
-            var rows = document.getElementsByClassName(grpId);
-            var icon = document.getElementById('icon-' + grpId);
-            if (!rows || rows.length === 0) return;
-            
-            var isHidden = (rows[0].style.display === "none");
-            for (var i = 0; i < rows.length; i++) {
-                rows[i].style.display = isHidden ? "table-row" : "none";
-            }
-            if (icon) {
-                icon.innerText = isHidden ? "−" : "+";
-            }
-        }
-
-        function expandAll() {
-            var detailRows = document.querySelectorAll('.detail-row');
-            var icons = document.querySelectorAll('.toggle-btn');
-            detailRows.forEach(function(row) { row.style.display = 'table-row'; });
-            icons.forEach(function(icon) { icon.innerText = '−'; });
-        }
-
-        function collapseAll() {
-            var detailRows = document.querySelectorAll('.detail-row');
-            var icons = document.querySelectorAll('.toggle-btn');
-            detailRows.forEach(function(row) { row.style.display = 'none'; });
-            icons.forEach(function(icon) { icon.innerText = '+'; });
-        }
-    </script>
     </head>
     <body>
-        <div class="toolbar">
-            <button class="btn-toggle" onclick="expandAll()">📂 Desplegar Todo [+]</button>
-            <button class="btn-toggle" onclick="collapseAll()">📁 Colapsar Todo [-]</button>
-        </div>
         <table class="tree-table">
             <thead>
                 <tr>
@@ -542,131 +536,75 @@ def renderizar_tabla_interactiva_agrupada(
         html_code += f"<th>{h}</th>"
     html_code += "</tr></thead><tbody>"
 
-    grouped_df = df_er.groupby('group_id', sort=False)
+    for _, row in df_disp.iterrows():
+        es_tot = row.get('es_total', False)
+        outline_lvl = row.get('outline_level', 0)
+        is_detail = row.get('is_detail', False)
 
-    for grp_id, group_rows in grouped_df:
-        header_row = group_rows[group_rows['is_detail'] == False]
-        detail_rows = group_rows[group_rows['is_detail'] == True]
+        if es_tot and outline_lvl == 0:
+            row_class = "grand-total"
+        elif es_tot:
+            row_class = "group-header"
+        else:
+            row_class = "detail-row"
 
-        if not header_row.empty:
-            h_data = header_row.iloc[0]
-            es_tot = h_data.get('es_total', False)
-            outline_lvl = h_data.get('outline_level', 0)
-            concepto_text = h_data.get('CONCEPTO', '')
+        html_code += f"<tr class='{row_class}'>"
+        html_code += f"<td class='text-cell'>{row.get('CUENTA', '')}</td>"
 
-            # Determinar si este grupo inicia ABIERTO o CERRADO según la selección del usuario
-            esta_desplegado = False
-            if grupos_desplegados_sel is not None:
-                esta_desplegado = (
-                    "TODOS" in grupos_desplegados_sel
-                    or concepto_text in grupos_desplegados_sel
-                )
+        concepto_str = row.get('CONCEPTO', '')
+        if is_detail:
+            html_code += f"<td class='text-cell' style='padding-left: 28px;'>{concepto_str}</td>"
+        else:
+            html_code += f"<td class='text-cell'><strong>{concepto_str}</strong></td>"
 
-            disp_style = "table-row" if esta_desplegado else "none"
-            btn_icon = "−" if esta_desplegado else "+"
-
-            row_class = (
-                "grand-total"
-                if (es_tot and outline_lvl == 0)
-                else "group-header"
+        for e in cols_empresas:
+            val_m = row.get(e, None)
+            val_pct = row.get(f"% {e}", None)
+            m_str = (
+                f"${val_m:,.2f}"
+                if pd.notnull(val_m) and str(val_m) != 'None'
+                else ""
             )
-            has_children = not detail_rows.empty
-
-            html_code += f"<tr class='{row_class}' "
-            if has_children:
-                html_code += f"onclick=\"toggleGroup('{grp_id}')\""
-            html_code += ">"
-
+            p_str = (
+                f"{val_pct:.1f}%"
+                if pd.notnull(val_pct) and str(val_pct) != 'None'
+                else ""
+            )
             html_code += (
-                f"<td class='text-cell'>{h_data.get('CUENTA', '')}</td>"
+                f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
             )
 
-            if has_children:
-                html_code += f"<td class='text-cell'><span class='toggle-btn' id='icon-{grp_id}'>{btn_icon}</span><strong>{concepto_text}</strong></td>"
-            else:
-                html_code += f"<td class='text-cell'><strong>{concepto_text}</strong></td>"
+        if incluir_consolidado:
+            val_tot = row.get('TOTAL CONSOLIDADO', None)
+            val_pct_tot = row.get('% TOTAL', None)
+            tot_str = (
+                f"${val_tot:,.2f}"
+                if pd.notnull(val_tot) and str(val_tot) != 'None'
+                else ""
+            )
+            pct_tot_str = (
+                f"{val_pct_tot:.1f}%"
+                if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
+                else ""
+            )
+            html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
 
-            for e in cols_empresas:
-                val_m = h_data.get(e, None)
-                val_pct = h_data.get(f"% {e}", None)
-                m_str = (
-                    f"${val_m:,.2f}"
-                    if pd.notnull(val_m) and str(val_m) != 'None'
-                    else ""
-                )
-                p_str = (
-                    f"{val_pct:.1f}%"
-                    if pd.notnull(val_pct) and str(val_pct) != 'None'
-                    else ""
-                )
-                html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
-
-            if incluir_consolidado:
-                val_tot = h_data.get('TOTAL CONSOLIDADO', None)
-                val_pct_tot = h_data.get('% TOTAL', None)
-                tot_str = (
-                    f"${val_tot:,.2f}"
-                    if pd.notnull(val_tot) and str(val_tot) != 'None'
-                    else ""
-                )
-                pct_tot_str = (
-                    f"{val_pct_tot:.1f}%"
-                    if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
-                    else ""
-                )
-                html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
-
-            html_code += "</tr>"
-
-            for _, d_data in detail_rows.iterrows():
-                html_code += f"<tr class='detail-row {grp_id}' style='display: {disp_style};'>"
-                html_code += (
-                    f"<td class='text-cell'>{d_data.get('CUENTA', '')}</td>"
-                )
-                html_code += f"<td class='text-cell indent-cell'>{d_data.get('CONCEPTO', '')}</td>"
-
-                for e in cols_empresas:
-                    val_m = d_data.get(e, None)
-                    val_pct = d_data.get(f"% {e}", None)
-                    m_str = (
-                        f"${val_m:,.2f}"
-                        if pd.notnull(val_m) and str(val_m) != 'None'
-                        else ""
-                    )
-                    p_str = (
-                        f"{val_pct:.1f}%"
-                        if pd.notnull(val_pct) and str(val_pct) != 'None'
-                        else ""
-                    )
-                    html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
-
-                if incluir_consolidado:
-                    val_tot = d_data.get('TOTAL CONSOLIDADO', None)
-                    val_pct_tot = d_data.get('% TOTAL', None)
-                    tot_str = (
-                        f"${val_tot:,.2f}"
-                        if pd.notnull(val_tot) and str(val_tot) != 'None'
-                        else ""
-                    )
-                    pct_tot_str = (
-                        f"{val_pct_tot:.1f}%"
-                        if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
-                        else ""
-                    )
-                    html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
-
-                html_code += "</tr>"
+        html_code += "</tr>"
 
     html_code += "</tbody></table></body></html>"
 
-    calc_height = max(500, len(df_er) * 32)
+    calc_height = max(350, len(df_disp) * 36)
     components.html(html_code, height=calc_height, scrolling=True)
 
 
-# --- EXPORTADOR A EXCEL CON AGRUPADORES NATIVOS ---
+# --- EXPORTADOR A EXCEL FILTRADO ---
 def exportar_excel_con_agrupaciones_openpyxl(
-    df_er, empresas, anio, mes, tipo='mes'
+    df_er, empresas, anio, mes, tipo='mes', conceptos_a_mostrar=None
 ):
+    df_exp = df_er.copy()
+    if conceptos_a_mostrar and "TODOS" not in conceptos_a_mostrar:
+        df_exp = df_exp[df_exp['CONCEPTO'].isin(conceptos_a_mostrar)]
+
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -721,7 +659,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
     ).font = SUBTITLE_FONT
 
     start_row = 4
-    df_clean = df_er.drop(
+    df_clean = df_exp.drop(
         columns=[
             'es_total',
             'outline_level',
@@ -743,12 +681,10 @@ def exportar_excel_con_agrupaciones_openpyxl(
 
     ws.row_dimensions[start_row].height = 26
 
-    for r_i, row_data in df_er.iterrows():
+    for r_i, row_data in df_exp.reset_index(drop=True).iterrows():
         curr_row = start_row + 1 + r_i
         es_total = row_data.get('es_total', False)
         outline_lvl = row_data.get('outline_level', 0)
-
-        ws.row_dimensions[curr_row].outlineLevel = outline_lvl
 
         for c_i, h_col in enumerate(headers, start=1):
             val = row_data[h_col]
@@ -798,11 +734,13 @@ def exportar_excel_con_agrupaciones_openpyxl(
     return output.getvalue()
 
 
-# --- INTERFAZ STREAMLIT ---
+# --- INTERFAZ PRINCIPAL DE STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
 if estructura:
+    vistas_disponibles = cargar_vistas_guardadas()
+
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
 
     col_a, col_m, col_e = st.columns([1, 1, 2])
@@ -833,39 +771,77 @@ if estructura:
         )
 
     if empresas_seleccionadas:
-        # Generar vista previa previa para extraer los nombres de los grupos
         df_preview = generar_reporte_multiempresa(
             ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
         )
-        lista_grupos_unicos = []
+        todos_los_conceptos = []
         if not df_preview.empty:
-            grupos_headers = df_preview[df_preview['is_detail'] == False]
-            lista_grupos_unicos = [
-                g for g in grupos_headers['CONCEPTO'].unique() if g
+            todos_los_conceptos = [
+                c for c in df_preview['CONCEPTO'].unique() if c
             ]
 
         st.markdown("---")
-        col_m1, col_m2 = st.columns([1, 3])
-        with col_m1:
-            modo_vista = st.radio(
-                "Modo de Apertura Inicial:",
-                ["📁 Todos Colapsados", "📂 Todos Desplegados", "🎯 Selección Personalizada"],
+        st.subheader("🎯 Configuración de Vista de Filtros")
+
+        col_v1, col_v2 = st.columns([1.5, 3])
+
+        opciones_plantillas = (
+            list(vistas_disponibles.keys())
+            + ["🔍 Detalle Completo (Todas las Cuentas)", "✏️ Personalizada (Selección Libre)"]
+        )
+
+        with col_v1:
+            plantilla_sel = st.selectbox(
+                "Elegir Vista / Plantilla Guardada:", opciones_plantillas
             )
 
-        grupos_seleccionados = []
-        if modo_vista == "📂 Todos Desplegados":
-            grupos_seleccionados = ["TODOS"]
-        elif modo_vista == "📁 Todos Colapsados":
-            grupos_seleccionados = []
-        else:
-            with col_m2:
-                grupos_seleccionados = st.multiselect(
-                    "Elige qué rubros deseas ver abiertos por defecto:",
-                    lista_grupos_unicos,
-                    default=(
-                        [lista_grupos_unicos[0]] if lista_grupos_unicos else []
-                    ),
+        conceptos_seleccionados = []
+
+        if plantilla_sel == "🔍 Detalle Completo (Todas las Cuentas)":
+            conceptos_seleccionados = ["TODOS"]
+        elif plantilla_sel in vistas_disponibles:
+            conceptos_seleccionados = vistas_disponibles[plantilla_sel]
+            with col_v2:
+                st.info(
+                    f"Mostrando **{len(conceptos_seleccionados)}** rubros predefinidos de la plantilla **'{plantilla_sel}'**."
                 )
+        else:
+            with col_v2:
+                conceptos_seleccionados = st.multiselect(
+                    "Selecciona exactamente los rubros que deseas ver:",
+                    todos_los_conceptos,
+                    default=[
+                        "Ventas Netas Totales",
+                        "Total Costo",
+                        "Total Resultado Bruto",
+                        "Total Gastos",
+                        "Resultado Antes de Depreciacion",
+                    ],
+                )
+
+                # Opción para GUARDAR una nueva plantilla de selección
+                with st.expander("💾 Guardar esta selección como nueva vista"):
+                    col_g1, col_g2 = st.columns([2, 1])
+                    with col_g1:
+                        nombre_nueva_vista = st.text_input(
+                            "Nombre de la Vista:",
+                            placeholder="Ej. Mi Reporte Semanal",
+                        )
+                    with col_g2:
+                        st.write("")
+                        st.write("")
+                        if st.button("Guardar Vista"):
+                            if nombre_nueva_vista.strip():
+                                guardar_nueva_vista(
+                                    nombre_nueva_vista.strip(),
+                                    conceptos_seleccionados,
+                                )
+                                st.success(
+                                    f"¡Vista '{nombre_nueva_vista}' guardada exitosamente!"
+                                )
+                                st.rerun()
+
+        st.markdown("---")
 
         tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
             "📑 Balanzas de Comprobación",
@@ -902,7 +878,7 @@ if estructura:
                     renderizar_tabla_interactiva_agrupada(
                         df_er_mes,
                         empresas_seleccionadas,
-                        grupos_desplegados_sel=grupos_seleccionados,
+                        conceptos_a_mostrar=conceptos_seleccionados,
                     )
 
                     excel_mes = exportar_excel_con_agrupaciones_openpyxl(
@@ -911,11 +887,12 @@ if estructura:
                         anio_sel,
                         mes_sel,
                         tipo='mes',
+                        conceptos_a_mostrar=conceptos_seleccionados,
                     )
                     st.download_button(
                         label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
                         data=excel_mes,
-                        file_name=f"Estado_Resultados_MES_Agrupado_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_MES_Filtrado_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
@@ -940,7 +917,7 @@ if estructura:
                     renderizar_tabla_interactiva_agrupada(
                         df_er_acum,
                         empresas_seleccionadas,
-                        grupos_desplegados_sel=grupos_seleccionados,
+                        conceptos_a_mostrar=conceptos_seleccionados,
                     )
 
                     excel_acum = exportar_excel_con_agrupaciones_openpyxl(
@@ -949,11 +926,12 @@ if estructura:
                         anio_sel,
                         mes_sel,
                         tipo='acum',
+                        conceptos_a_mostrar=conceptos_seleccionados,
                     )
                     st.download_button(
                         label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_acum,
-                        file_name=f"Estado_Resultados_ACUM_Agrupado_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_ACUM_Filtrado_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
