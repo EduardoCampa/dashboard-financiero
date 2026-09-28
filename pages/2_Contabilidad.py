@@ -71,7 +71,6 @@ MAPEO_CODIGO_EMPRESA = {
     "0665": "COMANA",
 }
 
-# INVERSO PARA OBTENER EL CÓDIGO A PARTIR DEL NOMBRE DE LA EMPRESA
 MAPEO_NOMBRE_A_CODIGO = {v: k for k, v in MAPEO_CODIGO_EMPRESA.items()}
 
 
@@ -835,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Ingresos Facturados vs Costos de la Empresa (excluyendo subnivel -054-)", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Ingresos Facturados vs Costos propios (excluyendo subnivel -054-)", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1069,8 +1068,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Ingresos Facturados a la Empresa VS Costos de la Empresa)")
-                st.info("Compara en una tabla consolidada por empresa los **Ingresos facturados** a dicha empresa (buscando su código en el 4to nivel de las cuentas de ingresos `4*` de las demás) contra los **Costos propios** de la empresa (cuentas `5*`, `6*` que terminen en `1`, omitiendo subniveles `-054-`).")
+                st.markdown("### 📑 Amarre I y G Intercos (Ingresos Facturados a la Empresa VS Costos Propios de Tercer Nivel)")
+                st.info("Filtra estrictamente cuentas de tercer nivel de costos/gastos que terminan en 1 (5*, 6*) omitiendo el subnivel -054-.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1086,7 +1085,7 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Sumar ingresos facturados a esta empresa desde las demás
+                        # 1. Ingresos facturados a esta empresa desde las demás (cuentas 4*)
                         ingresos_facturados_a_emp = 0.0
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
@@ -1098,27 +1097,27 @@ if estructura:
                                     if cta.startswith('4'):
                                         cod_contra = extraer_codigo_contraparte_robusto(cta)
                                         if cod_contra == cod_destino:
-                                            # Saldo acreedor neto de la cuenta de ingresos
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
 
-                        # 2. Sumar costos de la propia empresa (cuentas 5*, 6* que terminan en 1, omitiendo -054-)
+                        # 2. Costos de la empresa (cuentas 5*, 6* de tercer nivel terminadas en 1, excluyendo -054-)
                         costos_propios_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
                             cta = r['cta_raw']
                             segs = cta.split('-')
-                            prefix = segs[0].strip() if segs else ''
+                            
+                            # Validar que tenga estructura de cuenta de tercer nivel (ej. 4 segmentos o al menos 3)
+                            if len(segs) >= 3:
+                                prefix = segs[0].strip()
+                                seg3 = segs[2].strip()
 
-                            # Verificar si es cuenta de costos/gastos que termina en 1 (ej. 531, 561, 651...)
-                            if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
-                                # Omitir si el tercer segmento contiene '-054-' o '054'
-                                tiene_excepcion_054 = False
-                                if len(segs) >= 3:
-                                    seg3 = segs[2].strip()
-                                    if '054' in seg3 or seg3 in ('54', '054006'):
-                                        tiene_excepcion_054 = True
-                                
-                                if not tiene_excepcion_054:
+                                # Verificar que inicie con 5 o 6, tenga 3 dígitos y termine en 1
+                                if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
+                                    # Omitir estrictamente si el tercer segmento contiene '054' o '54'
+                                    if '054' in seg3 or '54' in seg3:
+                                        continue
+                                    
+                                    # Sumar saldo final limpio
                                     costos_propios_emp += r['saldo_final']
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
@@ -1159,6 +1158,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo de I y G Intercos configurado con desglose por empresa, validación de códigos en 4to nivel y exclusión de subniveles -054-.")
+                    st.success("✅ Filtro de tercer nivel y exclusión de subnivel -054- aplicado de forma limpia y exacta.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
