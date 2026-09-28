@@ -46,7 +46,7 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL DE CÓDIGOS DE CONTPAQI (Último segmento de la cuenta) A NOMBRE DE EMPRESA
+# MAPEO OFICIAL DE CÓDIGOS DE CONTPAQI (Último segmento o identificador) A NOMBRE DE EMPRESA
 MAPEO_CODIGO_EMPRESA = {
     "0467": "CIV",
     "0468": "CIVLAT",
@@ -295,16 +295,16 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
 
 def extraer_codigo_contraparte_robusto(cta_str):
     segs = cta_str.split('-')
-    # Buscar de derecha a izquierda el segmento de 4 dígitos que coincida con una empresa conocida
+    # Buscar de derecha a izquierda el segmento que coincida exactamente con un código de empresa
     for seg in reversed(segs):
         seg_clean = seg.strip()
         if seg_clean in MAPEO_CODIGO_EMPRESA:
             return seg_clean
-    # Si no se encuentra en el mapa exacto, tomar el último segmento si tiene 3 o 4 dígitos
-    if len(segs) >= 3:
-        ultimo = segs[-1].strip()
-        if ultimo.isdigit() and len(ultimo) in (3, 4):
-            return ultimo
+    # Si no está en el mapa, buscar cualquier segmento numérico de 3 o 4 dígitos al final
+    for seg in reversed(segs):
+        seg_clean = seg.strip()
+        if seg_clean.isdigit() and len(seg_clean) in (3, 4):
+            return seg_clean
     return ""
 
 
@@ -949,7 +949,8 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            if cta.startswith(("101-00004-", "201-00002-", "201-00004-")):
+                            # Capturar tanto cuentas de clientes (101-00004) como proveedores/acreedores (201-...)
+                            if cta.startswith(("101-00004", "201-")) or "00004" in cta or "201-" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
@@ -975,7 +976,8 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            if cta.startswith(("101-00015-", "202-00001-")):
+                            # Capturar tanto deudores (101-00015) como pasivo a largo plazo (202-00001)
+                            if cta.startswith(("101-00015", "202-")) or "00015" in cta or "202-" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
@@ -1009,11 +1011,8 @@ if estructura:
                                 continue
                             seen_pairs.add(par_key)
 
-                            val_12 = matriz_base.loc[e1, e2] # e1 (receptora) vs e2 (origen)
-                            val_21 = matriz_base.loc[e2, e1] # e2 (receptora) vs e1 (origen)
-                            
-                            # Para cruce simétrico interco, val_12 debería ser igual a val_21 (o con signo opuesto según la perspectiva)
-                            # Evaluamos la diferencia absoluta entre ambos lados del cruce
+                            val_12 = matriz_base.loc[e1, e2]
+                            val_21 = matriz_base.loc[e2, e1]
                             diferencia = val_12 - val_21
 
                             if abs(val_12) > 0.01 or abs(val_21) > 0.01:
@@ -1035,6 +1034,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Módulo actualizado con extracción robusta de contraparte y reporte automático de diferencias.")
+                    st.success("✅ Matrices actualizadas y robustecidas para capturar todos los niveles de cuentas de balance.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
