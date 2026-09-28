@@ -166,8 +166,6 @@ def extraer_registros_balanza(ruta, nombre_hoja):
 
     num_cols = df_b.shape[1]
     col_cta = 0
-    col_cargos_m = num_cols - 4
-    col_abonos_m = num_cols - 3
     col_deudor_f = num_cols - 2
     col_acreedor_f = num_cols - 1
 
@@ -180,21 +178,17 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
             continue
 
-        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
-        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Diferencia exacta de Cargos menos Abonos del periodo o saldo neto
-        dif_movimiento = cargos_m - abonos_m
+        # Saldo final exacto (Deudor - Acreedor)
+        saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
             'cta_raw': cta_raw,
-            'cargos_m': cargos_m,
-            'abonos_m': abonos_m,
             'deudor_f': deudor_f,
             'acreedor_f': acreedor_f,
-            'dif_movimiento': dif_movimiento,
+            'saldo_final': saldo_final,
         })
     return balanza_records
 
@@ -402,19 +396,9 @@ def obtener_monto_cuenta_balanza(
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['cargos_m'] - b['abonos_m'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['abonos_m'] - b['cargos_m']
-            else:
-                monto += b['cargos_m'] - b['abonos_m']
+            monto += b.get('deudor_f', 0.0) - b.get('acreedor_f', 0.0)
         else:
-            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['deudor_f'] - b['acreedor_f'])
-            elif p_prefix.startswith(('4', '720', '730')):
-                monto += b['acreedor_f'] - b['deudor_f']
-            else:
-                monto += b['deudor_f'] - b['acreedor_f']
+            monto += b['saldo_final']
 
     return monto
 
@@ -930,7 +914,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo saldos de balance mediante Cargos - Abonos / Diferencia neta directamente de la balanza mensual: `{ruta_balanza}`.")
+                st.info(f"Leyendo saldos acumulados (Deudor Final - Acreedor Final) directamente de la balanza mensual: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -965,8 +949,8 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza:
-                                    # Aplicar Cargos - Abonos (dif_movimiento) o saldo neto exacto
-                                    monto = r['dif_movimiento']
+                                    # Usar el saldo final acumulado (Deudor Final - Acreedor Final)
+                                    monto = r['saldo_final']
                                     if cta.startswith("201-"):
                                         monto = -monto
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
@@ -992,7 +976,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza:
-                                    monto = r['dif_movimiento']
+                                    monto = r['saldo_final']
                                     if cta.startswith("202-"):
                                         monto = -monto
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
@@ -1000,6 +984,6 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    st.success("✅ Matrices de Facturación y Préstamos actualizadas con la diferencia de Cargos menos Abonos.")
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas tomando el saldo final acumulado correcto.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
