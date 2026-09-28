@@ -1019,21 +1019,21 @@ if estructura:
         with tab_er_interco:
             empresas_str = ", ".join(empresas_seleccionadas)
             st.subheader(
-                f"Estado de Resultados (INTERCOMPAÑÍAS) - [{empresas_str}] ({mes_sel}/{anio_sel})"
+                f"Estado de Resultados (INTERCOMPAÑÍAS ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})"
             )
             st.info(
-                "💡 **Filtro Aplicado:** Se excluyen las ventas/costos a terceros (`1-******-***-****`) y únicamente se conserva la subcuenta `531-*****-054-0000`."
+                "💡 **Filtro Aplicado:** Se toman los saldos **ACUMULADOS**, excluyendo ventas/costos a terceros (`1-******-***-****`) y únicamente conservando la subcuenta `531-*****-054-0000`."
             )
 
             if not plantilla:
                 st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
             else:
-                with st.spinner("Procesando Estado de Resultados Intercompañías..."):
+                with st.spinner("Procesando Estado de Resultados Intercompañías (Acumulado)..."):
                     df_er_interco = generar_reporte_multiempresa(
                         ruta_balanza,
                         empresas_seleccionadas,
                         plantilla,
-                        tipo='mes',
+                        tipo='acum',  # CÁLCULO SOBRE SALDOS ACUMULADOS
                         solo_intercos=True,
                     )
 
@@ -1049,14 +1049,14 @@ if estructura:
                         empresas_seleccionadas,
                         anio_sel,
                         mes_sel,
-                        tipo='mes',
+                        tipo='acum',
                         conceptos_a_mostrar=conceptos_seleccionados,
-                        titulo_custom="INTERCOMPAÑIAS",
+                        titulo_custom="INTERCOMPAÑIAS ACUMULADO",
                     )
                     st.download_button(
-                        label=f"📥 Descargar ER Intercompañías en Excel ({mes_sel}_{anio_sel})",
+                        label=f"📥 Descargar ER Intercompañías Acumulado en Excel ({mes_sel}_{anio_sel})",
                         data=excel_interco,
-                        file_name=f"Estado_Resultados_INTERCOS_{mes_sel}_{anio_sel}.xlsx",
+                        file_name=f"Estado_Resultados_INTERCOS_ACUM_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 else:
