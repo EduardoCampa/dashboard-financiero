@@ -180,8 +180,6 @@ def extraer_registros_balanza(ruta, nombre_hoja):
 
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-        
-        # Saldo final exacto (Deudor - Acreedor)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -948,8 +946,8 @@ if estructura:
                                 cod_contraparte = extraer_codigo_contraparte(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
-                                if emp_origen and emp_origen in todas_empresas_balanza:
-                                    # Usar el saldo final acumulado (Deudor Final - Acreedor Final)
+                                # REGLA: Evitar cruzar la misma empresa contra sí misma
+                                if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                                     monto = r['saldo_final']
                                     if cta.startswith("201-"):
                                         monto = -monto
@@ -975,7 +973,8 @@ if estructura:
                                 cod_contraparte = extraer_codigo_contraparte(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
-                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                # REGLA: Evitar cruzar la misma empresa contra sí misma
+                                if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                                     monto = r['saldo_final']
                                     if cta.startswith("202-"):
                                         monto = -monto
@@ -984,6 +983,6 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    st.success("✅ Matrices de Facturación y Préstamos actualizadas tomando el saldo final acumulado correcto.")
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas (sin cruce de la misma empresa contra sí misma).")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
