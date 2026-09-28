@@ -184,7 +184,7 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Saldo neto real estricto (Deudor Final - Acreedor Final)
+        # Saldo neto real estándar (Deudor Final - Acreedor Final)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -930,7 +930,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con resta neta estándar (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
+                st.info(f"Cálculo con saldos netos normalizados en positivo: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -984,8 +984,9 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Usar estrictamente la resta neta Deudor F - Acreedor F para absolutamente todas las cuentas
                                     monto = r['saldo_final']
+                                    if cta.startswith("202-00001") or "202-" in cta:
+                                        monto = -monto
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
@@ -1035,6 +1036,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Cruce de Préstamos corregido aplicando única y exclusivamente `Deudor F - Acreedor F`.")
+                    st.success("✅ Cruce de Préstamos ajustado con signo positivo correcto.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
