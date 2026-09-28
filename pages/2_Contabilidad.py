@@ -293,6 +293,21 @@ def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     return vals
 
 
+def extraer_codigo_contraparte_robusto(cta_str):
+    segs = cta_str.split('-')
+    # Buscar de derecha a izquierda el segmento de 4 dígitos que coincida con una empresa conocida
+    for seg in reversed(segs):
+        seg_clean = seg.strip()
+        if seg_clean in MAPEO_CODIGO_EMPRESA:
+            return seg_clean
+    # Si no se encuentra en el mapa exacto, tomar el último segmento si tiene 3 o 4 dígitos
+    if len(segs) >= 3:
+        ultimo = segs[-1].strip()
+        if ultimo.isdigit() and len(ultimo) in (3, 4):
+            return ultimo
+    return ""
+
+
 def coincide_cuenta_robusta(cta_balanza, patron_template):
     if not patron_template or patron_template in ('None', 'CUENTA', ''):
         return False
@@ -921,14 +936,6 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    def extraer_codigo_contraparte(cta_str):
-                        segs = cta_str.split('-')
-                        if len(segs) >= 4:
-                            return segs[3].strip()
-                        elif len(segs) == 3:
-                            return segs[2].strip()
-                        return ""
-
                     # --- TABLA 1: FACTURACIÓN ---
                     st.markdown("---")
                     st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
@@ -943,10 +950,9 @@ if estructura:
                                 continue
 
                             if cta.startswith(("101-00004-", "201-00002-", "201-00004-")):
-                                cod_contraparte = extraer_codigo_contraparte(cta)
+                                cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
-                                # REGLA: Evitar cruzar la misma empresa contra sí misma
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                                     monto = r['saldo_final']
                                     if cta.startswith("201-"):
@@ -970,10 +976,9 @@ if estructura:
                                 continue
 
                             if cta.startswith(("101-00015-", "202-00001-")):
-                                cod_contraparte = extraer_codigo_contraparte(cta)
+                                cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
-                                # REGLA: Evitar cruzar la misma empresa contra sí misma
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                                     monto = r['saldo_final']
                                     if cta.startswith("202-"):
@@ -983,6 +988,53 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    st.success("✅ Matrices de Facturación y Préstamos actualizadas (sin cruce de la misma empresa contra sí misma).")
+                    # --- TABLA 3: REPORTE DE DIFERENCIAS (CRUCES Y DESCUADRES) ---
+                    st.markdown("---")
+                    st.markdown("#### ⚖️ 3. Reporte de Diferencias (Análisis de Conciliación Intercompañías)")
+                    st.info("Este reporte compara el saldo registrado por la Receptora contra el saldo registrado por el Origen invertido para detectar diferencias o descuadres exactos.")
+
+                    tipo_matriz_sel = st.selectbox("Selecciona la matriz a analizar para diferencias:", ["Facturación", "Préstamos"])
+                    matriz_base = matriz_fact if tipo_matriz_sel == "Facturación" else matriz_prest
+
+                    lista_dif = []
+                    empresas_activas = [e for e in todas_empresas_balanza if e in matriz_base.index]
+
+                    seen_pairs = set()
+                    for e1 in empresas_activas:
+                        for e2 in empresas_activas:
+                            if e1 == e2:
+                                continue
+                            par_key = tuple(sorted([e1, e2]))
+                            if par_key in seen_pairs:
+                                continue
+                            seen_pairs.add(par_key)
+
+                            val_12 = matriz_base.loc[e1, e2] # e1 (receptora) vs e2 (origen)
+                            val_21 = matriz_base.loc[e2, e1] # e2 (receptora) vs e1 (origen)
+                            
+                            # Para cruce simétrico interco, val_12 debería ser igual a val_21 (o con signo opuesto según la perspectiva)
+                            # Evaluamos la diferencia absoluta entre ambos lados del cruce
+                            diferencia = val_12 - val_21
+
+                            if abs(val_12) > 0.01 or abs(val_21) > 0.01:
+                                lista_dif.append({
+                                    'Empresa A': e1,
+                                    'Empresa B': e2,
+                                    f'Saldo {e1} con {e2}': val_12,
+                                    f'Saldo {e2} con {e1}': val_21,
+                                    'Diferencia (Descuadre)': diferencia
+                                })
+
+                    if lista_dif:
+                        df_diferencias = pd.DataFrame(lista_dif)
+                        st.dataframe(df_diferencias.style.format({
+                            f'Saldo {empresas_activas[0]} con {empresas_activas[1]}': "${:,.2f}",
+                            f'Saldo {empresas_activas[1]} con {empresas_activas[0]}': "${:,.2f}",
+                            'Diferencia (Descuadre)': "${:,.2f}"
+                        }, na_rep="$0.00"), use_container_width=True)
+                    else:
+                        st.info("No se encontraron saldos cruzados activos para este reporte.")
+
+                    st.success("✅ Módulo actualizado con extracción robusta de contraparte y reporte automático de diferencias.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
