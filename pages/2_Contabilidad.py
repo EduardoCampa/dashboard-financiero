@@ -743,7 +743,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
                 cell.number_format = '$#,##0.00'
 
     for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
+        max_len = max(len(str(cell.value or '')) for col in col for cell in col)
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
@@ -757,8 +757,6 @@ def exportar_excel_con_agrupaciones_openpyxl(
 def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, anio, mes):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
-    
-    # Eliminar hoja por defecto para crear nuestras dos hojas limpias
     default_sheet = wb.active
 
     TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
@@ -871,7 +869,6 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, anio, mes):
         ws2.column_dimensions[col_letter].width = max(max_len + 3, 14)
     ws2.column_dimensions['A'].width = 26
 
-    # Remover la hoja por defecto vacía si existe
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
 
@@ -1038,7 +1035,7 @@ if estructura:
                         )
 
         elif seccion_contable == "🔗 Amarres Contables":
-            st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
+            st.subheader(f"🔗 Módulo de Amarres Contables ({messel if 'messel' in locals() else mes_sel}/{anio_sel})")
 
             subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
                 "👥 Amarre RH",
@@ -1049,7 +1046,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos originales: `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con saldos netos originales en negativo para pasivos: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1109,12 +1106,10 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                    matriz_prest.loc['TOTAL'] = matriz_prest.sum(axis=0)
-
+                    # Eliminamos la fila de suma inferior en préstamos para evitar sumar negativos con positivos
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
                     st.markdown("---")
-                    # Botón único para descargar el Reporte Ejecutivo con Ambas Tablas en Excel
                     excel_ambas = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, anio_sel, mes_sel)
                     st.download_button(
                         label="📥 Descargar Reporte Ejecutivo (Facturación y Préstamos) en Excel",
@@ -1123,6 +1118,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo actualizado con exportación ejecutiva multihoja (Facturación y Préstamos).")
+                    st.success("✅ Módulo actualizado con saldos originales en negativo para pasivos.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
