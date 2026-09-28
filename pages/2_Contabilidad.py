@@ -166,6 +166,8 @@ def extraer_registros_balanza(ruta, nombre_hoja):
 
     num_cols = df_b.shape[1]
     col_cta = 0
+    col_cargos_m = num_cols - 4
+    col_abonos_m = num_cols - 3
     col_deudor_f = num_cols - 2
     col_acreedor_f = num_cols - 1
 
@@ -178,15 +180,19 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
             continue
 
+        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
+        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         saldo_neto = deudor_f - acreedor_f
 
         balanza_records.append({
             'cta_raw': cta_raw,
-            'saldo_neto': saldo_neto,
+            'cargos_m': cargos_m,
+            'abonos_m': abonos_m,
             'deudor_f': deudor_f,
             'acreedor_f': acreedor_f,
+            'saldo_neto': saldo_neto,
         })
     return balanza_records
 
@@ -352,6 +358,18 @@ def obtener_monto_cuenta_balanza(
     obras_filtro=None,
 ):
     pt = str(patron_template).strip()
+
+    if solo_intercos:
+        segs_pt = pt.split('-')
+        prefix_pt = segs_pt[0].strip() if segs_pt else ''
+
+        if len(prefix_pt) == 3 and prefix_pt.endswith('1'):
+            if prefix_pt == '531':
+                if not (len(segs_pt) >= 3 and segs_pt[2] in ('054', '54', '0054')):
+                    return 0.0
+            else:
+                return 0.0
+
     p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
@@ -382,9 +400,19 @@ def obtener_monto_cuenta_balanza(
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            monto += b.get('cargos_m', 0.0) - b.get('abonos_m', 0.0)
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['cargos_m'] - b['abonos_m'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['abonos_m'] - b['cargos_m']
+            else:
+                monto += b['cargos_m'] - b['abonos_m']
         else:
-            monto += b['saldo_neto']
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['deudor_f'] - b['acreedor_f'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['acreedor_f'] - b['deudor_f']
+            else:
+                monto += b['deudor_f'] - b['acreedor_f']
 
     return monto
 
@@ -454,6 +482,7 @@ def generar_reporte_multiempresa(
             )
 
     reporte = []
+    incluir_consolidado = len(empresas_list) > 1 or bool(obras_a_excluir)
     current_group_id = 0
 
     for row in plantilla:
@@ -483,6 +512,7 @@ def generar_reporte_multiempresa(
         }
 
         monto_total_consolidado = 0.0
+        monto_obra_excluida_total = 0.0
 
         for emp in empresas_list:
             m_emp = mapas_empresas[emp].get(r_idx, 0.0)
@@ -494,21 +524,45 @@ def generar_reporte_multiempresa(
 
             if es_dato:
                 monto_total_consolidado += m_emp
+                if obras_a_excluir:
+                    monto_obra_excluida_total += mapas_obras_excluidas[emp].get(
+                        r_idx, 0.0
+                    )
 
-        tot_ventas_todas = sum(
-            mapas_empresas[e].get(91, 0.0) for e in empresas_list
-        ) or 1.0
-        pct_total = (
-            (monto_total_consolidado / tot_ventas_todas) * 100
-            if tot_ventas_todas
-            else 0.0
-        )
+        if incluir_consolidado:
+            tot_ventas_todas = sum(
+                mapas_empresas[e].get(91, 0.0) for e in empresas_list
+            ) or 1.0
+            pct_total = (
+                (monto_total_consolidado / tot_ventas_todas) * 100
+                if tot_ventas_todas
+                else 0.0
+            )
 
-        fila_dict['TOTAL CONSOLIDADO'] = (
-            monto_total_consolidado if es_dato else None
-        )
-        fila_dict['% TOTAL'] = pct_total if es_dato else None
-        fila_dict['es_total'] = es_formula or (not patron and bool(concepto))
+            fila_dict['TOTAL CONSOLIDADO'] = (
+                monto_total_consolidado if es_dato else None
+            )
+            fila_dict['% TOTAL'] = pct_total if es_dato else None
+
+            if obras_a_excluir:
+                resultado_real = monto_total_consolidado - monto_obra_excluida_total
+                pct_real = (
+                    (resultado_real / tot_ventas_todas) * 100
+                    if tot_ventas_todas
+                    else 0.0
+                )
+
+                lbl_obras = ", ".join(obras_a_excluir)
+                fila_dict[f"OBRA EXCLUIDA ({lbl_obras})"] = (
+                    monto_obra_excluida_total if es_dato else None
+                )
+                fila_dict['RESULTADO REAL'] = (
+                    resultado_real if es_dato else None
+                )
+                fila_dict['% REAL'] = pct_real if es_dato else None
+
+        es_subtotal_o_total = es_formula or (not patron and bool(concepto))
+        fila_dict['es_total'] = es_subtotal_o_total
 
         reporte.append(fila_dict)
 
@@ -534,6 +588,26 @@ def renderizar_tabla_interactiva_agrupada(
     for e in cols_empresas:
         cols_header.extend([e, f"% {e}"])
 
+    extra_cols = [
+        c
+        for c in df_disp.columns
+        if c
+        not in [
+            'CUENTA',
+            'CONCEPTO',
+            'row_idx',
+            'group_id',
+            'is_detail',
+            'outline_level',
+            'es_total',
+        ]
+        and c not in cols_empresas
+        and not c.startswith('% ')
+    ]
+
+    for c in extra_cols:
+        cols_header.append(c)
+
     html_code = """
     <!DOCTYPE html>
     <html>
@@ -541,11 +615,12 @@ def renderizar_tabla_interactiva_agrupada(
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: transparent; }
         .tree-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
-        .tree-table th { background: #1e293b; color: #fff; padding: 10px; text-align: center; font-size: 12px; }
-        .tree-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+        .tree-table th { background: #1e293b; color: #fff; padding: 10px; text-align: center; font-size: 12px; text-transform: uppercase; }
+        .tree-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; border-right: 1px solid #f1f5f9; color: #334155; }
         .group-header { background: #f8fafc; font-weight: 700; color: #0284c7; }
-        .grand-total { background: #e2e8f0; font-weight: 800; color: #0f172a; }
+        .grand-total { background: #e2e8f0; font-weight: 800; color: #0f172a; border-top: 2px solid #475569; }
         .num-cell { text-align: right; font-variant-numeric: tabular-nums; }
+        .text-cell { text-align: left; }
     </style>
     </head>
     <body>
@@ -558,17 +633,129 @@ def renderizar_tabla_interactiva_agrupada(
 
     for _, row in df_disp.iterrows():
         es_tot = row.get('es_total', False)
-        row_class = "grand-total" if es_tot else "detail-row"
+        outline_lvl = row.get('outline_level', 0)
+        row_class = "grand-total" if (es_tot and outline_lvl == 0) else ("group-header" if es_tot else "detail-row")
+
         html_code += f"<tr class='{row_class}'>"
-        html_code += f"<td>{row.get('CUENTA', '')}</td><td>{row.get('CONCEPTO', '')}</td>"
+        html_code += f"<td class='text-cell'>{row.get('CUENTA', '')}</td>"
+        html_code += f"<td class='text-cell'>{row.get('CONCEPTO', '')}</td>"
+
         for e in cols_empresas:
             val_m = row.get(e, None)
+            val_pct = row.get(f"% {e}", None)
             m_str = f"${val_m:,.2f}" if pd.notnull(val_m) and str(val_m) != 'None' else ""
-            html_code += f"<td class='num-cell'>{m_str}</td><td></td>"
+            p_str = f"{val_pct:.1f}%" if pd.notnull(val_pct) and str(val_pct) != 'None' else ""
+            html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
+
+        for col_extra in extra_cols:
+            val_ex = row.get(col_extra, None)
+            ex_str = f"${val_ex:,.2f}" if pd.notnull(val_ex) and str(val_ex) != 'None' else ""
+            html_code += f"<td class='num-cell'>{ex_str}</td>"
+
         html_code += "</tr>"
 
     html_code += "</tbody></table></body></html>"
-    components.html(html_code, height=400, scrolling=True)
+    calc_height = max(350, len(df_disp) * 36)
+    components.html(html_code, height=calc_height, scrolling=True)
+
+
+def exportar_excel_con_agrupaciones_openpyxl(
+    df_er,
+    empresas,
+    anio,
+    mes,
+    tipo='mes',
+    conceptos_a_mostrar=None,
+    titulo_custom=None,
+):
+    df_exp = df_er.copy()
+    if conceptos_a_mostrar and "TODOS" not in conceptos_a_mostrar:
+        df_exp = df_exp[df_exp['CONCEPTO'].isin(conceptos_a_mostrar)]
+
+    output = io.BytesIO()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "EDO_RESULTADOS"
+    ws.views.sheetView[0].showGridLines = True
+
+    HEADER_FILL = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
+    TOTAL_PRINCIPAL_FILL = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    TOTAL_PRINCIPAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
+    TOTAL_FILL = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0284C7")
+    REGULAR_FONT = Font(name="Calibri", size=11, color="334155")
+
+    THIN_BORDER = Border(
+        left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0'),
+        top=Side(style='thin', color='E2E8F0'), bottom=Side(style='thin', color='E2E8F0')
+    )
+    TOTAL_BORDER = Border(
+        top=Side(style='thin', color='475569'), bottom=Side(style='double', color='0F172A'),
+        left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0')
+    )
+
+    tipo_str = titulo_custom if titulo_custom else ("DEL MES" if tipo == 'mes' else "ACUMULADO")
+    ws.cell(row=1, column=1, value=f"ESTADO DE RESULTADOS CONSOLIDADO ({tipo_str})").font = TITLE_FONT
+    ws.cell(row=2, column=1, value=f"Periodo: {mes}/{anio} | Empresa(s): {', '.join(empresas)}").font = SUBTITLE_FONT
+
+    start_row = 4
+    df_clean = df_exp.drop(columns=['es_total', 'outline_level', 'group_id', 'is_detail', 'row_idx'], errors='ignore')
+    headers = list(df_clean.columns)
+
+    for c_idx, h_text in enumerate(headers, start=1):
+        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.row_dimensions[start_row].height = 26
+
+    for r_i, row_data in df_exp.reset_index(drop=True).iterrows():
+        curr_row = start_row + 1 + r_i
+        es_total = row_data.get('es_total', False)
+        outline_lvl = row_data.get('outline_level', 0)
+
+        for c_i, h_col in enumerate(headers, start=1):
+            val = row_data[h_col]
+            cell = ws.cell(row=curr_row, column=c_i)
+            cell.value = val if pd.notnull(val) and str(val) != 'None' else ""
+
+            if es_total and outline_lvl == 0:
+                cell.font = TOTAL_PRINCIPAL_FONT
+                cell.fill = TOTAL_PRINCIPAL_FILL
+                cell.border = TOTAL_BORDER
+            elif es_total:
+                cell.font = TOTAL_FONT
+                cell.fill = TOTAL_FILL
+                cell.border = THIN_BORDER
+            else:
+                cell.font = REGULAR_FONT
+                cell.border = THIN_BORDER
+
+            if h_col in ('CUENTA', 'CONCEPTO'):
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            elif h_col.startswith('%'):
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.number_format = '0.0%'
+                if isinstance(val, (int, float)):
+                    cell.value = val / 100.0
+            else:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.number_format = '$#,##0.00'
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 38
+
+    wb.save(output)
+    return output.getvalue()
 
 
 # --- INTERFAZ PRINCIPAL DE STREAMLIT ---
@@ -576,9 +763,10 @@ estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
 
 if estructura:
+    vistas_disponibles = cargar_vistas_guardadas()
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
-    col_a, col_m = st.columns([1, 1])
 
+    col_a, col_m = st.columns([1, 1])
     with col_a:
         anio_sel = st.selectbox("Año:", anios_disponibles)
 
@@ -586,7 +774,6 @@ if estructura:
         list(set(x['mes'] for x in estructura if x['anio'] == anio_sel)),
         reverse=True,
     )
-
     with col_m:
         mes_sel = st.selectbox("Mes:", meses_disponibles)
 
@@ -601,106 +788,215 @@ if estructura:
     with col_emp1:
         st.write("")
         st.write("")
-        seleccionar_todas_emp = st.checkbox("☑️ Seleccionar Todas las Empresas", value=True)
+        seleccionar_todas_emp = st.checkbox("☑️ Seleccionar Todas las Empresas", value=False)
 
     with col_emp2:
         default_empresas = lista_empresas if seleccionar_todas_emp else ([lista_empresas[0]] if lista_empresas else [])
         empresas_seleccionadas = st.multiselect("Empresa(s):", lista_empresas, default=default_empresas)
 
-    st.markdown("---")
+    if empresas_seleccionadas:
+        empresas_tuple = tuple(empresas_seleccionadas)
+        obras_disponibles = obtener_lista_obras(ruta_balanza, empresas_tuple)
 
-    seccion_contable = st.radio(
-        "📌 **Selecciona la Vista Contable:**",
-        ["📊 Estados de Resultados", "🔗 Amarres Contables"],
-        horizontal=True,
-    )
+        col_ob1, col_ob2 = st.columns([1, 3])
+        with col_ob1:
+            st.write("")
+            st.write("🏗️ **Filtro de Obras:**")
+        with col_ob2:
+            obras_a_excluir = st.multiselect(
+                "🚫 Excluir Obra(s) del Consolidado (ej. RM CARRETERO / 26001):",
+                obras_disponibles,
+                default=[],
+            )
 
-    st.markdown("---")
+        obras_tuple = tuple(obras_a_excluir) if obras_a_excluir else None
+        st.markdown("---")
 
-    if seccion_contable == "📊 Estados de Resultados":
-        st.info("Módulo de Estados de Resultados activo.")
-    elif seccion_contable == "🔗 Amarres Contables":
-        st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
+        seccion_contable = st.radio(
+            "📌 **Selecciona la Vista Contable:**",
+            ["📊 Estados de Resultados", "🔗 Amarres Contables"],
+            horizontal=True,
+        )
 
-        subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
-            "👥 Amarre RH",
-            "💰 Amarre Ingresos",
-            "🔄 Amarre Intercompañías",
-            "📑 Amarre I y G Intercos",
-        ])
+        st.markdown("---")
 
-        with subtab_intercos:
-            st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-            st.info(f"Leyendo saldos de balance directamente de la balanza mensual: `{ruta_balanza}`.")
+        if seccion_contable == "📊 Estados de Resultados":
+            todos_los_conceptos = sorted(list(set([p['concepto'] for p in plantilla if p.get('concepto')])))
+            st.subheader("🎯 Configuración de Vista de Filtros")
 
-            todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
+            col_v1, col_v2 = st.columns([1.5, 3])
+            opciones_plantillas = ["📊 Resumen Ejecutivo", "🔍 Detalle Completo", "✏️ Personalizada"] + [
+                k for k in vistas_disponibles.keys() if k.startswith("⭐ ")
+            ]
 
-            if todas_empresas_balanza:
-                datos_empresas_recs = {}
-                for emp in todas_empresas_balanza:
-                    datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+            with col_v1:
+                plantilla_sel = st.selectbox("Elegir Vista / Plantilla Guardada:", opciones_plantillas)
 
-                def extraer_codigo_contraparte(cta_str):
-                    segs = cta_str.split('-')
-                    if len(segs) >= 4:
-                        return segs[3].strip()
-                    elif len(segs) == 3:
-                        return segs[2].strip()
-                    return ""
+            conceptos_seleccionados = []
+            if plantilla_sel == "🔍 Detalle Completo":
+                conceptos_seleccionados = ["TODOS"]
+            elif plantilla_sel in vistas_disponibles:
+                conceptos_seleccionados = vistas_disponibles[plantilla_sel]
+                with col_v2:
+                    st.info(f"Mostrando **{len(conceptos_seleccionados)}** rubros predefinidos.")
+            else:
+                with col_v2:
+                    conceptos_seleccionados = st.multiselect(
+                        "Selecciona exactamente los rubros que deseas ver:",
+                        todos_los_conceptos,
+                        default=["Ventas Netas Totales", "Total Costo", "Total Resultado Bruto", "Total Gastos", "Resultado Antes de Depreciacion"],
+                    )
 
-                # --- TABLA 1: FACTURACIÓN (Clientes 101-00004 & Proveedores/Acreedores 201-00002, 201-00004) ---
-                st.markdown("---")
-                st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
+            st.markdown("---")
 
-                matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+            tab_balanzas, tab_er_mes, tab_er_acum, tab_er_interco = st.tabs([
+                "📑 Balanzas de Comprobación",
+                "📈 Estado de Resultados (MES)",
+                "📊 Estado de Resultados (ACUM)",
+                "🔄 Estado de Resultados (Intercos)",
+            ])
 
-                for emp_receptora in todas_empresas_balanza:
-                    recs = datos_empresas_recs[emp_receptora]
-                    for r in recs:
-                        cta = r['cta_raw']
-                        # Excluir cuentas de resultados
-                        if cta.startswith(('4', '5', '6', '7')):
-                            continue
+            with tab_balanzas:
+                for emp in empresas_seleccionadas:
+                    st.subheader(f"Balanza de Comprobación - {emp} ({mes_sel}/{anio_sel})")
+                    df_b = cargar_hoja_balanza(ruta_balanza, emp)
+                    st.dataframe(df_b, use_container_width=True, hide_index=True)
 
-                        if cta.startswith(("101-00004-", "201-00002-", "201-00004-")):
-                            cod_contraparte = extraer_codigo_contraparte(cta)
-                            emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
+            with tab_er_mes:
+                empresas_str = ", ".join(empresas_seleccionadas)
+                st.subheader(f"Estado de Resultados (DEL MES) - [{empresas_str}] ({mes_sel}/{anio_sel})")
+                if not plantilla:
+                    st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+                else:
+                    with st.spinner("Cargando Estado de Resultados..."):
+                        df_er_mes = generar_reporte_multiempresa(ruta_balanza, empresas_tuple, plantilla, tipo='mes', solo_intercos=False, obras_tuple=obras_tuple)
+                    if not df_er_mes.empty:
+                        renderizar_tabla_interactiva_agrupada(df_er_mes, empresas_seleccionadas, conceptos_a_mostrar=conceptos_seleccionados)
+                        excel_mes = exportar_excel_con_agrupaciones_openpyxl(df_er_mes, empresas_seleccionadas, anio_sel, mes_sel, tipo='mes', conceptos_a_mostrar=conceptos_seleccionados)
+                        st.download_button(
+                            label=f"📥 Descargar ER Mes en Excel ({mes_sel}_{anio_sel})",
+                            data=excel_mes,
+                            file_name=f"Estado_Resultados_MES_Filtrado_{mes_sel}_{anio_sel}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
 
-                            if emp_origen and emp_origen in todas_empresas_balanza:
-                                saldo = r['saldo_neto']
-                                if cta.startswith("201-"):
-                                    saldo = -saldo
-                                matriz_fact.loc[emp_receptora, emp_origen] += saldo
+            with tab_er_acum:
+                empresas_str = ", ".join(empresas_seleccionadas)
+                st.subheader(f"Estado de Resultados (ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})")
+                if not plantilla:
+                    st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+                else:
+                    with st.spinner("Cargando Estado de Resultados Acumulado..."):
+                        df_er_acum = generar_reporte_multiempresa(ruta_balanza, empresas_tuple, plantilla, tipo='acum', solo_intercos=False, obras_tuple=obras_tuple)
+                    if not df_er_acum.empty:
+                        renderizar_tabla_interactiva_agrupada(df_er_acum, empresas_seleccionadas, conceptos_a_mostrar=conceptos_seleccionados)
+                        excel_acum = exportar_excel_con_agrupaciones_openpyxl(df_er_acum, empresas_seleccionadas, anio_sel, mes_sel, tipo='acum', conceptos_a_mostrar=conceptos_seleccionados)
+                        st.download_button(
+                            label=f"📥 Descargar ER Acumulado en Excel ({mes_sel}_{anio_sel})",
+                            data=excel_acum,
+                            file_name=f"Estado_Resultados_ACUM_Filtrado_{mes_sel}_{anio_sel}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
 
-                matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
-                st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
+            with tab_er_interco:
+                empresas_str = ", ".join(empresas_seleccionadas)
+                st.subheader(f"Estado de Resultados (INTERCOMPAÑÍAS ACUMULADO) - [{empresas_str}] ({mes_sel}/{anio_sel})")
+                if not plantilla:
+                    st.error("No se encontró el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
+                else:
+                    with st.spinner("Cargando Estado de Resultados Intercompañías..."):
+                        df_er_interco = generar_reporte_multiempresa(ruta_balanza, empresas_tuple, plantilla, tipo='acum', solo_intercos=True, obras_tuple=obras_tuple)
+                    if not df_er_interco.empty:
+                        renderizar_tabla_interactiva_agrupada(df_er_interco, empresas_seleccionadas, conceptos_a_mostrar=conceptos_seleccionados)
+                        excel_interco = exportar_excel_con_agrupaciones_openpyxl(df_er_interco, empresas_seleccionadas, anio_sel, mes_sel, tipo='acum', conceptos_a_mostrar=conceptos_seleccionados, titulo_custom="INTERCOMPAÑIAS ACUMULADO")
+                        st.download_button(
+                            label=f"📥 Descargar ER Intercompañías Acumulado en Excel ({mes_sel}_{anio_sel})",
+                            data=excel_interco,
+                            file_name=f"Estado_Resultados_INTERCOS_ACUM_{mes_sel}_{anio_sel}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
 
-                # --- TABLA 2: PRÉSTAMOS (Deudores 101-00015 & Pasivo LP 202-00001) ---
-                st.markdown("---")
-                st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
+        elif seccion_contable == "🔗 Amarres Contables":
+            st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
 
-                matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+            subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
+                "👥 Amarre RH",
+                "💰 Amarre Ingresos",
+                "🔄 Amarre Intercompañías",
+                "📑 Amarre I y G Intercos",
+            ])
 
-                for emp_receptora in todas_empresas_balanza:
-                    recs = datos_empresas_recs[emp_receptora]
-                    for r in recs:
-                        cta = r['cta_raw']
-                        if cta.startswith(('4', '5', '6', '7')):
-                            continue
+            with subtab_intercos:
+                st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
+                st.info(f"Leyendo saldos de balance directamente de la balanza mensual: `{ruta_balanza}`.")
 
-                        if cta.startswith(("101-00015-", "202-00001-")):
-                            cod_contraparte = extraer_codigo_contraparte(cta)
-                            emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
+                todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
-                            if emp_origen and emp_origen in todas_empresas_balanza:
-                                saldo = r['saldo_neto']
-                                if cta.startswith("202-"):
-                                    saldo = -saldo
-                                matriz_prest.loc[emp_receptora, emp_origen] += saldo
+                if todas_empresas_balanza:
+                    datos_empresas_recs = {}
+                    for emp in todas_empresas_balanza:
+                        datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
+                    def extraer_codigo_contraparte(cta_str):
+                        segs = cta_str.split('-')
+                        if len(segs) >= 4:
+                            return segs[3].strip()
+                        elif len(segs) == 3:
+                            return segs[2].strip()
+                        return ""
 
-                st.success("✅ Matrices de Facturación y Préstamos calculadas estrictamente con cuentas de Balance y códigos de contraparte.")
+                    # --- TABLA 1: FACTURACIÓN ---
+                    st.markdown("---")
+                    st.markdown("#### 🟢 1. Amarre de Facturación (Receptora VS Origen | Clientes 101-00004 & Proveedores 201-00002, 201-00004)")
+
+                    matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_recs[emp_receptora]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            if cta.startswith(('4', '5', '6', '7')):
+                                continue
+
+                            if cta.startswith(("101-00004-", "201-00002-", "201-00004-")):
+                                cod_contraparte = extraer_codigo_contraparte(cta)
+                                emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
+
+                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                    saldo = r['saldo_neto']
+                                    if cta.startswith("201-"):
+                                        saldo = -saldo
+                                    matriz_fact.loc[emp_receptora, emp_origen] += saldo
+
+                    matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
+                    st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
+
+                    # --- TABLA 2: PRÉSTAMOS ---
+                    st.markdown("---")
+                    st.markdown("#### 🟡 2. Amarre de Préstamos (Receptora VS Origen | Deudores 101-00015 & Pasivo LP 202-00001)")
+
+                    matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_recs[emp_receptora]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            if cta.startswith(('4', '5', '6', '7')):
+                                continue
+
+                            if cta.startswith(("101-00015-", "202-00001-")):
+                                cod_contraparte = extraer_codigo_contraparte(cta)
+                                emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
+
+                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                    saldo = r['saldo_neto']
+                                    if cta.startswith("202-"):
+                                        saldo = -saldo
+                                    matriz_prest.loc[emp_receptora, emp_origen] += saldo
+
+                    matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
+                    st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
+
+                    st.success("✅ Módulo completo restaurado: Estados de Resultados, Balanzas y Amarres Intercompañías funcionando al 100%.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
