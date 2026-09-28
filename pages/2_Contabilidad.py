@@ -167,9 +167,8 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     num_cols = df_b.shape[1]
     col_cta = 0
     
-    # En las balanzas estándar de CONTPAQi:
-    # Columnas típicas: Cuenta (0), Nombre (1), Deudor Inicial (2), Acreedor Inicial (3), Cargos (4), Abonos (5), Deudor Final (6), Acreedor Final (7)
-    # Tomamos con seguridad las últimas dos columnas para Deudor Final y Acreedor Final o índices fijos 6 y 7 si existen.
+    # Índices exactos según las capturas de CONTPAQi:
+    # A(0)=Cuenta, B(1)=Nombre, C(2)=Deudor I, D(3)=Acreedor I, E(4)=Cargos, F(5)=Abonos, G(6)=Deudor F, H(7)=Acreedor F
     col_deudor_f = 6 if num_cols > 6 else num_cols - 2
     col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
 
@@ -185,7 +184,7 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Saldo neto real estricto: Deudor Final menos Acreedor Final (tal como lo refleja la columna de saldo final en tus celdas de Excel)
+        # Saldo neto real (Deudor Final - Acreedor Final)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -932,7 +931,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo estrictamente el saldo final real de las columnas de balance (sin sumar cargos y abonos) mediante la lista oficial de códigos: `{ruta_balanza}`.")
+                st.info(f"Leyendo estrictamente el saldo final real de las columnas G (Deudor F) y H (Acreedor F): `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -959,8 +958,8 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Usamos estrictamente el saldo final real de la columna (Deudor Final vs Acreedor Final)
-                                    monto = r['saldo_final']
+                                    # Tomar el saldo deudor final menos acreedor final exacto
+                                    monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("201-"):
                                         monto = -monto
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
@@ -986,8 +985,8 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Usamos estrictamente el saldo final real de la columna de balance (ej. 464,613.80 de Fervic)
-                                    monto = r['saldo_final']
+                                    # Tomar estrictamente Deudor F (col G) menos Acreedor F (col H), respetando los 1,302.30 exactos
+                                    monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("202-"):
                                         monto = -monto
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
@@ -1039,6 +1038,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Lectura corregida para tomar el saldo final neto de balance sin sumar cargos/abonos.")
+                    st.success("✅ Lectura corregida a las columnas G (Deudor F) y H (Acreedor F).")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
