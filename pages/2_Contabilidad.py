@@ -331,7 +331,6 @@ def obtener_monto_cuenta_balanza(
     obras_filtro=None,
 ):
     pt = str(patron_template).strip()
-    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
     exact_match = None
@@ -366,6 +365,36 @@ def obtener_monto_cuenta_balanza(
             monto += b['deudor_f'] - b['acreedor_f']
 
     return monto
+
+
+def calcular_mapa_valores_empresa(
+    balanza_records, plantilla, tipo='mes', solo_intercos=False, obras_filtro=None
+):
+    if not balanza_records or not plantilla:
+        return {}
+
+    val_map = {}
+    formulas_map = {}
+
+    for row in plantilla:
+        r_idx = row['row_idx']
+        patron = row['cuenta_patron']
+        c_form = row['c_formula']
+
+        if patron:
+            val_map[r_idx] = obtener_monto_cuenta_balanza(
+                patron,
+                balanza_records,
+                tipo=tipo,
+                obras_filtro=obras_filtro,
+            )
+        elif c_form and str(c_form).startswith('='):
+            formulas_map[r_idx] = c_form
+            val_map[r_idx] = 0.0
+        else:
+            val_map[r_idx] = 0.0
+
+    return resolver_todas_las_formulas(val_map, formulas_map)
 
 
 # --- GENERADOR MULTIEMPRESA CACHEADO ---
@@ -488,36 +517,6 @@ def generar_reporte_multiempresa(
         reporte.append(fila_dict)
 
     return pd.DataFrame(reporte)
-
-
-def calcular_mapa_valores_empresa(
-    balanza_records, plantilla, tipo='mes', solo_intercos=False, obras_filtro=None
-):
-    if not balanza_records or not plantilla:
-        return {}
-
-    val_map = {}
-    formulas_map = {}
-
-    for row in plantilla:
-        r_idx = row['row_idx']
-        patron = row['cuenta_patron']
-        c_form = row['c_formula']
-
-        if patron:
-            val_map[r_idx] = obtener_monto_cuenta_balanza(
-                patron,
-                balanza_records,
-                tipo=tipo,
-                obras_filtro=obras_filtro,
-            )
-        elif c_form and str(c_form).startswith('='):
-            formulas_map[r_idx] = c_form
-            val_map[r_idx] = 0.0
-        else:
-            val_map[r_idx] = 0.0
-
-    return resolver_todas_las_formulas(val_map, formulas_map)
 
 
 # --- TABLA INTERACTIVA CON FILTRADO EXACTO DE SELECCIÓN ---
@@ -1154,57 +1153,62 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar y Préstamos)")
-                st.info("Cruce dinámico desde Balanzas (Acumulado): Facturación (`101-00004` vs `201-00002`, `201-00004`) y Préstamos (`101-00015` vs `202-00001`).")
+                st.info("Conciliación y cruce automático desde Balanzas Acumuladas de todas las empresas del grupo.")
                 
-                tipo_interco_sel = st.selectbox(
-                    "Selecciona el Tipo de Amarre Interco:",
-                    [
-                        "Facturación (Activo 101-00004 vs Pasivo 201-00002, 201-00004)",
-                        "Préstamos (Activo 101-00015 vs Pasivo a LP 202-00001)"
-                    ]
-                )
-                
-                # Extracción y cálculo automático cruzando todas las empresas de la balanza
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
                 
                 if todas_empresas_balanza:
-                    matriz_datos = []
-                    
-                    # Definir cuentas origen y receptoras según la selección
-                    if "Facturación" in tipo_interco_sel:
-                        cuentas_origen = ["101-00004"]
-                        cuentas_receptoras = ["201-00002", "201-00004"]
-                    else:
-                        cuentas_origen = ["101-00015"]
-                        cuentas_receptoras = ["202-00001"]
-                        
-                    # Diccionario para almacenar saldos de cada empresa
-                    saldos_empresas = {}
+                    # Extraer registros de balanza acumulada para cada empresa
+                    datos_empresas_acum = {}
                     for emp in todas_empresas_balanza:
-                        recs = extraer_registros_balanza(ruta_balanza, emp)
-                        saldos_receptor = {}
+                        datos_empresas_acum[emp] = extraer_registros_balanza(ruta_balanza, emp)
+                    
+                    # --- TABLA 1: FACTURACIÓN (101-00004 vs 201-00002, 201-00004) ---
+                    st.markdown("---")
+                    st.markdown("#### 📑 1. Amarre de Facturación (Clientes 101-00004 VS Proveedores 201-00002, 201-00004)")
+                    
+                    matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+                    for emp_origen in todas_empresas_balanza:
+                        recs = datos_empresas_acum[emp_origen]
                         for r in recs:
                             cta = r['cta_raw']
-                            # Verificar si la cuenta coincide con las receptoras
-                            for c_rec in cuentas_receptoras:
-                                if coincide_cuenta_robusta(cta, f"{c_rec}-?????"):
-                                    # Extraer la subcuenta o identificador de la otra empresa si aplica
-                                    # O acumular el saldo final (deudor - acreedor)
+                            if coincide_cuenta_robusta(cta, "101-00004-?????") or coincide_cuenta_robusta(cta, "101-00004-???"):
+                                segs = cta.split('-')
+                                if len(segs) >= 3:
+                                    sub_cta = segs[1]
                                     saldo_neto = r['deudor_f'] - r['acreedor_f']
-                                    saldos_receptor[cta] = saldo_neto
-                        saldos_empresas[emp] = recs
-                        
-                    st.success(f"✅ Balanzas analizadas correctamente para {len(todas_empresas_balanza)} empresas del grupo.")
+                                    # Mapear a la empresa receptora correspondiente si existe
+                                    for emp_dest in todas_empresas_balanza:
+                                        if sub_cta in emp_dest or sub_cta.lstrip('0') in emp_dest.lstrip('0'):
+                                            matriz_fact.loc[emp_origen, emp_dest] += saldo_neto
+                                            break
                     
-                    # Mostrar tabla de matriz cruzada interactiva
-                    df_matriz_interco = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
-                    st.dataframe(df_matriz_interco, use_container_width=True)
+                    matriz_fact['TOTAL ORIGEN'] = matriz_fact.sum(axis=1)
+                    st.dataframe(matriz_fact, use_container_width=True)
                     
-                    col_res1, col_res2 = st.columns(2)
-                    with col_res1:
-                        st.info("📊 **Suma Vertical y Horizontal:** Cuadradas con Balanza Acumulada.")
-                    with col_res2:
-                        st.success("✨ **Clasificación Exitosa:** Separado por Facturación y Préstamos.")
+                    # --- TABLA 2: PRÉSTAMOS (101-00015 vs 202-00001) ---
+                    st.markdown("---")
+                    st.markdown("#### 💰 2. Amarre de Préstamos (Deudores 101-00015 VS Pasivo a Largo Plazo 202-00001)")
+                    
+                    matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+                    for emp_origen in todas_empresas_balanza:
+                        recs = datos_empresas_acum[emp_origen]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            if coincide_cuenta_robusta(cta, "101-00015-?????") or coincide_cuenta_robusta(cta, "101-00015-???"):
+                                segs = cta.split('-')
+                                if len(segs) >= 3:
+                                    sub_cta = segs[1]
+                                    saldo_neto = r['deudor_f'] - r['acreedor_f']
+                                    for emp_dest in todas_empresas_balanza:
+                                        if sub_cta in emp_dest or sub_cta.lstrip('0') in emp_dest.lstrip('0'):
+                                            matriz_prest.loc[emp_origen, emp_dest] += saldo_neto
+                                            break
+                                            
+                    matriz_prest['TOTAL ORIGEN'] = matriz_prest.sum(axis=1)
+                    st.dataframe(matriz_prest, use_container_width=True)
+                    
+                    st.success("✅ Cruces y matrices generados exitosamente desde las balanzas acumuladas.")
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
