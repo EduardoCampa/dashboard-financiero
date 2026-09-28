@@ -167,8 +167,6 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     num_cols = df_b.shape[1]
     col_cta = 0
     
-    # Índices exactos según las balanzas de CONTPAQi:
-    # A(0)=Cuenta, B(1)=Nombre, C(2)=Deudor I, D(3)=Acreedor I, E(4)=Cargos, F(5)=Abonos, G(6)=Deudor F, H(7)=Acreedor F
     col_deudor_f = 6 if num_cols > 6 else num_cols - 2
     col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
 
@@ -184,7 +182,6 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
         
-        # Saldo neto real estricto (Deudor Final - Acreedor Final)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -253,7 +250,6 @@ def cargar_plantilla_formato():
     return plantilla
 
 
-# --- PARSER NUMÉRICO ROBUSTO ---
 def parse_monto_robusto(val):
     if pd.isnull(val):
         return 0.0
@@ -268,7 +264,6 @@ def parse_monto_robusto(val):
         return 0.0
 
 
-# --- EVALUADOR DE FÓRMULAS EN CASCADA ---
 def resolver_todas_las_formulas(mapa_valores, mapa_formulas):
     vals = dict(mapa_valores)
 
@@ -382,7 +377,6 @@ def obtener_monto_cuenta_balanza(
             else:
                 return 0.0
 
-    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
     exact_match = None
@@ -760,6 +754,81 @@ def exportar_excel_con_agrupaciones_openpyxl(
     return output.getvalue()
 
 
+def exportar_excel_matriz_prestamos(df_matriz, anio, mes):
+    output = io.BytesIO()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AMARRE_PRESTAMOS"
+    ws.views.sheetView[0].showGridLines = True
+
+    TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
+    HEADER_FILL = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    REGULAR_FONT = Font(name="Calibri", size=11, color="334155")
+    TOTAL_FILL = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    TOTAL_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
+
+    THIN_BORDER = Border(
+        left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0'),
+        top=Side(style='thin', color='E2E8F0'), bottom=Side(style='thin', color='E2E8F0')
+    )
+    TOTAL_BORDER = Border(
+        top=Side(style='thin', color='475569'), bottom=Side(style='double', color='0F172A'),
+        left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0')
+    )
+
+    ws.cell(row=1, column=1, value="REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS INTERCOMPAÑÍAS").font = TITLE_FONT
+    ws.cell(row=2, column=1, value=f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)").font = SUBTITLE_FONT
+
+    start_row = 4
+    headers = ["Empresa Receptora \\ Origen"] + list(df_matriz.columns)
+
+    for c_idx, h_text in enumerate(headers, start=1):
+        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.row_dimensions[start_row].height = 28
+
+    for r_i, (emp_idx, row_data) in enumerate(df_matriz.iterrows()):
+        curr_row = start_row + 1 + r_i
+        
+        # Etiqueta de la empresa receptora
+        cell_emp = ws.cell(row=curr_row, column=1, value=emp_idx)
+        cell_emp.font = TOTAL_FONT if emp_idx == 'TOTAL' else REGULAR_FONT
+        cell_emp.fill = TOTAL_FILL if emp_idx == 'TOTAL' else PatternFill(fill_type=None)
+        cell_emp.border = TOTAL_BORDER if emp_idx == 'TOTAL' else THIN_BORDER
+        cell_emp.alignment = Alignment(horizontal="left", vertical="center")
+
+        for c_i, col_name in enumerate(df_matriz.columns, start=2):
+            val = row_data[col_name]
+            cell = ws.cell(row=curr_row, column=c_i)
+            cell.value = val if pd.notnull(val) else 0.0
+
+            if emp_idx == 'TOTAL' or col_name == 'TOTAL':
+                cell.font = TOTAL_FONT
+                cell.fill = TOTAL_FILL
+                cell.border = TOTAL_BORDER
+            else:
+                cell.font = REGULAR_FONT
+                cell.border = THIN_BORDER
+
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.number_format = '$#,##0.00'
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+    ws.column_dimensions['A'].width = 26
+
+    wb.save(output)
+    return output.getvalue()
+
+
 # --- INTERFAZ PRINCIPAL DE STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
@@ -930,7 +999,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con resta neta estándar (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con saldos netos originales (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -978,63 +1047,32 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            # Identificar estrictamente Deudores (101-00015) o Pasivo LP (202-00001)
                             if cta.startswith(("101-00015", "202-00001")) or "00015" in cta or "202-00001" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    # Usar estrictamente la resta neta Deudor F - Acreedor F para absolutamente todas las cuentas
                                     monto = r['saldo_final']
+                                    if cta.startswith("202-00001") or "202-" in cta:
+                                        monto = r['acreedor_f'] - r['deudor_f']
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
+                    
+                    # Fila de totales por columna (Origen)
+                    matriz_prest.loc['TOTAL'] = matriz_prest.sum(axis=0)
+
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    # --- TABLA 3: REPORTE DE DIFERENCIAS (CRUCES Y DESCUADRES) ---
-                    st.markdown("---")
-                    st.markdown("#### ⚖️ 3. Reporte de Diferencias (Análisis de Conciliación Intercompañías)")
-                    st.info("Este reporte compara el saldo registrado por la Receptora contra el saldo registrado por el Origen para detectar diferencias o descuadres exactos.")
+                    # Botón de Exportación a Reporte Ejecutivo en Excel
+                    excel_prestamos = exportar_excel_matriz_prestamos(matriz_prest, anio_sel, mes_sel)
+                    st.download_button(
+                        label="📥 Descargar Reporte Ejecutivo de Préstamos en Excel",
+                        data=excel_prestamos,
+                        file_name=f"Reporte_Ejecutivo_Prestamos_Intercompañias_{mes_sel}_{anio_sel}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
 
-                    tipo_matriz_sel = st.selectbox("Selecciona la matriz a analizar para diferencias:", ["Facturación", "Préstamos"])
-                    matriz_base = matriz_fact if tipo_matriz_sel == "Facturación" else matriz_prest
-
-                    lista_dif = []
-                    empresas_activas = [e for e in todas_empresas_balanza if e in matriz_base.index]
-
-                    seen_pairs = set()
-                    for e1 in empresas_activas:
-                        for e2 in empresas_activas:
-                            if e1 == e2:
-                                continue
-                            par_key = tuple(sorted([e1, e2]))
-                            if par_key in seen_pairs:
-                                continue
-                            seen_pairs.add(par_key)
-
-                            val_12 = matriz_base.loc[e1, e2]
-                            val_21 = matriz_base.loc[e2, e1]
-                            diferencia = val_12 - val_21
-
-                            if abs(val_12) > 0.01 or abs(val_21) > 0.01:
-                                lista_dif.append({
-                                    'Empresa A': e1,
-                                    'Empresa B': e2,
-                                    f'Saldo {e1} con {e2}': val_12,
-                                    f'Saldo {e2} con {e1}': val_21,
-                                    'Diferencia (Descuadre)': diferencia
-                                })
-
-                    if lista_dif:
-                        df_diferencias = pd.DataFrame(lista_dif)
-                        st.dataframe(df_diferencias.style.format({
-                            f'Saldo {empresas_activas[0]} con {empresas_activas[1]}': "${:,.2f}",
-                            f'Saldo {empresas_activas[1]} con {empresas_activas[0]}': "${:,.2f}",
-                            'Diferencia (Descuadre)': "${:,.2f}"
-                        }, na_rep="$0.00"), use_container_width=True)
-                    else:
-                        st.info("No se encontraron saldos cruzados activos para este reporte.")
-
-                    st.success("✅ Cruce de Préstamos corregido aplicando única y exclusivamente `Deudor F - Acreedor F`.")
+                    st.success("✅ Módulo actualizado con reporte ejecutivo y exportación en Excel.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
