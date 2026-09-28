@@ -7,6 +7,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="Módulo Contable",
@@ -67,7 +68,6 @@ def cargar_plantilla_formato():
     sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
 
     plantilla = []
-    # Comenzar a leer desde la fila 6 para omitir encabezados "CUENTA", "CONCEPTO" y "1"
     for i in range(6, sheet.max_row + 1):
         cta = sheet.cell(row=i, column=1).value
         concepto = sheet.cell(row=i, column=2).value
@@ -77,7 +77,6 @@ def cargar_plantilla_formato():
         str_cta = str(cta).strip() if cta else ""
         str_conc = str(concepto).strip() if concepto else ""
 
-        # Omitir filas de encabezado de la plantilla
         if str_cta.upper() in ['CUENTA', '1', '2', '3'] or str_conc.upper() in [
             'CONCEPTO',
             '1',
@@ -312,6 +311,8 @@ def generar_reporte_multiempresa(
     reporte = []
     incluir_consolidado = len(empresas_seleccionadas) > 1
 
+    current_group_id = 0
+
     for row in plantilla:
         r_idx = row['row_idx']
         patron = row['cuenta_patron']
@@ -326,14 +327,16 @@ def generar_reporte_multiempresa(
         es_cuenta = bool(patron)
         es_dato = es_cuenta or es_formula
 
-        # USO DE ESPACIOS UNICODE NO COLAPSABLES (\u00A0) PARA APLICAR SANGRÍA REAL EN BROWSER
-        indent_spaces = "\u00A0\u00A0\u00A0\u00A0" * outline_lvl if es_cuenta else ""
-        concepto_formateado = f"{indent_spaces}{concepto}"
+        if not es_cuenta:
+            current_group_id += 1
 
         fila_dict = {
             'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto_formateado,
-            'concepto_raw': concepto,
+            'CONCEPTO': concepto,
+            'row_idx': r_idx,
+            'group_id': f"grp_{current_group_id}",
+            'is_detail': es_cuenta,
+            'outline_level': outline_lvl,
         }
 
         monto_total_consolidado = 0.0
@@ -364,88 +367,294 @@ def generar_reporte_multiempresa(
             )
             fila_dict['% TOTAL'] = pct_total if es_dato else None
 
-        # Detectar si es una fila de suma/subtotal (sin patrón de cuenta o con fórmula o palabra clave)
         es_subtotal_o_total = es_formula or (not patron and bool(concepto))
-
         fila_dict['es_total'] = es_subtotal_o_total
-        fila_dict['outline_level'] = outline_lvl
-        fila_dict['es_encabezado'] = (
-            not patron and not es_formula and bool(concepto)
-        )
 
         reporte.append(fila_dict)
 
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA INTERACTIVA CON SANGRÍA VISIBLE Y NEGRITA ---
-def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
+# --- TABLA INTERACTIVA HTML/JS CON DESPLEGABLE [+] Y [-] REAL ---
+def renderizar_tabla_interactiva_agrupada(
+    df_er, empresas, estado_inicial="colapsado"
+):
     if df_er.empty:
         return
 
-    df_disp = df_er.copy()
+    cols_empresas = list(empresas)
+    incluir_consolidado = 'TOTAL CONSOLIDADO' in df_er.columns
 
-    # Filtro para la vista resumida
-    if nivel_detalle == "Resumido (Sólo Totales)":
-        df_disp = df_disp[df_disp['es_total'] == True]
+    cols_header = ['CUENTA', 'CONCEPTO']
+    for e in cols_empresas:
+        cols_header.extend([e, f"% {e}"])
 
-    def aplicar_estilo_finanzas(row):
-        styles = [''] * len(row)
-        es_total = row.get('es_total', False)
-        outline_lvl = row.get('outline_level', 0)
+    if incluir_consolidado:
+        cols_header.extend(['TOTAL CONSOLIDADO', '% TOTAL'])
 
-        if es_total and outline_lvl == 0:
-            # Gran Total Principal (Fondo destacado y Negrita)
-            styles = [
-                'font-weight: 800; background-color: #e2e8f0; color: #0f172a; border-top: 2px solid #475569; border-bottom: 2px double #0f172a;'
-            ] * len(row)
-        elif es_total:
-            # Subtotales de Grupo (Ventas a Terceros, Ventas Intercompañías, etc.)
-            styles = [
-                'font-weight: 700; background-color: #f8fafc; color: #0284c7; border-top: 1.5px solid #94a3b8;'
-            ] * len(row)
-        else:
-            # Cuentas hijas normales
-            styles = ['font-weight: 400; color: #334155;'] * len(row)
+    display_style = "none" if estado_inicial == "colapsado" else "table-row"
+    btn_icon = "+" if estado_inicial == "colapsado" else "−"
 
-        return styles
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: transparent;
+            margin: 0;
+            padding: 0;
+        }}
+        .toolbar {{
+            margin-bottom: 12px;
+            display: flex;
+            gap: 10px;
+        }}
+        .btn-toggle {{
+            background-color: #f1f5f9;
+            color: #0f172a;
+            border: 1px solid #cbd5e1;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .btn-toggle:hover {{
+            background-color: #e2e8f0;
+            border-color: #94a3b8;
+        }}
+        .tree-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            background-color: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }}
+        .tree-table th {{
+            background-color: #1e293b;
+            color: #ffffff;
+            font-weight: 700;
+            padding: 10px 12px;
+            text-align: center;
+            border: 1px solid #334155;
+            font-size: 12px;
+            text-transform: uppercase;
+        }}
+        .tree-table td {{
+            padding: 7px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            border-right: 1px solid #f1f5f9;
+            color: #334155;
+        }}
+        .group-header {{
+            background-color: #f8fafc;
+            font-weight: 700;
+            color: #0284c7;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.15s ease;
+        }}
+        .group-header:hover {{
+            background-color: #f1f5f9;
+        }}
+        .grand-total {{
+            background-color: #e2e8f0;
+            font-weight: 800;
+            color: #0f172a;
+            border-top: 2px solid #475569;
+            border-bottom: 2px double #0f172a;
+        }}
+        .detail-row {{
+            background-color: #ffffff;
+        }}
+        .detail-row:hover {{
+            background-color: #f8fafc;
+        }}
+        .toggle-btn {{
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            line-height: 16px;
+            text-align: center;
+            background-color: #0284c7;
+            color: #ffffff;
+            font-weight: bold;
+            border-radius: 4px;
+            margin-right: 8px;
+            font-size: 12px;
+        }}
+        .indent-cell {{
+            padding-left: 32px !important;
+            color: #475569;
+        }}
+        .num-cell {{
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }}
+        .text-cell {{
+            text-align: left;
+        }}
+    </style>
+    <script>
+        function toggleGroup(grpId) {{
+            var rows = document.getElementsByClassName(grpId);
+            var icon = document.getElementById('icon-' + grpId);
+            if (!rows || rows.length === 0) return;
+            
+            var isHidden = (rows[0].style.display === "none");
+            for (var i = 0; i < rows.length; i++) {{
+                rows[i].style.display = isHidden ? "table-row" : "none";
+            }}
+            if (icon) {{
+                icon.innerText = isHidden ? "−" : "+";
+            }}
+        }}
 
-    df_clean = df_disp.drop(
-        columns=['es_total', 'outline_level', 'es_encabezado', 'concepto_raw'],
-        errors='ignore',
-    )
+        function expandAll() {{
+            var detailRows = document.querySelectorAll('.detail-row');
+            var icons = document.querySelectorAll('.toggle-btn');
+            detailRows.forEach(function(row) {{ row.style.display = 'table-row'; }});
+            icons.forEach(function(icon) {{ icon.innerText = '−'; }});
+        }}
 
-    format_dict = {}
-    for emp in empresas:
-        format_dict[emp] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict[f"% {emp}"] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
+        function collapseAll() {{
+            var detailRows = document.querySelectorAll('.detail-row');
+            var icons = document.querySelectorAll('.toggle-btn');
+            detailRows.forEach(function(row) {{ row.style.display = 'none'; }});
+            icons.forEach(function(icon) {{ icon.innerText = '+'; }});
+        }}
+    </script>
+    </head>
+    <body>
+        <div class="toolbar">
+            <button class="btn-toggle" onclick="expandAll()">📂 Desplegar Todo [+]</button>
+            <button class="btn-toggle" onclick="collapseAll()">📁 Colapsar Todo [-]</button>
+        </div>
+        <table class="tree-table">
+            <thead>
+                <tr>
+    """
 
-    if 'TOTAL CONSOLIDADO' in df_clean.columns:
-        format_dict['TOTAL CONSOLIDADO'] = (
-            lambda x: f"${x:,.2f}" if pd.notnull(x) and str(x) != 'None' else ''
-        )
-        format_dict['% TOTAL'] = (
-            lambda x: f"{x:.1f}%" if pd.notnull(x) and str(x) != 'None' else ''
-        )
+    for h in cols_header:
+        html_code += f"<th>{h}</th>"
+    html_code += "</tr></thead><tbody>"
 
-    styler = (
-        df_clean.style.apply(aplicar_estilo_finanzas, axis=1)
-        .format(format_dict)
-        .set_properties(
-            **{
-                'padding': '6px 12px',
-                'font-family': 'Calibri, sans-serif',
-                'font-size': '13px',
-                'border': '1px solid #e2e8f0',
-            }
-        )
-    )
+    # Construir filas agrupadas
+    grouped_df = df_er.groupby('group_id', sort=False)
 
-    st.dataframe(styler, use_container_width=True, hide_index=True)
+    for grp_id, group_rows in grouped_df:
+        header_row = group_rows[group_rows['is_detail'] == False]
+        detail_rows = group_rows[group_rows['is_detail'] == True]
+
+        if not header_row.empty:
+            h_data = header_row.iloc[0]
+            es_tot = h_data.get('es_total', False)
+            outline_lvl = h_data.get('outline_level', 0)
+
+            row_class = (
+                "grand-total"
+                if (es_tot and outline_lvl == 0)
+                else "group-header"
+            )
+            has_children = not detail_rows.empty
+
+            html_code += f"<tr class='{row_class}' "
+            if has_children:
+                html_code += f"onclick=\"toggleGroup('{grp_id}')\""
+            html_code += ">"
+
+            html_code += (
+                f"<td class='text-cell'>{h_data.get('CUENTA', '')}</td>"
+            )
+
+            concepto_text = h_data.get('CONCEPTO', '')
+            if has_children:
+                html_code += f"<td class='text-cell'><span class='toggle-btn' id='icon-{grp_id}'>{btn_icon}</span><strong>{concepto_text}</strong></td>"
+            else:
+                html_code += f"<td class='text-cell'><strong>{concepto_text}</strong></td>"
+
+            for e in cols_empresas:
+                val_m = h_data.get(e, None)
+                val_pct = h_data.get(f"% {e}", None)
+                m_str = (
+                    f"${val_m:,.2f}"
+                    if pd.notnull(val_m) and str(val_m) != 'None'
+                    else ""
+                )
+                p_str = (
+                    f"{val_pct:.1f}%"
+                    if pd.notnull(val_pct) and str(val_pct) != 'None'
+                    else ""
+                )
+                html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
+
+            if incluir_consolidado:
+                val_tot = h_data.get('TOTAL CONSOLIDADO', None)
+                val_pct_tot = h_data.get('% TOTAL', None)
+                tot_str = (
+                    f"${val_tot:,.2f}"
+                    if pd.notnull(val_tot) and str(val_tot) != 'None'
+                    else ""
+                )
+                pct_tot_str = (
+                    f"{val_pct_tot:.1f}%"
+                    if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
+                    else ""
+                )
+                html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
+
+            html_code += "</tr>"
+
+        # Renderear filas hijas agrupadas
+        for _, d_data in detail_rows.iterrows():
+            html_code += f"<tr class='detail-row {grp_id}' style='display: {display_style};'>"
+            html_code += (
+                f"<td class='text-cell'>{d_data.get('CUENTA', '')}</td>"
+            )
+            html_code += f"<td class='text-cell indent-cell'>{d_data.get('CONCEPTO', '')}</td>"
+
+            for e in cols_empresas:
+                val_m = d_data.get(e, None)
+                val_pct = d_data.get(f"% {e}", None)
+                m_str = (
+                    f"${val_m:,.2f}"
+                    if pd.notnull(val_m) and str(val_m) != 'None'
+                    else ""
+                )
+                p_str = (
+                    f"{val_pct:.1f}%"
+                    if pd.notnull(val_pct) and str(val_pct) != 'None'
+                    else ""
+                )
+                html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
+
+            if incluir_consolidado:
+                val_tot = d_data.get('TOTAL CONSOLIDADO', None)
+                val_pct_tot = d_data.get('% TOTAL', None)
+                tot_str = (
+                    f"${val_tot:,.2f}"
+                    if pd.notnull(val_tot) and str(val_tot) != 'None'
+                    else ""
+                )
+                pct_tot_str = (
+                    f"{val_pct_tot:.1f}%"
+                    if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
+                    else ""
+                )
+                html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
+
+            html_code += "</tr>"
+
+    html_code += "</tbody></table></body></html>"
+
+    calc_height = max(500, len(df_er) * 32)
+    components.html(html_code, height=calc_height, scrolling=True)
 
 
 # --- EXPORTADOR A EXCEL CON AGRUPADORES NATIVOS ---
@@ -507,7 +716,13 @@ def exportar_excel_con_agrupaciones_openpyxl(
 
     start_row = 4
     df_clean = df_er.drop(
-        columns=['es_total', 'outline_level', 'es_encabezado', 'concepto_raw'],
+        columns=[
+            'es_total',
+            'outline_level',
+            'group_id',
+            'is_detail',
+            'row_idx',
+        ],
         errors='ignore',
     )
     headers = list(df_clean.columns)
@@ -612,9 +827,9 @@ if estructura:
         )
 
     with col_v:
-        nivel_detalle = st.radio(
-            "Vista de Esquema:",
-            ["Detallado (Cuentas)", "Resumido (Sólo Totales)"],
+        estado_vista = st.radio(
+            "Estado Inicial:",
+            ["Colapsado (Solo Totales)", "Desplegado (Todas las Cuentas)"],
             horizontal=True,
         )
 
@@ -651,10 +866,15 @@ if estructura:
                     )
 
                 if not df_er_mes.empty:
-                    renderizar_tabla_multiempresa(
+                    st_estado = (
+                        "colapsado"
+                        if "Colapsado" in estado_vista
+                        else "desplegado"
+                    )
+                    renderizar_tabla_interactiva_agrupada(
                         df_er_mes,
                         empresas_seleccionadas,
-                        nivel_detalle=nivel_detalle,
+                        estado_inicial=st_estado,
                     )
 
                     excel_mes = exportar_excel_con_agrupaciones_openpyxl(
@@ -689,10 +909,15 @@ if estructura:
                     )
 
                 if not df_er_acum.empty:
-                    renderizar_tabla_multiempresa(
+                    st_estado = (
+                        "colapsado"
+                        if "Colapsado" in estado_vista
+                        else "desplegado"
+                    )
+                    renderizar_tabla_interactiva_agrupada(
                         df_er_acum,
                         empresas_seleccionadas,
-                        nivel_detalle=nivel_detalle,
+                        estado_inicial=st_estado,
                     )
 
                     excel_acum = exportar_excel_con_agrupaciones_openpyxl(
