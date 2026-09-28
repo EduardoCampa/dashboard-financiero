@@ -56,7 +56,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
-# --- PLANTILLA DE EXCEL ---
+# --- PLANTILLA DE EXCEL CON AGRUPACIONES ---
 @st.cache_data(ttl=3600)
 def cargar_plantilla_formato():
     ruta_formato = "FORMATO EDO RESULTADOS.xlsx"
@@ -67,19 +67,36 @@ def cargar_plantilla_formato():
     sheet = wb['RESULTADOS ACUM'] if 'RESULTADOS ACUM' in wb.sheetnames else wb.active
 
     plantilla = []
-    for i in range(4, sheet.max_row + 1):
+    # Comenzar a leer desde la fila 6 para omitir los encabezados "CUENTA", "CONCEPTO" y "1"
+    for i in range(6, sheet.max_row + 1):
         cta = sheet.cell(row=i, column=1).value
         concepto = sheet.cell(row=i, column=2).value
         c_formula = sheet.cell(row=i, column=3).value
         d_formula = sheet.cell(row=i, column=4).value
 
+        str_cta = str(cta).strip() if cta else ""
+        str_conc = str(concepto).strip() if concepto else ""
+
+        # Omitir filas basurita o encabezados de plantilla
+        if str_cta.upper() in ['CUENTA', '1', '2', '3'] or str_conc.upper() in [
+            'CONCEPTO',
+            '1',
+            '2',
+            'NONE',
+            'NAN',
+        ]:
+            continue
+
+        outline_lvl = sheet.row_dimensions[i].outlineLevel or 0
+
         if cta or concepto or c_formula:
             plantilla.append({
                 'row_idx': i,
-                'cuenta_patron': str(cta).strip() if cta else None,
-                'concepto': str(concepto).strip() if concepto else '',
+                'cuenta_patron': str_cta if str_cta else None,
+                'concepto': str_conc,
                 'c_formula': str(c_formula).strip() if c_formula else None,
                 'd_formula': str(d_formula).strip() if d_formula else None,
+                'outline_level': outline_lvl,
             })
     return plantilla
 
@@ -300,6 +317,7 @@ def generar_reporte_multiempresa(
         patron = row['cuenta_patron']
         concepto = row['concepto']
         c_form = row['c_formula']
+        outline_lvl = row.get('outline_level', 0)
 
         if not patron and not concepto and not c_form:
             continue
@@ -308,9 +326,15 @@ def generar_reporte_multiempresa(
         es_cuenta = bool(patron)
         es_dato = es_cuenta or es_formula
 
+        # Indentación visual de concepto basada en el nivel de agrupación (outlineLevel)
+        concepto_formateado = (
+            ("    " * outline_lvl) + concepto if outline_lvl > 0 else concepto
+        )
+
         fila_dict = {
             'CUENTA': patron if patron else '',
-            'CONCEPTO': concepto,
+            'CONCEPTO': concepto_formateado,
+            'concepto_raw': concepto,
         }
 
         monto_total_consolidado = 0.0
@@ -346,23 +370,8 @@ def generar_reporte_multiempresa(
             for kw in ['total', 'ventas a', 'utilidad', 'pérdida', 'netas', 'descuentos s/']
         )
 
-        # Identificar si es un total principal del esquema (Nivel 1)
-        es_total_principal = any(
-            kw in concepto.lower()
-            for kw in [
-                'ventas netas totales',
-                'total costo',
-                'total resultado bruto',
-                'total gastos',
-                'resultado antes de depreciacion',
-                'total depreciaciones',
-                'total costo integral de financiamiento',
-                'utilidad/perdida antes de impuestos',
-            ]
-        )
-
         fila_dict['es_total'] = es_subtotal_o_total or es_formula
-        fila_dict['es_total_principal'] = es_total_principal
+        fila_dict['outline_level'] = outline_lvl
         fila_dict['es_encabezado'] = (
             not patron and not es_formula and bool(concepto)
         )
@@ -372,40 +381,37 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- FORMATO DE TABLA INTERACTIVA CON FILTRADO DE NIVEL ---
+# --- FORMATO DE TABLA CON AGRUPADORES ---
 def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
     if df_er.empty:
         return
 
     df_disp = df_er.copy()
 
-    # Si se selecciona la vista "Resumida", se conservan sólo las filas de Totales Principales y Secciones
+    # Si se selecciona la vista resumida, sólo mostramos los totales de nivel superior (outline_level == 0)
     if nivel_detalle == "Resumido (Sólo Totales)":
-        df_disp = df_disp[
-            (df_disp['es_total_principal'] == True)
-            | (df_disp['es_encabezado'] == True)
-        ]
+        df_disp = df_disp[df_disp['outline_level'] == 0]
 
     def aplicar_estilo_finanzas(row):
         styles = [''] * len(row)
         es_total = row.get('es_total', False)
-        es_total_p = row.get('es_total_principal', False)
+        outline_lvl = row.get('outline_level', 0)
         es_encabezado = row.get('es_encabezado', False)
 
-        if es_total_p:
-            # Resaltado ejecutivo de Total Principal
+        if outline_lvl == 0 and es_total:
+            # Totales Principales en Negrita Resaltada
             styles = [
-                'font-weight: 800; background-color: #e2e8f0; color: #0f172a; border-top: 2px solid #475569; border-bottom: 2px double #0f172a;'
+                'font-weight: 800; background-color: #f1f5f9; color: #0f172a; border-top: 1.5px solid #475569; border-bottom: 2px double #0f172a;'
             ] * len(row)
         elif es_total:
-            # Resaltado de Subtotales
+            # Subtotales
             styles = [
-                'font-weight: 700; background-color: #f1f5f9; color: #1e293b; border-top: 1.5px solid #94a3b8;'
+                'font-weight: 700; background-color: #f8fafc; color: #1e293b; border-top: 1px solid #cbd5e1;'
             ] * len(row)
         elif es_encabezado:
-            # Títulos de Sección
+            # Títulos de sección
             styles = [
-                'font-weight: 700; background-color: #f8fafc; color: #0284c7; text-transform: uppercase;'
+                'font-weight: 700; background-color: #ffffff; color: #0284c7; text-transform: uppercase;'
             ] * len(row)
         else:
             styles = ['font-weight: 400; color: #334155;'] * len(row)
@@ -413,7 +419,7 @@ def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
         return styles
 
     df_clean = df_disp.drop(
-        columns=['es_total', 'es_total_principal', 'es_encabezado'],
+        columns=['es_total', 'outline_level', 'es_encabezado', 'concepto_raw'],
         errors='ignore',
     )
 
@@ -450,7 +456,7 @@ def renderizar_tabla_multiempresa(df_er, empresas, nivel_detalle="Detallado"):
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
-# --- EXPORTADOR A EXCEL CON AGRUPACIONES NATIVAS (AGRUPAMIENTO / ESQUEMA [+]) ---
+# --- EXPORTADOR A EXCEL ---
 def exportar_excel_con_agrupaciones_openpyxl(
     df_er, empresas, anio, mes, tipo='mes'
 ):
@@ -510,7 +516,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
 
     start_row = 4
     df_clean = df_er.drop(
-        columns=['es_total', 'es_total_principal', 'es_encabezado'],
+        columns=['es_total', 'outline_level', 'es_encabezado', 'concepto_raw'],
         errors='ignore',
     )
     headers = list(df_clean.columns)
@@ -528,13 +534,10 @@ def exportar_excel_con_agrupaciones_openpyxl(
     for r_i, row_data in df_er.iterrows():
         curr_row = start_row + 1 + r_i
         es_total = row_data.get('es_total', False)
-        es_total_p = row_data.get('es_total_principal', False)
+        outline_lvl = row_data.get('outline_level', 0)
         es_encabezado = row_data.get('es_encabezado', False)
 
-        # Configurar Agrupación / Esquema Nativo de Excel (+) y (-)
-        if not es_total_p and not es_encabezado:
-            ws.row_dimensions[curr_row].outlineLevel = 1
-            ws.row_dimensions[curr_row].hidden = False
+        ws.row_dimensions[curr_row].outlineLevel = outline_lvl
 
         for c_i, h_col in enumerate(headers, start=1):
             val = row_data[h_col]
@@ -545,7 +548,7 @@ def exportar_excel_con_agrupaciones_openpyxl(
             else:
                 cell.value = val
 
-            if es_total_p:
+            if outline_lvl == 0 and es_total:
                 cell.font = TOTAL_PRINCIPAL_FONT
                 cell.fill = TOTAL_PRINCIPAL_FILL
                 cell.border = TOTAL_BORDER
