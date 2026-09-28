@@ -46,9 +46,9 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO DE ID / CÓDIGOS A NOMBRE DE EMPRESA
+# MAPEO COMPLETO DE CÓDIGOS DE CONTPAQI (Tercer y Cuarto Segmento) A NOMBRE DE EMPRESA
 MAPEO_ID_EMPRESA = {
-    "0468": "CIVLAT", "002": "CIVLAT", "2": "CIVLAT",
+    "0468": "CIVLAT", "002": "CIVLAT", "2": "CIVLAT", "813": "EFCO", "0813": "EFCO",
     "2872": "SERVYRE", "019": "SERVYRE",
     "1626": "LIMPIESPIN", "003": "LIMPIESPIN",
     "1616": "LAITS", "004": "LAITS",
@@ -1189,7 +1189,7 @@ if estructura:
             subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
                 "👥 Amarre RH",
                 "💰 Amarre Ingresos",
-                "🔄 Amarre Intercos",
+                "🔄 Amarre Intercompañías",
                 "📑 Amarre I y G Intercos",
             ])
 
@@ -1208,10 +1208,22 @@ if estructura:
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
                 if todas_empresas_balanza:
-                    # Cargar los registros de balanza pestaña por pestaña exactamente igual que los Estados de Resultados
                     datos_empresas_recs = {}
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+
+                    # --- FUNCION AUXILIAR PARA EXTRAER EMPRESA ORIGEN DE CUALQUIER SEGMENTO ---
+                    def identificar_empresa_origen(cta_str, lista_disp):
+                        segs = cta_str.split('-')
+                        # Revisar segmento 3 y 4
+                        for s in segs[2:]:
+                            s_clean = s.strip()
+                            if s_clean in MAPEO_ID_EMPRESA:
+                                return MAPEO_ID_EMPRESA[s_clean]
+                            for ed in lista_disp:
+                                if s_clean == ed or s_clean.lstrip('0') == ed.lstrip('0'):
+                                    return ed
+                        return None
 
                     # --- TABLA 1: FACTURACIÓN ---
                     st.markdown("---")
@@ -1224,22 +1236,12 @@ if estructura:
                         for r in recs:
                             cta = r['cta_raw']
                             if cta.startswith("101-00004-") or cta.startswith("201-00002-") or cta.startswith("201-00004-"):
-                                segs = cta.split('-')
-                                if len(segs) >= 3:
-                                    sub_cta = segs[1]
-                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
-
-                                    if not emp_origen:
-                                        for eo in todas_empresas_balanza:
-                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
-                                                emp_origen = eo
-                                                break
-
-                                    if emp_origen and emp_origen in todas_empresas_balanza:
-                                        saldo_neto = r['deudor_f'] - r['acreedor_f']
-                                        if cta.startswith("201-"):
-                                            saldo_neto = -saldo_neto
-                                        matriz_fact.loc[emp_receptora, emp_origen] += saldo_neto
+                                emp_origen = identificar_empresa_origen(cta, todas_empresas_balanza)
+                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                    saldo_neto = r['deudor_f'] - r['acreedor_f']
+                                    if cta.startswith("201-"):
+                                        saldo_neto = -saldo_neto
+                                    matriz_fact.loc[emp_receptora, emp_origen] += saldo_neto
 
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
@@ -1255,30 +1257,59 @@ if estructura:
                         for r in recs:
                             cta = r['cta_raw']
                             if cta.startswith("101-00015-") or cta.startswith("202-00001-"):
-                                segs = cta.split('-')
-                                if len(segs) >= 3:
-                                    sub_cta = segs[1]
-                                    emp_origen = MAPEO_ID_EMPRESA.get(sub_cta, None)
-
-                                    if not emp_origen:
-                                        for eo in todas_empresas_balanza:
-                                            if sub_cta in eo or sub_cta.lstrip('0') in eo.lstrip('0'):
-                                                emp_origen = eo
-                                                break
-
-                                    if emp_origen and emp_origen in todas_empresas_balanza:
-                                        saldo_neto = r['deudor_f'] - r['acreedor_f']
-                                        if cta.startswith("202-"):
-                                            saldo_neto = -saldo_neto
-                                        matriz_prest.loc[emp_receptora, emp_origen] += saldo_neto
+                                emp_origen = identificar_empresa_origen(cta, todas_empresas_balanza)
+                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                    saldo_neto = r['deudor_f'] - r['acreedor_f']
+                                    if cta.startswith("202-"):
+                                        saldo_neto = -saldo_neto
+                                    matriz_prest.loc[emp_receptora, emp_origen] += saldo_neto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    st.success("✅ Matrices de Facturación y Préstamos actualizadas leyendo correctamente pestaña por pestaña desde la balanza mensual.")
+                    st.success("✅ Matrices de Facturación y Préstamos actualizadas exitosamente leyendo los segmentos de contraparte en las balanzas mensuales.")
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
                 st.info("Conciliación cruzada de Ingresos Intercos (Cuentas 411/441) vs Gastos y Costos Intercos (Cuenta 531).")
+
+                todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
+
+                if todas_empresas_balanza:
+                    datos_empresas_recs = {}
+                    for emp in todas_empresas_balanza:
+                        datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+
+                    def identificar_empresa_origen_ig(cta_str, lista_disp):
+                        segs = cta_str.split('-')
+                        for s in segs[2:]:
+                            s_clean = s.strip()
+                            if s_clean in MAPEO_ID_EMPRESA:
+                                return MAPEO_ID_EMPRESA[s_clean]
+                            for ed in lista_disp:
+                                if s_clean == ed or s_clean.lstrip('0') == ed.lstrip('0'):
+                                    return ed
+                        return None
+
+                    st.markdown("---")
+                    st.markdown("#### 🔵 3. Amarre de Ingresos / Gastos Intercompañías (Cuentas 411, 441 vs 531)")
+
+                    matriz_ig = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
+
+                    for emp_receptora in todas_empresas_balanza:
+                        recs = datos_empresas_recs[emp_receptora]
+                        for r in recs:
+                            cta = r['cta_raw']
+                            # Cuentas de Ingresos / Gastos intercos (ej. 411, 441, 531)
+                            if cta.startswith(("411-", "441-", "531-")):
+                                emp_origen = identificar_empresa_origen_ig(cta, todas_empresas_balanza)
+                                if emp_origen and emp_origen in todas_empresas_balanza:
+                                    # Saldo neto del mes o acumulado según prefieras (aquí usaremos cargos_m - abonos_m o saldo final)
+                                    monto = r['abonos_m'] - r['cargos_m'] if cta.startswith(("411-", "441-")) else r['cargos_m'] - r['abonos_m']
+                                    matriz_ig.loc[emp_receptora, emp_origen] += monto
+
+                    matriz_ig['TOTAL'] = matriz_ig.sum(axis=1)
+                    st.dataframe(matriz_ig.style.format("${:,.2f}"), use_container_width=True)
+                    st.success("✅ Matriz de Ingresos y Gastos Intercompañías generada correctamente.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
