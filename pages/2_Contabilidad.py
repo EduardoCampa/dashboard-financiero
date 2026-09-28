@@ -20,10 +20,47 @@ st.title("📊 Módulo Contable")
 
 PRESETS_FILE = "vistas_personalizadas_er.json"
 
+# ORDEN PREFERENTE DE EMPRESAS PARA EL MULTISELECT
+ORDEN_EMPRESAS_PRIORIDAD = [
+    "CIVLAT",
+    "SERVYRE",
+    "FERVIC",
+    "CIV",
+    "GPO SERVYRE",
+    "FGS",
+    "LATIN",
+    "EFCO",
+    "PESAZA",
+    "LIMPIESPIN",
+    "SERVYCARGO",
+    "CIVMEX",
+    "COMANA",
+    "PROINA",
+    "SEVILAT",
+    "IPV",
+    "SERSEÑAL",
+    "INMOBILIARIA",
+    "VIALTECNO",
+    "LABORATORIO",
+    "FPSB",
+    "SIGNAL",
+]
+
+
+def ordenar_empresas_segun_prioridad(lista_empresas):
+    def obtener_posicion(emp_nombre):
+        emp_clean = str(emp_nombre).strip().upper()
+        for idx, pref in enumerate(ORDEN_EMPRESAS_PRIORIDAD):
+            if pref == emp_clean or pref in emp_clean:
+                return idx
+        return 999
+
+    return sorted(lista_empresas, key=obtener_posicion)
+
 
 # --- GESTIÓN DE VISTAS GUARDADAS (PRESETS) ---
 def cargar_vistas_guardadas():
-    vistas_predeterminadas = {
+    vistas_predeterminados = {
         "📊 Resumen Ejecutivo": [
             "Ventas Netas Totales",
             "Total Costo",
@@ -33,45 +70,24 @@ def cargar_vistas_guardadas():
             "Total Depreciaciones Y Amortización",
             "Total Costo Integral de Financiamiento",
             "Utilidad/Perdida antes de Impuestos",
-        ],
-        "📈 Detalle de Ingresos": [
-            "Ventas a Terceros",
-            "Ventas Intercompañías",
-            "Total Ventas",
-            "Total Descuentos S/Ventas",
-            "Ventas Netas Totales",
-        ],
-        "🏭 Costos y Gastos": [
-            "Costo Directos Planta (510)",
-            "Total Costo Directos Planta",
-            "Total Costo Indirecto De Planta",
-            "Total Costo Directos Obra",
-            "Total Costo General Planta",
-            "Total Costo",
-            "Gastos de Administración (600)",
-            "Total Gastos de Administración",
-            "Total Gastos de Ventas",
-            "Total Gastos",
-        ],
+        ]
     }
 
     if os.path.exists(PRESETS_FILE):
         try:
             with open(PRESETS_FILE, "r", encoding="utf-8") as f:
                 guardadas = json.load(f)
-                vistas_predeterminadas.update(guardadas)
+                vistas_predeterminados.update(guardadas)
         except Exception:
             pass
 
-    return vistas_predeterminadas
+    return vistas_predeterminados
 
 
 def guardar_nueva_vista(nombre_vista, lista_conceptos):
     vistas = cargar_vistas_guardadas()
-    # No sobrescribir las predeterminadas si tienen íconos especiales, agregar como usuario
     vistas[f"⭐ {nombre_vista}"] = lista_conceptos
 
-    # Guardar solo las personalizadas de usuario
     custom_vistas = {k: v for k, v in vistas.items() if k.startswith("⭐ ")}
     with open(PRESETS_FILE, "w", encoding="utf-8") as f:
         json.dump(custom_vistas, f, ensure_ascii=False, indent=2)
@@ -108,7 +124,9 @@ def obtener_lista_empresas(ruta):
     sheets = xls.sheet_names
     if len(sheets) > 1 and "Hoja1" in sheets:
         sheets.remove("Hoja1")
-    return sheets
+
+    # Ordenar las empresas según el orden solicitado por el usuario
+    return ordenar_empresas_segun_prioridad(sheets)
 
 
 @st.cache_data(ttl=300)
@@ -441,15 +459,12 @@ def renderizar_tabla_interactiva_agrupada(
     if df_er.empty:
         return
 
-    # Si hay una lista de conceptos seleccionados, FILTRAR la tabla para mostrar SOLO ESOS
     df_disp = df_er.copy()
     if conceptos_a_mostrar and "TODOS" not in conceptos_a_mostrar:
         df_disp = df_disp[df_disp['CONCEPTO'].isin(conceptos_a_mostrar)]
 
     if df_disp.empty:
-        st.warning(
-            "No se encontraron renglones para la selección actual. Intenta seleccionar más conceptos."
-        )
+        st.warning("No hay rubros seleccionados para mostrar.")
         return
 
     cols_empresas = list(empresas)
@@ -743,7 +758,7 @@ if estructura:
 
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
 
-    col_a, col_m, col_e = st.columns([1, 1, 2])
+    col_a, col_m = st.columns([1, 1])
 
     with col_a:
         anio_sel = st.selectbox("Año:", anios_disponibles)
@@ -761,13 +776,28 @@ if estructura:
         estructura[0]['ruta'],
     )
 
+    # Empresas ordenadas según la prioridad estricta definida por el usuario
     lista_empresas = obtener_lista_empresas(ruta_balanza)
 
-    with col_e:
+    col_emp1, col_emp2 = st.columns([1, 3])
+    with col_emp1:
+        st.write("")
+        st.write("")
+        seleccionar_todas_emp = st.checkbox(
+            "☑️ Seleccionar Todas las Empresas", value=False
+        )
+
+    with col_emp2:
+        default_empresas = (
+            lista_empresas
+            if seleccionar_todas_emp
+            else ([lista_empresas[0]] if lista_empresas else [])
+        )
+
         empresas_seleccionadas = st.multiselect(
             "Empresa(s):",
             lista_empresas,
-            default=[lista_empresas[0]] if lista_empresas else [],
+            default=default_empresas,
         )
 
     if empresas_seleccionadas:
@@ -785,10 +815,12 @@ if estructura:
 
         col_v1, col_v2 = st.columns([1.5, 3])
 
-        opciones_plantillas = (
-            list(vistas_disponibles.keys())
-            + ["🔍 Detalle Completo (Todas las Cuentas)", "✏️ Personalizada (Selección Libre)"]
-        )
+        # SOLO LAS 3 OPCIONES SOLICITADAS + CUALQUIER VISTA GUARDADA CON ESTRELLA ⭐
+        opciones_plantillas = [
+            "📊 Resumen Ejecutivo",
+            "🔍 Detalle Completo",
+            "✏️ Personalizada",
+        ] + [k for k in vistas_disponibles.keys() if k.startswith("⭐ ")]
 
         with col_v1:
             plantilla_sel = st.selectbox(
@@ -797,13 +829,13 @@ if estructura:
 
         conceptos_seleccionados = []
 
-        if plantilla_sel == "🔍 Detalle Completo (Todas las Cuentas)":
+        if plantilla_sel == "🔍 Detalle Completo":
             conceptos_seleccionados = ["TODOS"]
         elif plantilla_sel in vistas_disponibles:
             conceptos_seleccionados = vistas_disponibles[plantilla_sel]
             with col_v2:
                 st.info(
-                    f"Mostrando **{len(conceptos_seleccionados)}** rubros predefinidos de la plantilla **'{plantilla_sel}'**."
+                    f"Mostrando **{len(conceptos_seleccionados)}** rubros predefinidos."
                 )
         else:
             with col_v2:
@@ -819,13 +851,13 @@ if estructura:
                     ],
                 )
 
-                # Opción para GUARDAR una nueva plantilla de selección
+                # Guardar nuevas plantillas personalizadas
                 with st.expander("💾 Guardar esta selección como nueva vista"):
                     col_g1, col_g2 = st.columns([2, 1])
                     with col_g1:
                         nombre_nueva_vista = st.text_input(
                             "Nombre de la Vista:",
-                            placeholder="Ej. Mi Reporte Semanal",
+                            placeholder="Ej. Mi Filtro Especial",
                         )
                     with col_g2:
                         st.write("")
