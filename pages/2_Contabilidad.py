@@ -375,9 +375,9 @@ def generar_reporte_multiempresa(
     return pd.DataFrame(reporte)
 
 
-# --- TABLA INTERACTIVA HTML/JS CON DESPLEGABLE [+] Y [-] REAL ---
+# --- TABLA INTERACTIVA CON CONTROL DE DESPLIEGUE PERSONALIZADO ---
 def renderizar_tabla_interactiva_agrupada(
-    df_er, empresas, estado_inicial="colapsado"
+    df_er, empresas, grupos_desplegados_sel=None
 ):
     if df_er.empty:
         return
@@ -392,26 +392,23 @@ def renderizar_tabla_interactiva_agrupada(
     if incluir_consolidado:
         cols_header.extend(['TOTAL CONSOLIDADO', '% TOTAL'])
 
-    display_style = "none" if estado_inicial == "colapsado" else "table-row"
-    btn_icon = "+" if estado_inicial == "colapsado" else "−"
-
-    html_code = f"""
+    html_code = """
     <!DOCTYPE html>
     <html>
     <head>
     <style>
-        body {{
+        body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: transparent;
             margin: 0;
             padding: 0;
-        }}
-        .toolbar {{
+        }
+        .toolbar {
             margin-bottom: 12px;
             display: flex;
             gap: 10px;
-        }}
-        .btn-toggle {{
+        }
+        .btn-toggle {
             background-color: #f1f5f9;
             color: #0f172a;
             border: 1px solid #cbd5e1;
@@ -421,12 +418,12 @@ def renderizar_tabla_interactiva_agrupada(
             border-radius: 6px;
             cursor: pointer;
             transition: all 0.2s ease;
-        }}
-        .btn-toggle:hover {{
+        }
+        .btn-toggle:hover {
             background-color: #e2e8f0;
             border-color: #94a3b8;
-        }}
-        .tree-table {{
+        }
+        .tree-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
@@ -435,8 +432,8 @@ def renderizar_tabla_interactiva_agrupada(
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }}
-        .tree-table th {{
+        }
+        .tree-table th {
             background-color: #1e293b;
             color: #ffffff;
             font-weight: 700;
@@ -445,38 +442,38 @@ def renderizar_tabla_interactiva_agrupada(
             border: 1px solid #334155;
             font-size: 12px;
             text-transform: uppercase;
-        }}
-        .tree-table td {{
+        }
+        .tree-table td {
             padding: 7px 12px;
             border-bottom: 1px solid #e2e8f0;
             border-right: 1px solid #f1f5f9;
             color: #334155;
-        }}
-        .group-header {{
+        }
+        .group-header {
             background-color: #f8fafc;
             font-weight: 700;
             color: #0284c7;
             cursor: pointer;
             user-select: none;
             transition: background-color 0.15s ease;
-        }}
-        .group-header:hover {{
+        }
+        .group-header:hover {
             background-color: #f1f5f9;
-        }}
-        .grand-total {{
+        }
+        .grand-total {
             background-color: #e2e8f0;
             font-weight: 800;
             color: #0f172a;
             border-top: 2px solid #475569;
             border-bottom: 2px double #0f172a;
-        }}
-        .detail-row {{
+        }
+        .detail-row {
             background-color: #ffffff;
-        }}
-        .detail-row:hover {{
+        }
+        .detail-row:hover {
             background-color: #f8fafc;
-        }}
-        .toggle-btn {{
+        }
+        .toggle-btn {
             display: inline-block;
             width: 18px;
             height: 18px;
@@ -488,47 +485,47 @@ def renderizar_tabla_interactiva_agrupada(
             border-radius: 4px;
             margin-right: 8px;
             font-size: 12px;
-        }}
-        .indent-cell {{
+        }
+        .indent-cell {
             padding-left: 32px !important;
             color: #475569;
-        }}
-        .num-cell {{
+        }
+        .num-cell {
             text-align: right;
             font-variant-numeric: tabular-nums;
-        }}
-        .text-cell {{
+        }
+        .text-cell {
             text-align: left;
-        }}
+        }
     </style>
     <script>
-        function toggleGroup(grpId) {{
+        function toggleGroup(grpId) {
             var rows = document.getElementsByClassName(grpId);
             var icon = document.getElementById('icon-' + grpId);
             if (!rows || rows.length === 0) return;
             
             var isHidden = (rows[0].style.display === "none");
-            for (var i = 0; i < rows.length; i++) {{
+            for (var i = 0; i < rows.length; i++) {
                 rows[i].style.display = isHidden ? "table-row" : "none";
-            }}
-            if (icon) {{
+            }
+            if (icon) {
                 icon.innerText = isHidden ? "−" : "+";
-            }}
-        }}
+            }
+        }
 
-        function expandAll() {{
+        function expandAll() {
             var detailRows = document.querySelectorAll('.detail-row');
             var icons = document.querySelectorAll('.toggle-btn');
-            detailRows.forEach(function(row) {{ row.style.display = 'table-row'; }});
-            icons.forEach(function(icon) {{ icon.innerText = '−'; }});
-        }}
+            detailRows.forEach(function(row) { row.style.display = 'table-row'; });
+            icons.forEach(function(icon) { icon.innerText = '−'; });
+        }
 
-        function collapseAll() {{
+        function collapseAll() {
             var detailRows = document.querySelectorAll('.detail-row');
             var icons = document.querySelectorAll('.toggle-btn');
-            detailRows.forEach(function(row) {{ row.style.display = 'none'; }});
-            icons.forEach(function(icon) {{ icon.innerText = '+'; }});
-        }}
+            detailRows.forEach(function(row) { row.style.display = 'none'; });
+            icons.forEach(function(icon) { icon.innerText = '+'; });
+        }
     </script>
     </head>
     <body>
@@ -545,7 +542,6 @@ def renderizar_tabla_interactiva_agrupada(
         html_code += f"<th>{h}</th>"
     html_code += "</tr></thead><tbody>"
 
-    # Construir filas agrupadas
     grouped_df = df_er.groupby('group_id', sort=False)
 
     for grp_id, group_rows in grouped_df:
@@ -556,6 +552,18 @@ def renderizar_tabla_interactiva_agrupada(
             h_data = header_row.iloc[0]
             es_tot = h_data.get('es_total', False)
             outline_lvl = h_data.get('outline_level', 0)
+            concepto_text = h_data.get('CONCEPTO', '')
+
+            # Determinar si este grupo inicia ABIERTO o CERRADO según la selección del usuario
+            esta_desplegado = False
+            if grupos_desplegados_sel is not None:
+                esta_desplegado = (
+                    "TODOS" in grupos_desplegados_sel
+                    or concepto_text in grupos_desplegados_sel
+                )
+
+            disp_style = "table-row" if esta_desplegado else "none"
+            btn_icon = "−" if esta_desplegado else "+"
 
             row_class = (
                 "grand-total"
@@ -573,7 +581,6 @@ def renderizar_tabla_interactiva_agrupada(
                 f"<td class='text-cell'>{h_data.get('CUENTA', '')}</td>"
             )
 
-            concepto_text = h_data.get('CONCEPTO', '')
             if has_children:
                 html_code += f"<td class='text-cell'><span class='toggle-btn' id='icon-{grp_id}'>{btn_icon}</span><strong>{concepto_text}</strong></td>"
             else:
@@ -611,45 +618,44 @@ def renderizar_tabla_interactiva_agrupada(
 
             html_code += "</tr>"
 
-        # Renderear filas hijas agrupadas
-        for _, d_data in detail_rows.iterrows():
-            html_code += f"<tr class='detail-row {grp_id}' style='display: {display_style};'>"
-            html_code += (
-                f"<td class='text-cell'>{d_data.get('CUENTA', '')}</td>"
-            )
-            html_code += f"<td class='text-cell indent-cell'>{d_data.get('CONCEPTO', '')}</td>"
+            for _, d_data in detail_rows.iterrows():
+                html_code += f"<tr class='detail-row {grp_id}' style='display: {disp_style};'>"
+                html_code += (
+                    f"<td class='text-cell'>{d_data.get('CUENTA', '')}</td>"
+                )
+                html_code += f"<td class='text-cell indent-cell'>{d_data.get('CONCEPTO', '')}</td>"
 
-            for e in cols_empresas:
-                val_m = d_data.get(e, None)
-                val_pct = d_data.get(f"% {e}", None)
-                m_str = (
-                    f"${val_m:,.2f}"
-                    if pd.notnull(val_m) and str(val_m) != 'None'
-                    else ""
-                )
-                p_str = (
-                    f"{val_pct:.1f}%"
-                    if pd.notnull(val_pct) and str(val_pct) != 'None'
-                    else ""
-                )
-                html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
+                for e in cols_empresas:
+                    val_m = d_data.get(e, None)
+                    val_pct = d_data.get(f"% {e}", None)
+                    m_str = (
+                        f"${val_m:,.2f}"
+                        if pd.notnull(val_m) and str(val_m) != 'None'
+                        else ""
+                    )
+                    p_str = (
+                        f"{val_pct:.1f}%"
+                        if pd.notnull(val_pct) and str(val_pct) != 'None'
+                        else ""
+                    )
+                    html_code += f"<td class='num-cell'>{m_str}</td><td class='num-cell'>{p_str}</td>"
 
-            if incluir_consolidado:
-                val_tot = d_data.get('TOTAL CONSOLIDADO', None)
-                val_pct_tot = d_data.get('% TOTAL', None)
-                tot_str = (
-                    f"${val_tot:,.2f}"
-                    if pd.notnull(val_tot) and str(val_tot) != 'None'
-                    else ""
-                )
-                pct_tot_str = (
-                    f"{val_pct_tot:.1f}%"
-                    if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
-                    else ""
-                )
-                html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
+                if incluir_consolidado:
+                    val_tot = d_data.get('TOTAL CONSOLIDADO', None)
+                    val_pct_tot = d_data.get('% TOTAL', None)
+                    tot_str = (
+                        f"${val_tot:,.2f}"
+                        if pd.notnull(val_tot) and str(val_tot) != 'None'
+                        else ""
+                    )
+                    pct_tot_str = (
+                        f"{val_pct_tot:.1f}%"
+                        if pd.notnull(val_pct_tot) and str(val_pct_tot) != 'None'
+                        else ""
+                    )
+                    html_code += f"<td class='num-cell'>{tot_str}</td><td class='num-cell'>{pct_tot_str}</td>"
 
-            html_code += "</tr>"
+                html_code += "</tr>"
 
     html_code += "</tbody></table></body></html>"
 
@@ -799,7 +805,7 @@ plantilla = cargar_plantilla_formato()
 if estructura:
     anios_disponibles = sorted(list(set(x['anio'] for x in estructura)), reverse=True)
 
-    col_a, col_m, col_e, col_v = st.columns([1, 1, 2, 2])
+    col_a, col_m, col_e = st.columns([1, 1, 2])
 
     with col_a:
         anio_sel = st.selectbox("Año:", anios_disponibles)
@@ -826,14 +832,41 @@ if estructura:
             default=[lista_empresas[0]] if lista_empresas else [],
         )
 
-    with col_v:
-        estado_vista = st.radio(
-            "Estado Inicial:",
-            ["Colapsado (Solo Totales)", "Desplegado (Todas las Cuentas)"],
-            horizontal=True,
-        )
-
     if empresas_seleccionadas:
+        # Generar vista previa previa para extraer los nombres de los grupos
+        df_preview = generar_reporte_multiempresa(
+            ruta_balanza, empresas_seleccionadas, plantilla, tipo='mes'
+        )
+        lista_grupos_unicos = []
+        if not df_preview.empty:
+            grupos_headers = df_preview[df_preview['is_detail'] == False]
+            lista_grupos_unicos = [
+                g for g in grupos_headers['CONCEPTO'].unique() if g
+            ]
+
+        st.markdown("---")
+        col_m1, col_m2 = st.columns([1, 3])
+        with col_m1:
+            modo_vista = st.radio(
+                "Modo de Apertura Inicial:",
+                ["📁 Todos Colapsados", "📂 Todos Desplegados", "🎯 Selección Personalizada"],
+            )
+
+        grupos_seleccionados = []
+        if modo_vista == "📂 Todos Desplegados":
+            grupos_seleccionados = ["TODOS"]
+        elif modo_vista == "📁 Todos Colapsados":
+            grupos_seleccionados = []
+        else:
+            with col_m2:
+                grupos_seleccionados = st.multiselect(
+                    "Elige qué rubros deseas ver abiertos por defecto:",
+                    lista_grupos_unicos,
+                    default=(
+                        [lista_grupos_unicos[0]] if lista_grupos_unicos else []
+                    ),
+                )
+
         tab_balanzas, tab_er_mes, tab_er_acum = st.tabs([
             "📑 Balanzas de Comprobación",
             "📈 Estado de Resultados (MES)",
@@ -866,15 +899,10 @@ if estructura:
                     )
 
                 if not df_er_mes.empty:
-                    st_estado = (
-                        "colapsado"
-                        if "Colapsado" in estado_vista
-                        else "desplegado"
-                    )
                     renderizar_tabla_interactiva_agrupada(
                         df_er_mes,
                         empresas_seleccionadas,
-                        estado_inicial=st_estado,
+                        grupos_desplegados_sel=grupos_seleccionados,
                     )
 
                     excel_mes = exportar_excel_con_agrupaciones_openpyxl(
@@ -909,15 +937,10 @@ if estructura:
                     )
 
                 if not df_er_acum.empty:
-                    st_estado = (
-                        "colapsado"
-                        if "Colapsado" in estado_vista
-                        else "desplegado"
-                    )
                     renderizar_tabla_interactiva_agrupada(
                         df_er_acum,
                         empresas_seleccionadas,
-                        estado_inicial=st_estado,
+                        grupos_desplegados_sel=grupos_seleccionados,
                     )
 
                     excel_acum = exportar_excel_con_agrupaciones_openpyxl(
