@@ -832,7 +832,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: INGRESOS Y GASTOS (I y G Intercos) ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas: Ingresos (4*) vs Costos/Gastos (5* / 6*)", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS INTERCOMPAÑÍAS (I y G)", f"Periodo: {mes}/{anio} | Cuentas: Ingresos (4*) con contraparte de empresa", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1074,8 +1074,8 @@ if estructura:
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre de Ingresos VS Costos y Gastos Intercompañías (Ingresos 4* vs Costos/Gastos 5* y 6*)")
-                st.info("Compara lo que una empresa factura como Ingreso Intercompañía (buscando el código de contraparte en el segmento de la cuenta 4*) contra lo que la receptora registra en Costos (5*) o Gastos (6*).")
+                st.markdown("### 📑 Amarre de Ingresos Intercompañías (Cuentas 4* con código de contraparte)")
+                st.info("Suma el saldo final de las cuentas de ingresos (4*) que identifican a la empresa contraparte en su estructura, igual que en tu tabla dinámica de Excel.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1096,8 +1096,8 @@ if estructura:
                                 emp_receptora = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_receptora and emp_receptora in todas_empresas_balanza and emp_receptora != emp_facturadora:
-                                    # En cuentas acreedoras de ingresos, el saldo neto real de facturación es el acreedor neto
-                                    monto_ingreso = r['acreedor_f'] - r['deudor_f']
+                                    # Tomamos el saldo neto en positivo igual que en la tabla dinámica de Excel
+                                    monto_ingreso = abs(r['acreedor_f'] - r['deudor_f']) if (r['acreedor_f'] - r['deudor_f']) != 0 else abs(r['saldo_final'])
                                     matriz_ig.loc[emp_facturadora, emp_receptora] += monto_ingreso
 
                     matriz_ig['TOTAL'] = matriz_ig.sum(axis=1)
@@ -1106,7 +1106,6 @@ if estructura:
                     st.dataframe(matriz_ig.style.format("${:,.2f}"), use_container_width=True)
 
                     st.markdown("---")
-                    # Botón general para descargar el reporte ejecutivo completo (Facturación, Préstamos e I y G Intercos)
                     excel_todos = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, matriz_ig, anio_sel, mes_sel)
                     st.download_button(
                         label="📥 Descargar Reporte Ejecutivo Completo (Facturación, Préstamos y I y G) en Excel",
@@ -1115,6 +1114,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo de I y G Intercos integrado con éxito y disponible en el reporte ejecutivo en Excel.")
+                    st.success("✅ Módulo de I y G Intercos ajustado al formato de tus tablas dinámicas en positivo.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
