@@ -930,7 +930,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos originales (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con resta neta estándar (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -984,9 +984,8 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
+                                    # Usar estrictamente la resta neta Deudor F - Acreedor F para absolutamente todas las cuentas
                                     monto = r['saldo_final']
-                                    if cta.startswith("202-00001") or "202-" in cta:
-                                        monto = r['acreedor_f'] - r['deudor_f']
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
@@ -1036,6 +1035,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Cruce de Préstamos restaurado con la presentación original en negativo para pasivos.")
+                    st.success("✅ Cruce de Préstamos corregido aplicando única y exclusivamente `Deudor F - Acreedor F`.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
