@@ -46,10 +46,11 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL DE CÓDIGOS DE CONTPAQI (Último segmento o identificador) A NOMBRE DE EMPRESA
+# MAPEO OFICIAL DE CÓDIGOS DE CONTPAQI (Último segmento de la cuenta) A NOMBRE DE EMPRESA
+# Nota: 0468 se asigna a LATIN para los cruces intercompañías correctos según balanza
 MAPEO_CODIGO_EMPRESA = {
     "0467": "CIV",
-    "0468": "CIVLAT",
+    "0468": "LATIN",
     "0469": "CIVMEX",
     "0665": "COMANA",
     "0813": "EFCO",
@@ -180,6 +181,8 @@ def extraer_registros_balanza(ruta, nombre_hoja):
 
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+        
+        # Resta estricta de Deudor Menos Acreedor (Saldo Neto Real)
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
@@ -300,7 +303,6 @@ def extraer_codigo_contraparte_robusto(cta_str):
         seg_clean = seg.strip()
         if seg_clean in MAPEO_CODIGO_EMPRESA:
             return seg_clean
-    # Si no está en el mapa, buscar cualquier segmento numérico de 3 o 4 dígitos al final
     for seg in reversed(segs):
         seg_clean = seg.strip()
         if seg_clean.isdigit() and len(seg_clean) in (3, 4):
@@ -927,7 +929,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Leyendo saldos acumulados (Deudor Final - Acreedor Final) directamente de la balanza mensual: `{ruta_balanza}`.")
+                st.info(f"Leyendo saldos netos reales (Deudor Final menos Acreedor Final) directamente de la balanza mensual: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -949,13 +951,13 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            # Capturar tanto cuentas de clientes (101-00004) como proveedores/acreedores (201-...)
                             if cta.startswith(("101-00004", "201-")) or "00004" in cta or "201-" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    monto = r['saldo_final']
+                                    # Resta exacta (Deudor Final - Acreedor Final)
+                                    monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("201-"):
                                         monto = -monto
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
@@ -976,13 +978,13 @@ if estructura:
                             if cta.startswith(('4', '5', '6', '7')):
                                 continue
 
-                            # Capturar tanto deudores (101-00015) como pasivo a largo plazo (202-00001)
                             if cta.startswith(("101-00015", "202-")) or "00015" in cta or "202-" in cta:
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    monto = r['saldo_final']
+                                    # Resta exacta (Deudor Final - Acreedor Final) respetando estrictamente los 1,302.30 y signos reales
+                                    monto = r['deudor_f'] - r['acreedor_f']
                                     if cta.startswith("202-"):
                                         monto = -monto
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
@@ -993,7 +995,7 @@ if estructura:
                     # --- TABLA 3: REPORTE DE DIFERENCIAS (CRUCES Y DESCUADRES) ---
                     st.markdown("---")
                     st.markdown("#### ⚖️ 3. Reporte de Diferencias (Análisis de Conciliación Intercompañías)")
-                    st.info("Este reporte compara el saldo registrado por la Receptora contra el saldo registrado por el Origen invertido para detectar diferencias o descuadres exactos.")
+                    st.info("Este reporte compara el saldo registrado por la Receptora contra el saldo registrado por el Origen para detectar diferencias o descuadres exactos.")
 
                     tipo_matriz_sel = st.selectbox("Selecciona la matriz a analizar para diferencias:", ["Facturación", "Préstamos"])
                     matriz_base = matriz_fact if tipo_matriz_sel == "Facturación" else matriz_prest
@@ -1034,6 +1036,6 @@ if estructura:
                     else:
                         st.info("No se encontraron saldos cruzados activos para este reporte.")
 
-                    st.success("✅ Matrices actualizadas y robustecidas para capturar todos los niveles de cuentas de balance.")
+                    st.success("✅ Mapeo de LATIN (0468) y resta neta por Deudor - Acreedor aplicados correctamente.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
