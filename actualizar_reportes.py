@@ -2,7 +2,7 @@ import os
 import subprocess
 
 # Ruta de la carpeta compartida en red
-carpeta_red = r"\\CONTPAQ\Reportes"
+carpeta_red = r"\\CONTPAQ\Reportes\ARCHIVOS PROG"
 
 def actualizar_reportes_red():
     print(f"Conectando a la carpeta de red: {carpeta_red}...")

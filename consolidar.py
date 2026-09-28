@@ -2,7 +2,7 @@ import os
 import pandas as pd
 
 # Rutas de las carpetas
-carpeta_origen = r"\\CONTPAQ\Reportes"  
+carpeta_origen = r"\\CONTPAQ\Reportes\ARCHIVOS PROG"  
 carpeta_destino = r"C:\Users\User\Documents\GitHub\dashboard-financiero"
 archivo_salida = os.path.join(carpeta_destino, "Consolidado_Master.xlsx")
 
