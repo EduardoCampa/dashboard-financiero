@@ -754,12 +754,12 @@ def exportar_excel_con_agrupaciones_openpyxl(
     return output.getvalue()
 
 
-def exportar_excel_matriz_prestamos(df_matriz, anio, mes):
+def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, anio, mes):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "AMARRE_PRESTAMOS"
-    ws.views.sheetView[0].showGridLines = True
+    
+    # Eliminar hoja por defecto para crear nuestras dos hojas limpias
+    default_sheet = wb.active
 
     TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
     SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
@@ -778,33 +778,35 @@ def exportar_excel_matriz_prestamos(df_matriz, anio, mes):
         left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0')
     )
 
-    ws.cell(row=1, column=1, value="REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS INTERCOMPAÑÍAS").font = TITLE_FONT
-    ws.cell(row=2, column=1, value=f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)").font = SUBTITLE_FONT
+    # --- HOJA 1: FACTURACIÓN ---
+    ws1 = wb.create_sheet(title="1. Facturación")
+    ws1.views.sheetView[0].showGridLines = True
+
+    ws1.cell(row=1, column=1, value="REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN").font = TITLE_FONT
+    ws1.cell(row=2, column=1, value=f"Periodo: {mes}/{anio} | Cuentas: Clientes (101-00004) y Proveedores (201)").font = SUBTITLE_FONT
 
     start_row = 4
-    headers = ["Empresa Receptora \\ Origen"] + list(df_matriz.columns)
+    headers_fact = ["Empresa Receptora \\ Origen"] + list(df_fact.columns)
 
-    for c_idx, h_text in enumerate(headers, start=1):
-        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+    for c_idx, h_text in enumerate(headers_fact, start=1):
+        cell = ws1.cell(row=start_row, column=c_idx, value=h_text)
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    ws.row_dimensions[start_row].height = 28
+    ws1.row_dimensions[start_row].height = 28
 
-    for r_i, (emp_idx, row_data) in enumerate(df_matriz.iterrows()):
+    for r_i, (emp_idx, row_data) in enumerate(df_fact.iterrows()):
         curr_row = start_row + 1 + r_i
-        
-        # Etiqueta de la empresa receptora
-        cell_emp = ws.cell(row=curr_row, column=1, value=emp_idx)
+        cell_emp = ws1.cell(row=curr_row, column=1, value=emp_idx)
         cell_emp.font = TOTAL_FONT if emp_idx == 'TOTAL' else REGULAR_FONT
         cell_emp.fill = TOTAL_FILL if emp_idx == 'TOTAL' else PatternFill(fill_type=None)
         cell_emp.border = TOTAL_BORDER if emp_idx == 'TOTAL' else THIN_BORDER
         cell_emp.alignment = Alignment(horizontal="left", vertical="center")
 
-        for c_i, col_name in enumerate(df_matriz.columns, start=2):
+        for c_i, col_name in enumerate(df_fact.columns, start=2):
             val = row_data[col_name]
-            cell = ws.cell(row=curr_row, column=c_i)
+            cell = ws1.cell(row=curr_row, column=c_i)
             cell.value = val if pd.notnull(val) else 0.0
 
             if emp_idx == 'TOTAL' or col_name == 'TOTAL':
@@ -818,12 +820,60 @@ def exportar_excel_matriz_prestamos(df_matriz, anio, mes):
             cell.alignment = Alignment(horizontal="right", vertical="center")
             cell.number_format = '$#,##0.00'
 
-    for col in ws.columns:
+    for col in ws1.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+        ws1.column_dimensions[col_letter].width = max(max_len + 3, 14)
+    ws1.column_dimensions['A'].width = 26
 
-    ws.column_dimensions['A'].width = 26
+    # --- HOJA 2: PRÉSTAMOS ---
+    ws2 = wb.create_sheet(title="2. Préstamos")
+    ws2.views.sheetView[0].showGridLines = True
+
+    ws2.cell(row=1, column=1, value="REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS").font = TITLE_FONT
+    ws2.cell(row=2, column=1, value=f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)").font = SUBTITLE_FONT
+
+    for c_idx, h_text in enumerate(headers_fact, start=1):
+        cell = ws2.cell(row=start_row, column=c_idx, value=h_text)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws2.row_dimensions[start_row].height = 28
+
+    for r_i, (emp_idx, row_data) in enumerate(df_prest.iterrows()):
+        curr_row = start_row + 1 + r_i
+        cell_emp = ws2.cell(row=curr_row, column=1, value=emp_idx)
+        cell_emp.font = TOTAL_FONT if emp_idx == 'TOTAL' else REGULAR_FONT
+        cell_emp.fill = TOTAL_FILL if emp_idx == 'TOTAL' else PatternFill(fill_type=None)
+        cell_emp.border = TOTAL_BORDER if emp_idx == 'TOTAL' else THIN_BORDER
+        cell_emp.alignment = Alignment(horizontal="left", vertical="center")
+
+        for c_i, col_name in enumerate(df_prest.columns, start=2):
+            val = row_data[col_name]
+            cell = ws2.cell(row=curr_row, column=c_i)
+            cell.value = val if pd.notnull(val) else 0.0
+
+            if emp_idx == 'TOTAL' or col_name == 'TOTAL':
+                cell.font = TOTAL_FONT
+                cell.fill = TOTAL_FILL
+                cell.border = TOTAL_BORDER
+            else:
+                cell.font = REGULAR_FONT
+                cell.border = THIN_BORDER
+
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.number_format = '$#,##0.00'
+
+    for col in ws2.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws2.column_dimensions[col_letter].width = max(max_len + 3, 14)
+    ws2.column_dimensions['A'].width = 26
+
+    # Remover la hoja por defecto vacía si existe
+    if default_sheet in wb.worksheets:
+        wb.remove(default_sheet)
 
     wb.save(output)
     return output.getvalue()
@@ -999,7 +1049,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos originales (`Deudor F - Acreedor F`): `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con saldos netos originales: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1032,6 +1082,7 @@ if estructura:
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
 
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
+                    matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
                     st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
 
                     # --- TABLA 2: PRÉSTAMOS (101-00015 VS 202-00001) ---
@@ -1058,21 +1109,20 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                    
-                    # Fila de totales por columna (Origen)
                     matriz_prest.loc['TOTAL'] = matriz_prest.sum(axis=0)
 
                     st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
-                    # Botón de Exportación a Reporte Ejecutivo en Excel
-                    excel_prestamos = exportar_excel_matriz_prestamos(matriz_prest, anio_sel, mes_sel)
+                    st.markdown("---")
+                    # Botón único para descargar el Reporte Ejecutivo con Ambas Tablas en Excel
+                    excel_ambas = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, anio_sel, mes_sel)
                     st.download_button(
-                        label="📥 Descargar Reporte Ejecutivo de Préstamos en Excel",
-                        data=excel_prestamos,
-                        file_name=f"Reporte_Ejecutivo_Prestamos_Intercompañias_{mes_sel}_{anio_sel}.xlsx",
+                        label="📥 Descargar Reporte Ejecutivo (Facturación y Préstamos) en Excel",
+                        data=excel_ambas,
+                        file_name=f"Reporte_Ejecutivo_Intercompañias_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo actualizado con reporte ejecutivo y exportación en Excel.")
+                    st.success("✅ Módulo actualizado con exportación ejecutiva multihoja (Facturación y Préstamos).")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
