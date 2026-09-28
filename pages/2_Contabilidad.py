@@ -830,9 +830,9 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
     ws2 = wb.create_sheet(title="2. Préstamos")
     poblar_hoja_excel(ws2, "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS", f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)", df_prest)
 
-    # --- HOJA 3: INGRESOS Y GASTOS (I y G Intercos) ---
+    # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS INTERCOMPAÑÍAS (I y G)", f"Periodo: {mes}/{anio} | Cuentas: Ingresos (4*) con contraparte de empresa", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas 4* (Ingresos) vs 5* y 6* (Costos/Gastos con subniveles)", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1045,7 +1045,6 @@ if estructura:
 
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
-                    st.dataframe(matriz_fact.style.format("${:,.2f}"), use_container_width=True)
 
                     # --- TABLA 2: PRÉSTAMOS (101-00015 VS 202-00001) ---
                     st.markdown("---")
@@ -1071,11 +1070,10 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                    st.dataframe(matriz_prest.style.format("${:,.2f}"), use_container_width=True)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre de Ingresos Intercompañías (Cuentas 4* con código de contraparte)")
-                st.info("Suma el saldo final de las cuentas de ingresos (4*) que identifican a la empresa contraparte en su estructura, igual que en tu tabla dinámica de Excel.")
+                st.markdown("### 📑 Amarre de Ingresos VS Costos y Gastos Intercompañías (I y G)")
+                st.info("Cruza las cuentas de Ingresos (4*) y Costos/Gastos (5* y 6*) evaluando todos los subniveles de obra y contraparte registrados en las balanzas.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1090,15 +1088,15 @@ if estructura:
                         recs_fact = datos_empresas_recs[emp_facturadora]
                         for r in recs_fact:
                             cta = r['cta_raw']
-                            # Cuentas de Ingresos (4*)
-                            if cta.startswith('4'):
+                            # Considerar tanto cuentas de ingresos (4*) como costos/gastos (5*, 6*) que contengan código de contraparte
+                            if cta.startswith(('4', '5', '6')):
                                 cod_contraparte = extraer_codigo_contraparte_robusto(cta)
                                 emp_receptora = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_receptora and emp_receptora in todas_empresas_balanza and emp_receptora != emp_facturadora:
-                                    # Tomamos el saldo neto en positivo igual que en la tabla dinámica de Excel
-                                    monto_ingreso = abs(r['acreedor_f'] - r['deudor_f']) if (r['acreedor_f'] - r['deudor_f']) != 0 else abs(r['saldo_final'])
-                                    matriz_ig.loc[emp_facturadora, emp_receptora] += monto_ingreso
+                                    # Saldo neto de la cuenta (Ingresos acreedores o Costos deudores)
+                                    monto_val = r['acreedor_f'] - r['deudor_f'] if cta.startswith('4') else r['saldo_final']
+                                    matriz_ig.loc[emp_facturadora, emp_receptora] += abs(monto_val)
 
                     matriz_ig['TOTAL'] = matriz_ig.sum(axis=1)
                     matriz_ig.loc['TOTAL'] = matriz_ig.sum(axis=0)
@@ -1114,6 +1112,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo de I y G Intercos ajustado al formato de tus tablas dinámicas en positivo.")
+                    st.success("✅ Amarre de I y G actualizado con inclusión de cuentas de costos/gastos y subniveles completos.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
