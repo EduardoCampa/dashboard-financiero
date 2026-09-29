@@ -834,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Filtrando niveles acumuladores y excluyendo -054-", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Costos con terminación en 1 y exclusión de -054-", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1068,8 +1068,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Filtro por niveles idéntico a Excel)")
-                st.info("Excluye acumuladores generales con ceros en nivel 3 o nivel 4 y omite subniveles -054-.")
+                st.markdown("### 📑 Amarre I y G Intercos (Suma cuentas con terminación en 1 y excluye -054-)")
+                st.info("Suma todas las cuentas de costos/gastos que terminan en 1 (ej. 531, 551, 651) sin filtrar los ceros de 4to nivel, omitiendo únicamente el subnivel -054-.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1099,30 +1099,25 @@ if estructura:
                                         if cod_contra == cod_destino:
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
 
-                        # 2. Costos propios de la empresa aplicando la regla exacta de niveles y ceros
+                        # 2. Costos propios de la empresa (cuentas 5*, 6* cuyo primer segmento termina en 1, omitiendo -054-)
                         costos_propios_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
                             cta = r['cta_raw']
                             segs = cta.split('-')
                             
-                            if len(segs) >= 4:
+                            if len(segs) >= 3:
                                 prefix = segs[0].strip()
                                 seg3 = segs[2].strip()
-                                seg4 = segs[3].strip()
 
-                                # Verificar prefijo (5 o 6, termina en 1)
+                                # Verificar que inicie con 5 o 6, tenga 3 dígitos y termine en 1 (ej. 531, 551, 561, 651)
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
                                     
-                                    # EXCLUIR ACUMULADORES (Nivel 3 igual a '000' o Nivel 4 igual a '0000')
-                                    if seg3 in ('000', '0') or seg4 in ('0000', '0'):
-                                        continue
-                                    
-                                    # Omitir si tiene el subnivel -054-
+                                    # Omitir estrictamente si el tercer segmento contiene '054' o '54'
                                     if '054' in seg3 or '54' in seg3:
                                         continue
                                     
-                                    # Sumar la cuenta válida de detalle
+                                    # Sumar el saldo de la cuenta válida
                                     costos_propios_emp += r['saldo_final']
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
@@ -1163,6 +1158,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Filtro por niveles de detalle configurado correctamente para arrojar la suma exacta de las cuentas analíticas.")
+                    st.success("✅ Filtro actualizado para sumar correctamente todas las cuentas analíticas con terminación en 1, incluyendo las terminadas en -0000, y excluyendo solo el subnivel -054-.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
