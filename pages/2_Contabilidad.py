@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -785,7 +786,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     start_row = 4
     
-    # Escribir Encabezados
     ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
     ws.cell(row=start_row, column=1).font = HEADER_FONT
     ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -799,12 +799,10 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     ws.row_dimensions[start_row].height = 28
 
-    # Escribir Filas
     for r_i, (idx_name, row_series) in enumerate(df_matriz.iterrows()):
         curr_row = start_row + 1 + r_i
         is_tot_row = (r_i == len(df_matriz) - 1 or str(idx_name).upper() == 'TOTAL')
 
-        # Columna de índice (Empresa fila)
         cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
         if is_tot_row:
             cell_idx.font = TOTAL_FONT
@@ -815,7 +813,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
             cell_idx.border = THIN_BORDER
         cell_idx.alignment = Alignment(horizontal="left", vertical="center")
 
-        # Celdas de valores
         for c_i, col_name in enumerate(cols_matriz, start=2):
             val = row_series[col_name]
             cell = ws.cell(row=curr_row, column=c_i)
@@ -841,6 +838,107 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     wb.save(output)
     return output.getvalue()
+
+
+# --- FUNCIONES PARA AMARRE DE INGRESOS ---
+def consolidar_xmls_sat(carpeta_xmls="XMLs"):
+    """Lee los archivos XML del SAT y extrae los campos requeridos."""
+    registros_xml = []
+    archivos_xml = glob.glob(os.path.join(carpeta_xmls, "**", "*.xml"), recursive=True)
+    if not archivos_xml:
+        archivos_xml = glob.glob(os.path.join(carpeta_xmls, "*.xml"))
+
+    for archivo in archivos_xml:
+        try:
+            tree = ET.parse(archivo)
+            root = tree.getroot()
+
+            subtotal = float(root.attrib.get('SubTotal', root.attrib.get('subTotal', 0.0)))
+            descuento = float(root.attrib.get('Descuento', root.attrib.get('descuento', 0.0)))
+            total = float(root.attrib.get('Total', root.attrib.get('total', 0.0)))
+            
+            fecha_raw = root.attrib.get('Fecha', root.attrib.get('fecha', ''))
+            fecha_emision = fecha_raw.split('T')[0] if fecha_raw else ''
+
+            receptor = root.find('{http://www.sat.gob.mx/cfd/3}Receptor')
+            if receptor is None:
+                receptor = root.find('.//{http://www.sat.gob.mx/cfd/4}Receptor')
+            
+            razon_receptor = ''
+            if receptor is not None:
+                razon_receptor = receptor.attrib.get('Nombre', receptor.attrib.get('nombre', ''))
+
+            iva_trasladado = 0.0
+            iva_retenido = 0.0
+            isr_retenido = 0.0
+            local_retenido = 0.0
+
+            impuestos = root.find('{http://www.sat.gob.mx/cfd/3}Impuestos')
+            if impuestos is None:
+                impuestos = root.find('.//{http://www.sat.gob.mx/cfd/4}Impuestos')
+
+            if impuestos is not None:
+                traslados = impuestos.find('{http://www.sat.gob.mx/cfd/3}Traslados')
+                if traslados is None:
+                    traslados = impuestos.find('.//{http://www.sat.gob.mx/cfd/4}Traslados')
+                if traslados is not None:
+                    for t in traslados.findall('{http://www.sat.gob.mx/cfd/3}Traslado'):
+                        if t.attrib.get('Impuesto') == '002' or t.attrib.get('impuesto') == '002':
+                            iva_trasladado += float(t.attrib.get('Importe', t.attrib.get('importe', 0.0)))
+
+                retenciones = impuestos.find('{http://www.sat.gob.mx/cfd/3}Retenciones')
+                if retenciones is None:
+                    retenciones = impuestos.find('.//{http://www.sat.gob.mx/cfd/4}Retenciones')
+                if retenciones is not None:
+                    for r in retenciones.findall('{http://www.sat.gob.mx/cfd/3}Retencion'):
+                        imp = r.attrib.get('Impuesto', r.attrib.get('impuesto', ''))
+                        imp_val = float(r.attrib.get('Importe', r.attrib.get('importe', 0.0)))
+                        if imp == '002':
+                            iva_retenido += imp_val
+                        elif imp == '001':
+                            isr_retenido += imp_val
+
+            uuid = ''
+            tfd = root.find('.//{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital')
+            if tfd is not None:
+                uuid = tfd.attrib.get('UUID', '').strip().upper()
+
+            registros_xml.append({
+                'UUID': uuid,
+                'Fecha emision': fecha_emision,
+                'Razon receptor': razon_receptor,
+                'SubTotal': subtotal,
+                'Descuento': descuento,
+                'IVA Trasladado': iva_trasladado,
+                'IVA Retenido': iva_retenido,
+                'ISR Retenido': isr_retenido,
+                'Local retenido': local_retenido,
+                'Total': total
+            })
+        except Exception:
+            continue
+
+    return pd.DataFrame(registros_xml)
+
+
+def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx"):
+    """Carga y agrupa la pestaña FacturaCliente del consolidado master."""
+    if not os.path.exists(ruta_master):
+        return pd.DataFrame()
+    
+    try:
+        df = pd.read_excel(ruta_master, sheet_name="FacturaCliente")
+        if 'UUID' in df.columns:
+            df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '')]
+        
+        cols_a_agrupar = ['UUID', 'BusinessEntityName']
+        cols_numericas = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total']
+        existentes_num = [c for c in cols_numericas if c in df.columns]
+        
+        df_grouped = df.groupby(cols_a_agrupar, as_index=False)[existentes_num].sum()
+        return df_grouped
+    except Exception:
+        return pd.DataFrame()
 
 
 # --- INTERFAZ PRINCIPAL DE STREAMLIT ---
@@ -1011,6 +1109,53 @@ if estructura:
                 "📑 Amarre I y G Intercos",
             ])
 
+            with subtab_ingresos:
+                st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs XML SAT)")
+                st.info("Cruza la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` agrupada por UUID contra los archivos XML del SAT.")
+
+                carpeta_xml_input = st.text_input("Carpeta que contiene los XML del SAT:", value="XMLs")
+
+                if st.button("🚀 Ejecutar Amarre de Ingresos"):
+                    with st.spinner("Procesando base de facturación y archivos XML del SAT..."):
+                        df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx")
+                        df_xml_sat = consolidar_xmls_sat(carpeta_xml_input)
+
+                        if df_fact_base.empty:
+                            st.warning("No se encontraron registros en la pestaña 'FacturaCliente' de Consolidado_Master.xlsx.")
+                        elif df_xml_sat.empty:
+                            st.warning(f"No se encontraron archivos XML en la carpeta '{carpeta_xml_input}'.")
+                        else:
+                            # Realizar el merge (amarre) por UUID
+                            df_amarre = pd.merge(
+                                df_fact_base,
+                                df_xml_sat,
+                                on="UUID",
+                                how="outer",
+                                suffixes=('_Fact', '_XML')
+                            )
+
+                            # Definir columnas de totales para la resta final
+                            tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
+                            tot_xml = 'Total_XML' if 'Total_XML' in df_amarre.columns else 'Total_y'
+
+                            df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_xml].fillna(0.0)
+
+                            st.success("✅ Amarre de ingresos realizado correctamente.")
+                            st.dataframe(df_amarre, use_container_width=True)
+
+                            # Exportar a Excel
+                            output_ingresos = exportar_excel_matriz_individual(
+                                df_amarre.set_index('UUID') if 'UUID' in df_amarre.columns else df_amarre,
+                                "REPORTE DE AMARRE DE INGRESOS",
+                                f"Periodo: {mes_sel}/{anio_sel} | Base Facturación vs XML SAT"
+                            )
+                            st.download_button(
+                                label="📥 Descargar Excel - Amarre de Ingresos",
+                                data=output_ingresos,
+                                file_name=f"Amarre_Ingresos_{mes_sel}_{anio_sel}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
                 st.info(f"Cálculo estricto con saldos netos consolidados por contraparte: `{ruta_balanza}`.")
@@ -1022,7 +1167,6 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    # --- MATRIZ 1: FACTURACIÓN ---
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1065,7 +1209,6 @@ if estructura:
 
                     st.markdown("---")
 
-                    # --- MATRIZ 2: PRÉSTAMOS ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1127,7 +1270,6 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Ingresos facturados a esta empresa desde las demás
                         ingresos_facturados_a_emp = 0.0
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
@@ -1141,7 +1283,6 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
-                        # 2. Costos base y cuenta 054 exacta
                         costos_base_emp = 0.0
                         cta_054_emp = 0.0
                         cuentas_base_proc = set()
@@ -1201,8 +1342,8 @@ if estructura:
                     st.dataframe(
                         df_ig_resumen.style.format({
                             'INGRESOS FACTURADOS': '${:,.2f}',
-                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
-                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                           'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                           'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
