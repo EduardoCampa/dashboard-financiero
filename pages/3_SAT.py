@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT y Comparativo Master",
+    page_title="Módulo SAT y Conciliación Master vs XML",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Detalle XMLs y Comparativo Master vs XML")
+st.title("📑 Módulo SAT - Comparativo, Detalle XML, Master y Conciliación por UUID")
 
 # --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES A EMPRESAS ---
 MAPEO_RAZON_A_EMPRESA = {
@@ -211,42 +211,23 @@ st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
-if st.button("🚀 Ejecutar Análisis y Comparativo"):
-    with st.spinner("Procesando información y generando pestañas..."):
+if st.button("🚀 Ejecutar Procesamiento Completo"):
+    with st.spinner("Procesando información y generando las 4 pestañas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
         st.success("✅ Procesamiento completado con éxito.")
 
-        # Pestañas principales solicitadas
-        tab_xmls, tab_comp = st.tabs([
-            "📑 Ingresos y Egresos de los XML", 
-            "⚖️ Comparativo Master vs XML"
+        # Las 4 pestañas solicitadas
+        tab_comp, tab_xml, tab_master, tab_conc = st.tabs([
+            "⚖️ 1.- Comparativo Master vs XML", 
+            "📑 2.- Ingresos y Egresos de los XML", 
+            "📁 3.- Ingresos y Egresos Master",
+            "🔍 4.- Conciliacion por UUID"
         ])
 
-        with tab_xmls:
-            st.markdown(f"### 📑 Detalle de Comprobantes de los XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
-            
-            subtab_ing, subtab_eg = st.tabs(["📈 Detalle de Ingresos", "📉 Detalle de Egresos"])
-            
-            with subtab_ing:
-                st.markdown("#### Ingresos Vigentes (XMLs)")
-                if not df_ingresos_sat.empty:
-                    st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                    st.metric("Total Ingresos XMLs", f"${df_ingresos_sat['SubTotal'].sum():,.2f}")
-                else:
-                    st.warning("No se encontraron ingresos vigentes en los XMLs.")
-
-            with subtab_eg:
-                st.markdown("#### Egresos Vigentes (XMLs)")
-                if not df_egresos_sat.empty:
-                    st.dataframe(df_egresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                    st.metric("Total Egresos XMLs", f"${df_egresos_sat['SubTotal'].sum():,.2f}")
-                else:
-                    st.warning("No se encontraron egresos vigentes en los XMLs.")
-
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Consolidado Master vs XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### ⚖️ Comparativo Master vs XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
             res_ing_sat = pd.DataFrame(columns=['Empresa', 'XML Ingresos'])
             if not df_ingresos_sat.empty:
@@ -300,3 +281,75 @@ if st.button("🚀 Ejecutar Análisis y Comparativo"):
                 )
             else:
                 st.info("No hay datos de egresos para comparar.")
+
+        with tab_xml:
+            st.markdown(f"### 📑 Ingresos y Egresos de los XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            subtab_x_ing, subtab_x_eg = st.tabs(["📈 Ingresos XML", "📉 Egresos XML"])
+            
+            with subtab_x_ing:
+                if not df_ingresos_sat.empty:
+                    st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Ingresos XML", f"${df_ingresos_sat['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("Sin registros de ingresos en XML.")
+
+            with subtab_x_eg:
+                if not df_egresos_sat.empty:
+                    st.dataframe(df_egresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Egresos XML", f"${df_egresos_sat['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("Sin registros de egresos en XML.")
+
+        with tab_master:
+            st.markdown(f"### 📁 Ingresos y Egresos Master - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            subtab_m_ing, subtab_m_eg = st.tabs(["📈 Ingresos Master", "📉 Egresos Master"])
+            
+            with subtab_m_ing:
+                if not df_ingresos_master.empty:
+                    st.dataframe(df_ingresos_master.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Ingresos Master", f"${df_ingresos_master['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("Sin registros de ingresos en Master.")
+
+            with subtab_m_eg:
+                if not df_egresos_master.empty:
+                    st.dataframe(df_egresos_master.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Egresos Master", f"${df_egresos_master['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("Sin registros de egresos en Master.")
+
+        with tab_conc:
+            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            
+            if not df_ingresos_master.empty and not df_ingresos_sat.empty:
+                # Merge por UUID para comparar SubTotal Master vs SubTotal SAT
+                df_m_agg = df_ingresos_master[['UUID', 'EmpresaOrigen', 'SubTotal']].rename(columns={'SubTotal': 'SubTotal_Master', 'EmpresaOrigen': 'Empresa'})
+                df_s_agg = df_ingresos_sat[['UUID', 'SubTotal']].rename(columns={'SubTotal': 'SubTotal_SAT'})
+                
+                df_concil = pd.merge(df_m_agg, df_s_agg, on='UUID', how='outer').fillna(0.0)
+                df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
+                
+                # Filtrar aquellos con diferencia significativa
+                df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
+
+                st.markdown("#### 📊 Resumen de UUIDs con Diferencia")
+                col_d1, col_d2 = st.columns(2)
+                col_d1.metric("Total UUIDs Analizados", len(df_concil))
+                col_d2.metric("UUIDs con Diferencia", len(df_con_dif))
+
+                st.markdown("---")
+                st.markdown("#### 📋 Detalle de UUIDs con Diferencias")
+                if not df_con_dif.empty:
+                    st.dataframe(
+                        df_con_dif.style.format({
+                            'SubTotal_Master': '${:,.2f}',
+                            'SubTotal_SAT': '${:,.2f}',
+                            'Diferencia': '${:,.2f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs cruzados entre Master y SAT.")
+            else:
+                st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación por UUID.")
