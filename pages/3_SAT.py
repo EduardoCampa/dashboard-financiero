@@ -4,15 +4,15 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT - Resumen por Razón Emisor",
+    page_title="Módulo SAT - Resumen Filtrado por Periodo",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Resumen Consolidado por Razón Emisor (Ingresos y Egresos)")
+st.title("📑 Módulo SAT - Resumen por Razón Emisor (Ingresos y Egresos con Filtros)")
 
-def cargar_y_procesar_sat(carpeta_xmls="XML"):
-    """Consolida y separa los CFDis de Ingresos y Egresos desde los archivos Excel del SAT."""
+def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
+    """Consolida, filtra por periodo y separa los CFDis de Ingresos y Egresos."""
     archivos_excel = (
         glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
         glob.glob(os.path.join(carpeta_xmls, "*.xlsx")) + 
@@ -54,6 +54,26 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
                 if 'VIGENTE' not in estado:
                     continue
 
+                # Fecha Emisión y filtrado por Periodo
+                fecha_emision_str = ""
+                dt_fecha = None
+                for col in df_sat.columns:
+                    if 'fecha' in col.lower() and 'emision' in col.lower():
+                        val_fecha = row.get(col, '')
+                        if pd.notnull(val_fecha):
+                            dt_fecha = pd.to_datetime(val_fecha, errors='coerce')
+                            if pd.notnull(dt_fecha):
+                                fecha_emision_str = dt_fecha.strftime('%Y-%m-%d')
+                        break
+                
+                if dt_fecha is None:
+                    continue
+
+                if anio_filtro and dt_fecha.year != int(anio_filtro):
+                    continue
+                if mes_ini and mes_fin and (dt_fecha.month < int(mes_ini) or dt_fecha.month > int(mes_fin)):
+                    continue
+
                 # Tipo (Ingreso o Egreso)
                 tipo_doc = ""
                 for col in df_sat.columns:
@@ -69,17 +89,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
                         if val_razon and val_razon.upper() != 'NAN':
                             razon_emisor = val_razon
                             break
-
-                # Fecha Emisión (Solo Fecha)
-                fecha_emision = ""
-                for col in df_sat.columns:
-                    if 'fecha' in col.lower() and 'emision' in col.lower():
-                        val_fecha = row.get(col, '')
-                        if pd.notnull(val_fecha):
-                            dt = pd.to_datetime(val_fecha, errors='coerce')
-                            if pd.notnull(dt):
-                                fecha_emision = dt.strftime('%Y-%m-%d')
-                        break
 
                 # SubTotal y Descuento
                 subtotal = 0.0
@@ -98,7 +107,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
                 registro = {
                     'Razon emisor': razon_emisor if razon_emisor else "SIN RAZÓN EMISOR",
                     'UUID': uuid,
-                    'Fecha emision': fecha_emision,
+                    'Fecha emision': fecha_emision_str,
                     'Estado': estado,
                     'SubTotal': subtotal_neto
                 }
@@ -113,14 +122,24 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
 
     return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
 
-# Interfaz en Streamlit
+# --- CONTROLES DE FILTRO POR PERIODO ---
+col_a, col_mini, col_mfin = st.columns([1, 1, 1])
+
+with col_a:
+    anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
+with col_mini:
+    mes_inicial = st.selectbox("Mes Inicial:", list(range(1, 13)), index=0, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+with col_mfin:
+    mes_final = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+
+st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 
-if st.button("🚀 Cargar, Clasificar y Resumir"):
-    with st.spinner("Procesando y generando tabla resumen por Razón Emisor..."):
-        df_ingresos, df_egresos = cargar_y_procesar_sat(carpeta_input)
+if st.button("🚀 Ejecutar Amarre y Resumen"):
+    with st.spinner("Procesando y filtrando información por periodo..."):
+        df_ingresos, df_egresos = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
-        st.success("✅ Datos procesados correctamente.")
+        st.success("✅ Filtros y procesamiento completados con éxito.")
 
         tab_res, tab_ing, tab_eg = st.tabs([
             "📊 Resumen por Razón Emisor", 
@@ -129,48 +148,40 @@ if st.button("🚀 Cargar, Clasificar y Resumir"):
         ])
 
         with tab_res:
-            st.markdown("### 📊 Resumen de Ingresos y Egresos Vigentes por Razón Emisor")
+            st.markdown(f"### 📊 Resumen Ejecutivo del Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
-            if not df_ingresos.empty or not df_egresos.empty:
-                # Agrupar ingresos
-                df_ing_sum = pd.DataFrame(columns=['Razon emisor', 'Total Ingresos'])
+            col_res1, col_res2 = st.columns(2)
+
+            with col_res1:
+                st.markdown("#### 📈 Resumen de Ingresos por Razón Emisor")
                 if not df_ingresos.empty:
-                    df_ing_sum = df_ingresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                    df_ing_sum.columns = ['Razon emisor', 'Total Ingresos']
+                    res_ing = df_ingresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                    res_ing.columns = ['Razon emisor', 'Total Ingresos']
+                    st.dataframe(
+                        res_ing.style.format({'Total Ingresos': '${:,.2f}'}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    st.metric("Total Ingresos Vigentes", f"${res_ing['Total Ingresos'].sum():,.2f}")
+                else:
+                    st.info("No hay ingresos vigentes en este periodo.")
 
-                # Agrupar egresos
-                df_eg_sum = pd.DataFrame(columns=['Razon emisor', 'Total Egresos'])
+            with col_res2:
+                st.markdown("#### 📉 Resumen de Egresos por Razón Emisor")
                 if not df_egresos.empty:
-                    df_eg_sum = df_egresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                    df_eg_sum.columns = ['Razon emisor', 'Total Egresos']
-
-                # Unir ambas tablas por Razón Emisor (Outer join)
-                df_resumen = pd.merge(df_ing_sum, df_eg_sum, on='Razon emisor', how='outer').fillna(0.0)
-                df_resumen['Neto (Ingresos - Egresos)'] = df_resumen['Total Ingresos'] - df_resumen['Total Egresos']
-
-                st.dataframe(
-                    df_resumen.style.format({
-                        'Total Ingresos': '${:,.2f}',
-                        'Total Egresos': '${:,.2f}',
-                        'Neto (Ingresos - Egresos)': '${:,.2f}'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                tot_ing = df_resumen['Total Ingresos'].sum()
-                tot_eg = df_resumen['Total Egresos'].sum()
-                neto_gen = df_resumen['Neto (Ingresos - Egresos)'].sum()
-
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("Suma Total Ingresos Vigentes", f"${tot_ing:,.2f}")
-                col_m2.metric("Suma Total Egresos Vigentes", f"${tot_eg:,.2f}")
-                col_m3.metric("Balance Neto General", f"${neto_gen:,.2f}")
-            else:
-                st.info("No se encontraron registros vigentes para resumir.")
+                    res_eg = df_egresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                    res_eg.columns = ['Razon emisor', 'Total Egresos']
+                    st.dataframe(
+                        res_eg.style.format({'Total Egresos': '${:,.2f}'}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    st.metric("Total Egresos Vigentes", f"${res_eg['Total Egresos'].sum():,.2f}")
+                else:
+                    st.info("No hay egresos vigentes en este periodo.")
 
         with tab_ing:
-            st.markdown("### 📋 Detalle de Comprobantes de Ingresos Vigentes")
+            st.markdown("### 📋 Detalle de Ingresos Vigentes")
             if not df_ingresos.empty:
                 st.dataframe(
                     df_ingresos.style.format({'SubTotal': '${:,.2f}'}),
@@ -178,10 +189,10 @@ if st.button("🚀 Cargar, Clasificar y Resumir"):
                     hide_index=True
                 )
             else:
-                st.warning("No se encontraron ingresos vigentes.")
+                st.warning("No se encontraron ingresos vigentes para el periodo.")
 
         with tab_eg:
-            st.markdown("### 📋 Detalle de Comprobantes de Egresos Vigentes")
+            st.markdown("### 📋 Detalle de Egresos Vigentes")
             if not df_egresos.empty:
                 st.dataframe(
                     df_egresos.style.format({'SubTotal': '${:,.2f}'}),
@@ -189,4 +200,4 @@ if st.button("🚀 Cargar, Clasificar y Resumir"):
                     hide_index=True
                 )
             else:
-                st.warning("No se encontraron egresos vigentes.")
+                st.warning("No se encontraron egresos vigentes para el periodo.")
