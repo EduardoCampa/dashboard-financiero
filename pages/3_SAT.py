@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT y Consolidado Master",
+    page_title="Módulo SAT y Consolidado Master - Comparativo",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Resumen XMLs y Detalle Consolidado Master")
+st.title("📑 Módulo SAT - Resumen Comparativo XMLs vs. Consolidado Master")
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
 def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
@@ -128,17 +128,14 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if df.empty:
                 return pd.DataFrame()
 
-            # 1. Omitir UUIDs vacíos o nulos
             if 'UUID' in df.columns:
                 df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '') & (df['UUID'].astype(str).str.upper() != 'NAN')].copy()
             else:
                 return pd.DataFrame()
 
-            # 2. Filtrar por estatus Vigente
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
 
-            # 3. Filtrar por fecha y rango (CFDIFechaCertificacion)
             if 'CFDIFechaCertificacion' in df.columns:
                 df['Fecha_Cert'] = pd.to_datetime(df['CFDIFechaCertificacion'], errors='coerce')
                 df = df[df['Fecha_Cert'].notnull()].copy()
@@ -150,12 +147,10 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             else:
                 df['Fecha_Cert'] = ''
 
-            # 4. Calcular SubTotal - TotalDiscount
             subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
             descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
             df['SubTotal_Neto'] = subtotal - descuento
 
-            # 5. Seleccionar columnas requeridas
             empresa = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
             uuid_col = df['UUID']
             fecha_col = df['Fecha_Cert']
@@ -195,7 +190,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Análisis SAT y Master"):
-    with st.spinner("Procesando información..."):
+    with st.spinner("Procesando información y generando comparativo..."):
         # 1. Datos SAT
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         
@@ -204,48 +199,67 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
 
         st.success("✅ Procesamiento completado correctamente.")
 
-        # Pestañas principales
         tab_sat, tab_master = st.tabs([
-            "📊 Módulo SAT (XMLs)", 
+            "📊 Módulo SAT & Comparativo Master", 
             "📁 Detalle Consolidado Master"
         ])
 
         with tab_sat:
-            st.markdown(f"### 📊 Resumen SAT (XMLs) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
-            col_res1, col_res2 = st.columns(2)
+            st.markdown(f"### 📊 Resumen SAT vs Consolidado Master - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            
+            # Preparar resúmenes para la comparación
+            res_ing_sat = pd.DataFrame(columns=['Razon emisor', 'SAT Ingresos'])
+            if not df_ingresos_sat.empty:
+                res_ing_sat = df_ingresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                res_ing_sat.columns = ['Emisor / Empresa', 'SAT Ingresos']
 
-            with col_res1:
-                st.markdown("#### 📈 Ingresos por Razón Emisor")
-                if not df_ingresos_sat.empty:
-                    res_ing = df_ingresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                    res_ing.columns = ['Razon emisor', 'Total Ingresos']
-                    st.dataframe(res_ing.style.format({'Total Ingresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                    st.metric("Total Ingresos Vigentes", f"${res_ing['Total Ingresos'].sum():,.2f}")
-                else:
-                    st.info("No hay ingresos vigentes en XMLs.")
+            res_eg_sat = pd.DataFrame(columns=['Razon emisor', 'SAT Egresos'])
+            if not df_egresos_sat.empty:
+                res_eg_sat = df_egresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                res_eg_sat.columns = ['Emisor / Empresa', 'SAT Egresos']
 
-            with col_res2:
-                st.markdown("#### 📉 Egresos por Razón Emisor")
-                if not df_egresos_sat.empty:
-                    res_eg = df_egresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                    res_eg.columns = ['Razon emisor', 'Total Egresos']
-                    st.dataframe(res_eg.style.format({'Total Egresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                    st.metric("Total Egresos Vigentes", f"${res_eg['Total Egresos'].sum():,.2f}")
-                else:
-                    st.info("No hay egresos vigentes en XMLs.")
+            res_ing_mast = pd.DataFrame(columns=['EmpresaOrigen', 'Master Ingresos'])
+            if not df_ingresos_master.empty:
+                res_ing_mast = df_ingresos_master.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum()
+                res_ing_mast.columns = ['Emisor / Empresa', 'Master Ingresos']
+
+            res_eg_mast = pd.DataFrame(columns=['EmpresaOrigen', 'Master Egresos'])
+            if not df_egresos_master.empty:
+                res_eg_mast = df_egresos_master.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum()
+                res_eg_mast.columns = ['Emisor / Empresa', 'Master Egresos']
+
+            st.markdown("#### 📈 Comparativo de Ingresos (SAT vs Master)")
+            if not res_ing_sat.empty or not res_ing_mast.empty:
+                df_comp_ing = pd.merge(res_ing_sat, res_ing_mast, on='Emisor / Empresa', how='outer').fillna(0.0)
+                df_comp_ing['Diferencia (SAT - Master)'] = df_comp_ing['SAT Ingresos'] - df_comp_ing['Master Ingresos']
+                st.dataframe(
+                    df_comp_ing.style.format({
+                        'SAT Ingresos': '${:,.2f}',
+                        'Master Ingresos': '${:,.2f}',
+                        'Diferencia (SAT - Master)': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No hay datos de ingresos para comparar.")
 
             st.markdown("---")
-            subtab_det_ing, subtab_det_eg = st.tabs(["📋 Detalle Ingresos XML", "📋 Detalle Egresos XML"])
-            with subtab_det_ing:
-                if not df_ingresos_sat.empty:
-                    st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Sin registros.")
-            with subtab_det_eg:
-                if not df_egresos_sat.empty:
-                    st.dataframe(df_egresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Sin registros.")
+            st.markdown("#### 📉 Comparativo de Egresos / Notas de Crédito (SAT vs Master)")
+            if not res_eg_sat.empty or not res_eg_mast.empty:
+                df_comp_eg = pd.merge(res_eg_sat, res_eg_mast, on='Emisor / Empresa', how='outer').fillna(0.0)
+                df_comp_eg['Diferencia (SAT - Master)'] = df_comp_eg['SAT Egresos'] - df_comp_eg['Master Egresos']
+                st.dataframe(
+                    df_comp_eg.style.format({
+                        'SAT Egresos': '${:,.2f}',
+                        'Master Egresos': '${:,.2f}',
+                        'Diferencia (SAT - Master)': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No hay datos de egresos para comparar.")
 
         with tab_master:
             st.markdown(f"### 📁 Detalle Consolidado Master (Vigentes con UUID) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
