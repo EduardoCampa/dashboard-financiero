@@ -46,7 +46,7 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL Y EXACTO DE CÓDIGOS DE CONTPAQI (4 DÍGITOS)
+# MAPEO OFICIAL Y EXACTO DE CÓDICOS DE CONTPAQI (4 DÍGITOS)
 MAPEO_CODIGO_EMPRESA = {
     "0468": "CIVLAT",
     "0467": "CIV",
@@ -1045,6 +1045,14 @@ if estructura:
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
 
+                    st.markdown("#### 📄 Matriz de Clientes y Proveedores (Facturación)")
+                    st.dataframe(
+                        matriz_fact.style.format('${:,.2f}'),
+                        use_container_width=True
+                    )
+
+                    st.markdown("---")
+
                     # --- TABLA 2: PRÉSTAMOS ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
@@ -1066,6 +1074,12 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
+
+                    st.markdown("#### 💸 Matriz de Préstamos Intercompañías")
+                    st.dataframe(
+                        matriz_prest.style.format('${:,.2f}'),
+                        use_container_width=True
+                    )
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre I y G Intercos (Ingresos facturados y Costos Intercos)")
@@ -1166,8 +1180,8 @@ if estructura:
                     st.dataframe(
                         df_ig_resumen.style.format({
                             'INGRESOS FACTURADOS': '${:,.2f}',
-                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
-                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                            'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                            'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True

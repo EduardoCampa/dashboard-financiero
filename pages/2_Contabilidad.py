@@ -796,7 +796,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
         for r_i, row_data in df_data.reset_index(drop=True).iterrows():
             curr_row = start_row + 1 + r_i
-            is_tot_row = (r_i == len(df_data) - 1)
+            is_tot_row = (r_i == len(df_data) - 1 or str(row_data.get('EMPRESA', '')).upper() == 'TOTAL')
 
             for c_i, col_name in enumerate(headers, start=1):
                 val = row_data[col_name]
@@ -819,22 +819,22 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
                         cell.number_format = '$#,##0.00'
 
         for col in ws.columns:
-            max_len = max(len(str(cell.value or '')) for col in col)
+            max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = get_column_letter(col[0].column)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
         ws.column_dimensions['A'].width = 28
 
     # --- HOJA 1: FACTURACIÓN ---
     ws1 = wb.create_sheet(title="1. Facturación")
-    poblar_hoja_excel(ws1, "REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN", f"Periodo: {mes}/{anio} | Cuentas: Clientes (101-00004) y Proveedores (201)", df_fact)
+    poblar_hoja_excel(ws1, "REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN", f"Periodo: {mes}/{anio} | Cuentas netas por empresa contraparte", df_fact)
 
     # --- HOJA 2: PRÉSTAMOS ---
     ws2 = wb.create_sheet(title="2. Préstamos")
-    poblar_hoja_excel(ws2, "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS", f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)", df_prest)
+    poblar_hoja_excel(ws2, "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS", f"Periodo: {mes}/{anio} | Cuentas netas por empresa contraparte", df_prest)
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Sin duplicación de cuentas únicas", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Resumen consolidado por empresa", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1013,7 +1013,7 @@ if estructura:
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos: `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con saldos netos consolidados por contraparte: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1022,7 +1022,7 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    # --- TABLA 1: FACTURACIÓN ---
+                    # --- MATRIZ 1: FACTURACIÓN (Neta por contraparte) ---
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1053,7 +1053,7 @@ if estructura:
 
                     st.markdown("---")
 
-                    # --- TABLA 2: PRÉSTAMOS ---
+                    # --- MATRIZ 2: PRÉSTAMOS (Neta por contraparte) ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1074,6 +1074,7 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
+                    matriz_prest.loc['TOTAL'] = matriz_prest.sum(axis=0)
 
                     st.markdown("#### 💸 Matriz de Préstamos Intercompañías")
                     st.dataframe(
@@ -1180,8 +1181,8 @@ if estructura:
                     st.dataframe(
                         df_ig_resumen.style.format({
                             'INGRESOS FACTURADOS': '${:,.2f}',
-                            'COSTOS BASE (-00000-)': '${:,.2f}',                            'CUENTA 054': '${:,.2f}',
-                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                            'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
