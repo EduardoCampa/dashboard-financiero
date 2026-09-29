@@ -85,8 +85,8 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
     return pd.DataFrame(registros_xml)
 
 
-def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_filtro=None):
-    """Carga y filtra la pestaña FacturaCliente por Año y Mes usando DateDocument."""
+def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None):
+    """Carga y filtra la pestaña FacturaCliente únicamente por Año usando DateDocument."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     try:
@@ -95,8 +95,6 @@ def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_f
             df['DateDocument'] = pd.to_datetime(df['DateDocument'], errors='coerce')
             if anio_filtro:
                 df = df[df['DateDocument'].dt.year == int(anio_filtro)]
-            if mes_filtro:
-                df = df[df['DateDocument'].dt.month == int(mes_filtro)]
         if 'UUID' in df.columns:
             df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '')]
         
@@ -141,11 +139,8 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
 
 # --- INTERFAZ DEL MÓDULO SAT ---
-col_a, col_m = st.columns([1, 1])
-with col_a:
-    anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
-with col_m:
-    mes_sel = st.selectbox("Mes de Filtro:", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], index=7)
+# Dejamos únicamente el selector de Año
+anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
 
 st.markdown("---")
 
@@ -156,18 +151,19 @@ with subtab_rh:
     st.info("Módulo para validación de nóminas y retenciones de sueldos y salarios contra CONTPAQi y SAT.")
 
 with subtab_ingresos:
-    st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs Excel del SAT)")
-    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` por el periodo seleccionado y lo cruza contra los reportes en Excel del SAT.")
+    st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs Excel del SAT - Anual)")
+    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` para el año **{anio_sel}** y lo cruza contra los reportes en Excel del SAT.")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
-    if st.button("🚀 Ejecutar Amarre de Ingresos"):
+    if st.button("🚀 Ejecutar Amarre de Ingresos Anual"):
         with st.spinner("Procesando base de facturación filtrada y archivos Excel del SAT..."):
-            df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx", anio_filtro=anio_sel, mes_filtro=mes_sel)
+            # Se invoca pasando solo el año seleccionado
+            df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx", anio_filtro=anio_sel)
             df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
             if df_fact_base.empty:
-                st.warning(f"No se encontraron registros en 'FacturaCliente' para el periodo {mes_sel}/{anio_sel} (DateDocument).")
+                st.warning(f"No se encontraron registros en 'FacturaCliente' para el año {anio_sel} (DateDocument).")
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
@@ -177,17 +173,17 @@ with subtab_ingresos:
                 
                 df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_sat].fillna(0.0)
 
-                st.success("✅ Amarre de ingresos realizado correctamente.")
+                st.success("✅ Amarre de ingresos anual realizado correctamente.")
                 st.dataframe(df_amarre, use_container_width=True)
 
                 output_ingresos = exportar_excel_matriz_individual(
                     df_amarre.set_index('UUID') if 'UUID' in df_amarre.columns else df_amarre,
-                    "REPORTE DE AMARRE DE INGRESOS",
-                    f"Periodo: {mes_sel}/{anio_sel} | Base Facturación vs Excel SAT"
+                    "REPORTE DE AMARRE DE INGRESOS ANUAL",
+                    f"Ejercicio Fiscal: {anio_sel} | Base Facturación vs Excel SAT"
                 )
                 st.download_button(
-                    label="📥 Descargar Excel - Amarre de Ingresos",
+                    label="📥 Descargar Excel - Amarre de Ingresos Anual",
                     data=output_ingresos,
-                    file_name=f"Amarre_Ingresos_{mes_sel}_{anio_sel}.xlsx",
+                    file_name=f"Amarre_Ingresos_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
