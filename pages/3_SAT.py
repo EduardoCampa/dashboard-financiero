@@ -9,9 +9,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Resumen SAT y Detalle Consolidado Master")
+st.title("📑 Módulo SAT - Resumen XMLs y Detalle Consolidado Master")
 
-# --- FUNCIONES DE PROCESAMIENTO SAT ---
+# --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
 def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
     archivos_excel = (
         glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
@@ -195,7 +195,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Análisis SAT y Master"):
-    with st.spinner("Procesando información del SAT y del Consolidado Master..."):
+    with st.spinner("Procesando información..."):
         # 1. Datos SAT
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         
@@ -204,13 +204,14 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
 
         st.success("✅ Procesamiento completado correctamente.")
 
+        # Pestañas principales
         tab_sat, tab_master = st.tabs([
-            "📊 Módulo SAT (Ingresos / Egresos)", 
+            "📊 Módulo SAT (XMLs)", 
             "📁 Detalle Consolidado Master"
         ])
 
         with tab_sat:
-            st.markdown(f"### 📊 Resumen SAT - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 📊 Resumen SAT (XMLs) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             col_res1, col_res2 = st.columns(2)
 
             with col_res1:
@@ -221,7 +222,7 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
                     st.dataframe(res_ing.style.format({'Total Ingresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
                     st.metric("Total Ingresos Vigentes", f"${res_ing['Total Ingresos'].sum():,.2f}")
                 else:
-                    st.info("No hay ingresos vigentes.")
+                    st.info("No hay ingresos vigentes en XMLs.")
 
             with col_res2:
                 st.markdown("#### 📉 Egresos por Razón Emisor")
@@ -231,7 +232,20 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
                     st.dataframe(res_eg.style.format({'Total Egresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
                     st.metric("Total Egresos Vigentes", f"${res_eg['Total Egresos'].sum():,.2f}")
                 else:
-                    st.info("No hay egresos vigentes.")
+                    st.info("No hay egresos vigentes en XMLs.")
+
+            st.markdown("---")
+            subtab_det_ing, subtab_det_eg = st.tabs(["📋 Detalle Ingresos XML", "📋 Detalle Egresos XML"])
+            with subtab_det_ing:
+                if not df_ingresos_sat.empty:
+                    st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Sin registros.")
+            with subtab_det_eg:
+                if not df_egresos_sat.empty:
+                    st.dataframe(df_egresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Sin registros.")
 
         with tab_master:
             st.markdown(f"### 📁 Detalle Consolidado Master (Vigentes con UUID) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
