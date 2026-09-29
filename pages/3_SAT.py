@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT y Consolidado Master - Mapeo de Empresas",
+    page_title="Módulo SAT y Comparativo Master",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Resumen Comparativo con Mapeo de Razones Sociales")
+st.title("📑 Módulo SAT - Detalle XMLs y Comparativo Master vs XML")
 
 # --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES A EMPRESAS ---
 MAPEO_RAZON_A_EMPRESA = {
@@ -211,30 +211,52 @@ st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
-if st.button("🚀 Ejecutar Análisis SAT y Master"):
-    with st.spinner("Procesando información y aplicando mapeo de empresas..."):
+if st.button("🚀 Ejecutar Análisis y Comparativo"):
+    with st.spinner("Procesando información y generando pestañas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
-        st.success("✅ Procesamiento y mapeo completados correctamente.")
+        st.success("✅ Procesamiento completado con éxito.")
 
-        tab_sat, tab_master = st.tabs([
-            "📊 Módulo SAT & Comparativo Master", 
-            "📁 Detalle Consolidado Master"
+        # Pestañas principales solicitadas
+        tab_xmls, tab_comp = st.tabs([
+            "📑 Ingresos y Egresos de los XML", 
+            "⚖️ Comparativo Master vs XML"
         ])
 
-        with tab_sat:
-            st.markdown(f"### 📊 Resumen SAT vs Consolidado Master - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+        with tab_xmls:
+            st.markdown(f"### 📑 Detalle de Comprobantes de los XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
-            res_ing_sat = pd.DataFrame(columns=['Empresa', 'SAT Ingresos'])
+            subtab_ing, subtab_eg = st.tabs(["📈 Detalle de Ingresos", "📉 Detalle de Egresos"])
+            
+            with subtab_ing:
+                st.markdown("#### Ingresos Vigentes (XMLs)")
+                if not df_ingresos_sat.empty:
+                    st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Ingresos XMLs", f"${df_ingresos_sat['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("No se encontraron ingresos vigentes en los XMLs.")
+
+            with subtab_eg:
+                st.markdown("#### Egresos Vigentes (XMLs)")
+                if not df_egresos_sat.empty:
+                    st.dataframe(df_egresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.metric("Total Egresos XMLs", f"${df_egresos_sat['SubTotal'].sum():,.2f}")
+                else:
+                    st.warning("No se encontraron egresos vigentes en los XMLs.")
+
+        with tab_comp:
+            st.markdown(f"### ⚖️ Comparativo Consolidado Master vs XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            
+            res_ing_sat = pd.DataFrame(columns=['Empresa', 'XML Ingresos'])
             if not df_ingresos_sat.empty:
                 res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum()
-                res_ing_sat.columns = ['Empresa', 'SAT Ingresos']
+                res_ing_sat.columns = ['Empresa', 'XML Ingresos']
 
-            res_eg_sat = pd.DataFrame(columns=['Empresa', 'SAT Egresos'])
+            res_eg_sat = pd.DataFrame(columns=['Empresa', 'XML Egresos'])
             if not df_egresos_sat.empty:
                 res_eg_sat = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum()
-                res_eg_sat.columns = ['Empresa', 'SAT Egresos']
+                res_eg_sat.columns = ['Empresa', 'XML Egresos']
 
             res_ing_mast = pd.DataFrame(columns=['EmpresaOrigen', 'Master Ingresos'])
             if not df_ingresos_master.empty:
@@ -246,15 +268,15 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
                 res_eg_mast = df_egresos_master.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum()
                 res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
-            st.markdown("#### 📈 Comparativo de Ingresos (SAT vs Master)")
+            st.markdown("#### 📈 Comparativo de Ingresos (Master vs XML)")
             if not res_ing_sat.empty or not res_ing_mast.empty:
-                df_comp_ing = pd.merge(res_ing_sat, res_ing_mast, on='Empresa', how='outer').fillna(0.0)
-                df_comp_ing['Diferencia (SAT - Master)'] = df_comp_ing['SAT Ingresos'] - df_comp_ing['Master Ingresos']
+                df_comp_ing = pd.merge(res_ing_mast, res_ing_sat, on='Empresa', how='outer').fillna(0.0)
+                df_comp_ing['Diferencia (Master - XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
                 st.dataframe(
                     df_comp_ing.style.format({
-                        'SAT Ingresos': '${:,.2f}',
                         'Master Ingresos': '${:,.2f}',
-                        'Diferencia (SAT - Master)': '${:,.2f}'
+                        'XML Ingresos': '${:,.2f}',
+                        'Diferencia (Master - XML)': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
@@ -263,36 +285,18 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
                 st.info("No hay datos de ingresos para comparar.")
 
             st.markdown("---")
-            st.markdown("#### 📉 Comparativo de Egresos / Notas de Crédito (SAT vs Master)")
+            st.markdown("#### 📉 Comparativo de Egresos / Notas de Crédito (Master vs XML)")
             if not res_eg_sat.empty or not res_eg_mast.empty:
-                df_comp_eg = pd.merge(res_eg_sat, res_eg_mast, on='Empresa', how='outer').fillna(0.0)
-                df_comp_eg['Diferencia (SAT - Master)'] = df_comp_eg['SAT Egresos'] - df_comp_eg['Master Egresos']
+                df_comp_eg = pd.merge(res_eg_mast, res_eg_sat, on='Empresa', how='outer').fillna(0.0)
+                df_comp_eg['Diferencia (Master - XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
                 st.dataframe(
                     df_comp_eg.style.format({
-                        'SAT Egresos': '${:,.2f}',
                         'Master Egresos': '${:,.2f}',
-                        'Diferencia (SAT - Master)': '${:,.2f}'
+                        'XML Egresos': '${:,.2f}',
+                        'Diferencia (Master - XML)': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
                 )
             else:
                 st.info("No hay datos de egresos para comparar.")
-
-        with tab_master:
-            st.markdown(f"### 📁 Detalle Consolidado Master (Vigentes con UUID) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
-            
-            st.markdown("#### 📈 Detalle de Ingresos (FacturaCliente)")
-            if not df_ingresos_master.empty:
-                st.dataframe(df_ingresos_master.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                st.metric("Suma SubTotal Neto Ingresos Master", f"${df_ingresos_master['SubTotal'].sum():,.2f}")
-            else:
-                st.warning("No se encontraron registros de ingresos vigentes en el Master.")
-
-            st.markdown("---")
-            st.markdown("#### 📉 Detalle de Egresos (NotaCreditoCliente)")
-            if not df_egresos_master.empty:
-                st.dataframe(df_egresos_master.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
-                st.metric("Suma SubTotal Neto Egresos Master", f"${df_egresos_master['SubTotal'].sum():,.2f}")
-            else:
-                st.warning("No se encontraron registros de egresos vigentes en el Master.")
