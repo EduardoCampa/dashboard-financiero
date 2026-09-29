@@ -151,7 +151,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
         ]
         
         for c_idx, col_name in cols_indices:
-            val = float(r.get(col_name, 0))
+            val = float(r.get(col_name, 0)) if col_name in r else 0.0
             cell_m = ws.cell(row=row_idx, column=c_idx, value=val)
             cell_m.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
             cell_m.alignment = Alignment(horizontal="right")
@@ -176,14 +176,14 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     df_unicos = df_datos.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio'])
 
     totales_map = {
-        8: df_unicos['TotalRetention'].sum(),
-        9: df_unicos['SubTotal'].sum(),
-        10: df_unicos['TotalDiscount'].sum(),
-        11: df_unicos['Subtotal2'].sum(),
-        12: df_unicos['TotalTax'].sum(),
-        13: df_unicos['Total'].sum(),
-        16: df_datos['Amount'].sum(),
-        18: df_unicos['SaldoFactura'].sum()
+        8: df_unicos['TotalRetention'].sum() if 'TotalRetention' in df_unicos.columns else 0.0,
+        9: df_unicos['SubTotal'].sum() if 'SubTotal' in df_unicos.columns else 0.0,
+        10: df_unicos['TotalDiscount'].sum() if 'TotalDiscount' in df_unicos.columns else 0.0,
+        11: df_unicos['Subtotal2'].sum() if 'Subtotal2' in df_unicos.columns else 0.0,
+        12: df_unicos['TotalTax'].sum() if 'TotalTax' in df_unicos.columns else 0.0,
+        13: df_unicos['Total'].sum() if 'Total' in df_unicos.columns else 0.0,
+        16: df_datos['Amount'].sum() if 'Amount' in df_datos.columns else 0.0,
+        18: df_unicos['SaldoFactura'].sum() if 'SaldoFactura' in df_unicos.columns else 0.0
     }
 
     for c_idx, val_tot in totales_map.items():
@@ -385,6 +385,52 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
+# --- PROCESAMIENTO FACTURACIÓN (CRUCE CON EDOCUENTA) ---
+@st.cache_data
+def procesar_facturacion_definitivo(_df_fac, _df_edo):
+    if _df_fac is None or _df_fac.empty:
+        return pd.DataFrame()
+    
+    df_f = _df_fac.copy()
+
+    # Calcular Subtotal2
+    sub_v = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
+    desc_v = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
+    df_f['Subtotal2'] = sub_v - desc_v
+
+    # Cruce con EdoCuenta para obtener pagos y calcular saldo pendiente en facturas
+    if _df_edo is not None and not _df_edo.empty and 'DocumentID' in df_f.columns and 'DocumentID' in _df_edo.columns:
+        cols_edo = ['DocumentID', 'Amount', 'DateOperation']
+        if 'EmpresaOrigen' in _df_edo.columns and 'EmpresaOrigen' in df_f.columns:
+            cols_edo.append('EmpresaOrigen')
+
+        df_edo_sub = _df_edo[[c for c in cols_edo if c in _df_edo.columns]].copy()
+        
+        if 'DateOperation' in df_edo_sub.columns:
+            df_edo_sub['DateOperation'] = pd.to_datetime(df_edo_sub['DateOperation'], errors='coerce').dt.strftime('%Y-%m-%d')
+        else:
+            df_edo_sub['DateOperation'] = ""
+
+        group_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_f.columns else 'DocumentID'
+        df_tot_pagado = df_edo_sub.groupby(group_keys)['Amount'].sum().reset_index().rename(columns={'Amount': 'Total_Pagos_Acumulados'})
+
+        df_f = pd.merge(df_f, df_tot_pagado, on=group_keys, how='left')
+        df_f['Total_Pagos_Acumulados'] = df_f['Total_Pagos_Acumulados'].fillna(0.0)
+
+        df_f = pd.merge(df_f, df_edo_sub, on=group_keys, how='left')
+        df_f['Amount'] = df_f['Amount'].fillna(0.0)
+        df_f['DateOperation'] = df_f['DateOperation'].fillna("")
+    else:
+        df_f['Amount'] = 0.0
+        df_f['Total_Pagos_Acumulados'] = 0.0
+        df_f['DateOperation'] = ""
+
+    total_fac_val = pd.to_numeric(df_f['Total'], errors='coerce').fillna(0) if 'Total' in df_f.columns else 0.0
+    df_f['SaldoFactura'] = (total_fac_val - df_f['Total_Pagos_Acumulados']).apply(lambda x: max(0.0, x))
+    return df_f
+
+df_factura_proc = procesar_facturacion_definitivo(df_factura, df_edocuenta)
+
 # --- PROCESAMIENTO OC Y SP ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
@@ -432,7 +478,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             if col_uuid_fc: df_fc_m['UUID_FC'] = df_fc_m[col_uuid_fc].astype(str).str.strip()
             if col_tot_fc: df_fc_m['Monto_FC'] = pd.to_numeric(df_fc_m[col_tot_fc], errors='coerce').fillna(0)
 
-    # 1. SOLICITUDES DE PAGO (SP)
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
@@ -471,7 +516,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
-    # 2. ÓRDENES DE COMPRA (OC)
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
@@ -544,7 +588,7 @@ def mostrar_tabla_filtrada_con_totales(df_entrada, cols_num, cols_orden, clave_p
 
     with c2:
         provs = sorted(df_calc['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_calc.columns else []
-        sel_prov = st.multiselect("Filtrar por Proveedor:", provs, key=f"{clave_prefijo}_prov")
+        sel_prov = st.multiselect("Filtrar por Proveedor / Cliente:", provs, key=f"{clave_prefijo}_prov")
         if sel_prov: df_calc = df_calc[df_calc['BusinessEntityName'].isin(sel_prov)]
 
     with c3:
@@ -596,7 +640,7 @@ submodulo = st.sidebar.radio(
 )
 
 # ==========================================
-# 1. SUBMÓDULO: FACTURACIÓN Y NC
+# 1. SUBMÓDULO: FACTURACIÓN Y NC (Con filtro de Saldo Pendiente > $1.00)
 # ==========================================
 if submodulo == "📊 Facturación":
     columnas_requeridas = [
@@ -607,42 +651,25 @@ if submodulo == "📊 Facturación":
     ]
 
     st.title("📊 Módulo de Facturación y Cobranza")
+    st.markdown("Muestra exclusivamente las facturas que tienen un saldo pendiente real mayor a $1.00")
 
-    if df_factura is not None and not df_factura.empty:
-        df_f = df_factura.copy()
-        
-        # Corrección: calcular Subtotal2 obligatoriamente antes de filtrar o mostrar
-        sub_v = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
-        desc_v = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
-        df_f['Subtotal2'] = sub_v - desc_v
+    if df_factura_proc is not None and not df_factura_proc.empty:
+        # Aplicar filtro estricto de saldo pendiente mayor a 1 peso
+        df_f = df_factura_proc[df_factura_proc['SaldoFactura'] > 1.0].copy()
 
-        st.subheader("Filtros de Búsqueda")
-        col_f1, col_f2, col_f3 = st.columns(3)
-        
-        empresas_disp = sorted(df_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_f.columns else []
-        emp_sel = col_f1.multiselect("Filtrar por Empresa:", empresas_disp)
-        if emp_sel: df_f = df_f[df_f['EmpresaOrigen'].isin(emp_sel)]
+        if not df_f.empty:
+            excel_data = generar_excel_facturacion_ejecutivo(df_f)
+            st.download_button(
+                label="📥 Descargar Reporte de Facturación en Excel",
+                data=excel_data,
+                file_name="Reporte_Facturacion_Servyre.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-        tipos_disp = sorted(df_f['TIPO DOC'].dropna().unique()) if 'TIPO DOC' in df_f.columns else []
-        tipo_sel = col_f2.multiselect("Filtrar por Tipo Doc:", tipos_disp)
-        if tipo_sel: df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
-
-        clientes_disp = sorted(df_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_f.columns else []
-        cli_sel = col_f3.multiselect("Filtrar por Cliente:", clientes_disp)
-        if cli_sel: df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
-
-        st.markdown("---")
-        
-        excel_data = generar_excel_facturacion_ejecutivo(df_f)
-        st.download_button(
-            label="📥 Descargar Reporte de Facturación en Excel",
-            data=excel_data,
-            file_name="Reporte_Facturacion_Servyre.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        cols_num_fac = ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']
-        mostrar_tabla_filtrada_con_totales(df_f, cols_num_fac, columnas_requeridas, "fac")
+            cols_num_fac = ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']
+            mostrar_tabla_filtrada_con_totales(df_f, cols_num_fac, columnas_requeridas, "fac")
+        else:
+            st.info("No hay facturas con saldo pendiente mayor a $1.00.")
     else:
         st.warning("No hay datos disponibles en Facturación.")
 
