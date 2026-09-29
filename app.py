@@ -4,6 +4,56 @@ import os
 
 st.set_page_config(page_title="Facturación - Grupo SERVYRE", layout="wide")
 
+# --- SISTEMA DE CREDENCIALES Y ROLES ---
+USUARIOS = {
+    "admin": {"password": "123", "rol": "Administrador", "modulos": ["Facturación y Cobranza", "Módulo SAT & Amarres"]},
+    "contador": {"password": "456", "rol": "Contabilidad", "modulos": ["Módulo SAT & Amarres"]},
+    "finanzas": {"password": "789", "rol": "Finanzas", "modulos": ["Facturación y Cobranza"]}
+}
+
+def verificar_login():
+    if "autenticado" not in st.session_state:
+        st.session_state.autenticado = False
+        st.session_state.usuario = None
+        st.session_state.rol = None
+        st.session_state.modulos = []
+
+    if not st.session_state.autenticado:
+        st.sidebar.title("🔐 Iniciar Sesión")
+        usuario_ingresado = st.sidebar.text_input("Usuario")
+        password_ingresada = st.sidebar.text_input("Contraseña", type="password")
+        
+        if st.sidebar.button("Entrar"):
+            if usuario_ingresado in USUARIOS and USUARIOS[usuario_ingresado]["password"] == password_ingresada:
+                st.session_state.autenticado = True
+                st.session_state.usuario = usuario_ingresado
+                st.session_state.rol = USUARIOS[usuario_ingresado]["rol"]
+                st.session_state.modulos = USUARIOS[usuario_ingresado]["modulos"]
+                st.rerun()
+            else:
+                st.sidebar.error("Usuario o contraseña incorrectos")
+        return False
+    return True
+
+# Control de ejecución del login
+if not verificar_login():
+    st.stop()
+
+# Si ya inició sesión, mostramos el botón de cerrar sesión en la barra lateral
+st.sidebar.markdown(f"👤 **Usuario:** {st.session_state.usuario} ({st.session_state.rol})")
+if st.sidebar.button("Cerrar Sesión"):
+    st.session_state.autenticado = False
+    st.session_state.usuario = None
+    st.session_state.rol = None
+    st.session_state.modulos = []
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# Selector de Módulos permitidos para este usuario
+modulo_seleccionado = st.sidebar.selectbox("Selecciona el Módulo:", st.session_state.modulos)
+
+# --- CARGA DE DATOS ---
 def formato_mx(val):
     if pd.isnull(val):
         return "$0.00"
@@ -26,7 +76,7 @@ def cargar_datos_facturacion(path):
         xls = pd.ExcelFile(path)
         sheets = xls.sheet_names
 
-        # 1. Cargar FacturaCliente y filtrar Deleted == 1
+        # 1. Cargar FacturaCliente y filtrar Deleted == 0/False
         df_fac = pd.read_excel(path, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
         if not df_fac.empty:
             col_del_fac = 'Deleted' if 'Deleted' in df_fac.columns else ('Delete' if 'Delete' in df_fac.columns else None)
@@ -34,7 +84,7 @@ def cargar_datos_facturacion(path):
                 df_fac = df_fac[pd.to_numeric(df_fac[col_del_fac], errors='coerce').fillna(0) == 0].copy()
             df_fac['TIPO DOC'] = 'F'
 
-        # 2. Cargar NotaCreditoCliente y filtrar Deleted == 1
+        # 2. Cargar NotaCreditoCliente y filtrar Deleted == 0/False
         df_nc = pd.read_excel(path, sheet_name='NotaCreditoCliente') if 'NotaCreditoCliente' in sheets else pd.DataFrame()
         if not df_nc.empty:
             col_del_nc = 'Deleted' if 'Deleted' in df_nc.columns else ('Delete' if 'Delete' in df_nc.columns else None)
@@ -42,7 +92,6 @@ def cargar_datos_facturacion(path):
                 df_nc = df_nc[pd.to_numeric(df_nc[col_del_nc], errors='coerce').fillna(0) == 0].copy()
             df_nc['TIPO DOC'] = 'NC'
 
-        # Consolidar Facturas y Notas de Crédito
         df_facturacion_base = pd.concat([df_fac, df_nc], ignore_index=True) if not df_fac.empty or not df_nc.empty else pd.DataFrame()
 
         # 3. Cargar EdoCuenta y filtrar Amount != 0
@@ -58,105 +107,100 @@ def cargar_datos_facturacion(path):
 
 df_facturacion_raw, df_edocuenta_raw = cargar_datos_facturacion(ruta_archivo)
 
-columnas_requeridas = [
-    'DateDocument', 'EmpresaOrigen', 'DocFolio', 'UUID', 'TIPO DOC',
-    'CFDStatusCancelledName', 'BusinessEntityName', 'TotalRetention',
-    'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total',
-    'StatusComplemento', 'CostCenterName', 'Amount', 'DateOperation', 'SaldoFactura'
-]
+# --- ENRUTAMIENTO DE MÓDULOS SEGÚN PERMISOS ---
+if modulo_seleccionado == "Facturación y Cobranza":
+    columnas_requeridas = [
+        'DateDocument', 'EmpresaOrigen', 'DocFolio', 'UUID', 'TIPO DOC',
+        'CFDStatusCancelledName', 'BusinessEntityName', 'TotalRetention',
+        'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total',
+        'StatusComplemento', 'CostCenterName', 'Amount', 'DateOperation', 'SaldoFactura'
+    ]
 
-st.title("📊 Módulo de Facturación y Cobranza")
+    st.title("📊 Módulo de Facturación y Cobranza")
 
-if df_facturacion_raw is not None and not df_facturacion_raw.empty:
-    df_f = df_facturacion_raw.copy()
+    if df_facturacion_raw is not None and not df_facturacion_raw.empty:
+        df_f = df_facturacion_raw.copy()
 
-    # Cálculo de Subtotal2 (SubTotal - TotalDiscount)
-    subtotal_val = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
-    discount_val = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
-    df_f['Subtotal2'] = subtotal_val - discount_val
+        subtotal_val = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
+        discount_val = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
+        df_f['Subtotal2'] = subtotal_val - discount_val
 
-    # Formatear DateDocument sin hora (YYYY-MM-DD)
-    if 'DateDocument' in df_f.columns:
-        df_f['DateDocument_Fmt'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.strftime('%Y-%m-%d')
-        df_f['Año'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.year.fillna(0).astype(int)
-    else:
-        df_f['DateDocument_Fmt'] = ""
-        df_f['Año'] = 0
-
-    # Cruce directo con EdoCuenta (Desglosa cada pago en un renglón independiente)
-    if df_edocuenta_raw is not None and not df_edocuenta_raw.empty and 'DocumentID' in df_f.columns and 'DocumentID' in df_edocuenta_raw.columns:
-        cols_edo = ['DocumentID', 'Amount', 'DateOperation']
-        if 'EmpresaOrigen' in df_edocuenta_raw.columns and 'EmpresaOrigen' in df_f.columns:
-            cols_edo.append('EmpresaOrigen')
-
-        df_edo_sub = df_edocuenta_raw[[c for c in cols_edo if c in df_edocuenta_raw.columns]].copy()
-        
-        # Formatear DateOperation sin hora
-        if 'DateOperation' in df_edo_sub.columns:
-            df_edo_sub['DateOperation'] = pd.to_datetime(df_edo_sub['DateOperation'], errors='coerce').dt.strftime('%Y-%m-%d')
+        if 'DateDocument' in df_f.columns:
+            df_f['DateDocument_Fmt'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.strftime('%Y-%m-%d')
+            df_f['Año'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.year.fillna(0).astype(int)
         else:
-            df_edo_sub['DateOperation'] = ""
+            df_f['DateDocument_Fmt'] = ""
+            df_f['Año'] = 0
 
-        # Calcular la suma total cobrada por factura para el SaldoFactura
-        group_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_f.columns else 'DocumentID'
-        df_tot_pagado = df_edo_sub.groupby(group_keys)['Amount'].sum().reset_index().rename(columns={'Amount': 'Total_Pagos_Acumulados'})
+        if df_edocuenta_raw is not None and not df_edocuenta_raw.empty and 'DocumentID' in df_f.columns and 'DocumentID' in df_edocuenta_raw.columns:
+            cols_edo = ['DocumentID', 'Amount', 'DateOperation']
+            if 'EmpresaOrigen' in df_edocuenta_raw.columns and 'EmpresaOrigen' in df_f.columns:
+                cols_edo.append('EmpresaOrigen')
 
-        # Cruzar para obtener el total pagado por documento
-        df_f = pd.merge(df_f, df_tot_pagado, on=group_keys, how='left')
-        df_f['Total_Pagos_Acumulados'] = df_f['Total_Pagos_Acumulados'].fillna(0.0)
+            df_edo_sub = df_edocuenta_raw[[c for c in cols_edo if c in df_edocuenta_raw.columns]].copy()
+            
+            if 'DateOperation' in df_edo_sub.columns:
+                df_edo_sub['DateOperation'] = pd.to_datetime(df_edo_sub['DateOperation'], errors='coerce').dt.strftime('%Y-%m-%d')
+            else:
+                df_edo_sub['DateOperation'] = ""
 
-        # Merge directo para desglosar cada pago individual en su propia fila
-        df_f = pd.merge(df_f, df_edo_sub, on=group_keys, how='left')
-        df_f['Amount'] = df_f['Amount'].fillna(0.0)
-        df_f['DateOperation'] = df_f['DateOperation'].fillna("")
+            group_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_f.columns else 'DocumentID'
+            df_tot_pagado = df_edo_sub.groupby(group_keys)['Amount'].sum().reset_index().rename(columns={'Amount': 'Total_Pagos_Acumulados'})
+
+            df_f = pd.merge(df_f, df_tot_pagado, on=group_keys, how='left')
+            df_f['Total_Pagos_Acumulados'] = df_f['Total_Pagos_Acumulados'].fillna(0.0)
+
+            df_f = pd.merge(df_f, df_edo_sub, on=group_keys, how='left')
+            df_f['Amount'] = df_f['Amount'].fillna(0.0)
+            df_f['DateOperation'] = df_f['DateOperation'].fillna("")
+        else:
+            df_f['Amount'] = 0.0
+            df_f['Total_Pagos_Acumulados'] = 0.0
+            df_f['DateOperation'] = ""
+
+        total_fac_val = pd.to_numeric(df_f['Total'], errors='coerce').fillna(0) if 'Total' in df_f.columns else 0.0
+        df_f['SaldoFactura'] = (total_fac_val - df_f['Total_Pagos_Acumulados']).apply(lambda x: max(0.0, x))
+        df_f['DateDocument'] = df_f['DateDocument_Fmt']
+
+        st.markdown("#### ⚙️ Filtros de Selección")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            if 'EmpresaOrigen' in df_f.columns:
+                e_sel = st.multiselect("Empresa Origen:", sorted(df_f['EmpresaOrigen'].dropna().unique()), key="fac_emp")
+                if e_sel: df_f = df_f[df_f['EmpresaOrigen'].isin(e_sel)]
+        with c2:
+            if 'BusinessEntityName' in df_f.columns:
+                cli_sel = st.multiselect("Cliente:", sorted(df_f['BusinessEntityName'].dropna().unique()), key="fac_cli")
+                if cli_sel: df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
+        with c3:
+            if 'TIPO DOC' in df_f.columns:
+                tipo_sel = st.multiselect("Tipo Doc (F/NC):", sorted(df_f['TIPO DOC'].dropna().unique()), key="fac_tipo")
+                if tipo_sel: df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
+        with c4:
+            a_sel = st.multiselect("Año:", sorted([int(a) for a in df_f['Año'].unique() if a > 0], reverse=True), key="fac_anio")
+            if a_sel: df_f = df_f[df_f['Año'].isin(a_sel)]
+
+        st.markdown("---")
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            df_unicos = df_f.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_f.columns and 'DocumentID' in df_f.columns else ['DocFolio'])
+            st.metric("Total Subtotal2", formato_mx(df_unicos['Subtotal2'].sum()))
+        with col_m2:
+            st.metric("Total Facturado", formato_mx(df_unicos['Total'].sum()))
+        with col_m3:
+            st.metric("Saldo Factura Pendiente", formato_mx(df_unicos['SaldoFactura'].sum()))
+
+        df_view = df_f.copy()
+        for col_m in ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']:
+            if col_m in df_view.columns:
+                df_view[col_m] = df_view[col_m].apply(formato_mx)
+
+        cols_disponibles = [c for c in columnas_requeridas if c in df_view.columns]
+        st.dataframe(df_view[cols_disponibles], use_container_width=True)
     else:
-        df_f['Amount'] = 0.0
-        df_f['Total_Pagos_Acumulados'] = 0.0
-        df_f['DateOperation'] = ""
+        st.warning("No hay registros disponibles de Facturas ni Notas de Crédito.")
 
-    # SaldoFactura = Total - Total_Pagos_Acumulados
-    total_fac_val = pd.to_numeric(df_f['Total'], errors='coerce').fillna(0) if 'Total' in df_f.columns else 0.0
-    df_f['SaldoFactura'] = (total_fac_val - df_f['Total_Pagos_Acumulados']).apply(lambda x: max(0.0, x))
-
-    df_f['DateDocument'] = df_f['DateDocument_Fmt']
-
-    st.markdown("#### ⚙️ Filtros de Selección")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        if 'EmpresaOrigen' in df_f.columns:
-            e_sel = st.multiselect("Empresa Origen:", sorted(df_f['EmpresaOrigen'].dropna().unique()), key="fac_emp")
-            if e_sel: df_f = df_f[df_f['EmpresaOrigen'].isin(e_sel)]
-    with c2:
-        if 'BusinessEntityName' in df_f.columns:
-            cli_sel = st.multiselect("Cliente:", sorted(df_f['BusinessEntityName'].dropna().unique()), key="fac_cli")
-            if cli_sel: df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
-    with c3:
-        if 'TIPO DOC' in df_f.columns:
-            tipo_sel = st.multiselect("Tipo Doc (F/NC):", sorted(df_f['TIPO DOC'].dropna().unique()), key="fac_tipo")
-            if tipo_sel: df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
-    with c4:
-        a_sel = st.multiselect("Año:", sorted([int(a) for a in df_f['Año'].unique() if a > 0], reverse=True), key="fac_anio")
-        if a_sel: df_f = df_f[df_f['Año'].isin(a_sel)]
-
-    st.markdown("---")
-    
-    col_m1, col_m2, col_m3 = st.columns(3)
-    with col_m1:
-        # Evitar duplicar totales en métricas usando documentos únicos
-        df_unicos = df_f.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_f.columns and 'DocumentID' in df_f.columns else ['DocFolio'])
-        st.metric("Total Subtotal2", formato_mx(df_unicos['Subtotal2'].sum()))
-    with col_m2:
-        st.metric("Total Facturado", formato_mx(df_unicos['Total'].sum()))
-    with col_m3:
-        st.metric("Saldo Factura Pendiente", formato_mx(df_unicos['SaldoFactura'].sum()))
-
-    # Formatear montos para visualización en tabla
-    df_view = df_f.copy()
-    for col_m in ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']:
-        if col_m in df_view.columns:
-            df_view[col_m] = df_view[col_m].apply(formato_mx)
-
-    cols_disponibles = [c for c in columnas_requeridas if c in df_view.columns]
-    st.dataframe(df_view[cols_disponibles], use_container_width=True)
-else:
-    st.warning("No hay registros disponibles de Facturas ni Notas de Crédito.")
+elif modulo_seleccionado == "Módulo SAT & Amarres":
+    st.title("📑 Módulo SAT & Amarres")
+    st.info("Aquí puedes integrar la lógica completa de amarre de ingresos que construimos anteriormente (con carga de carpetas XML, resúmenes por empresa y auditoría de diferencias).")
