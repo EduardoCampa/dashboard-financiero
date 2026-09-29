@@ -49,16 +49,11 @@ def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
     if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
         return "OTRAS"
-    
-    # Revisar coincidencias exactas en códigos cortos primero
     if val in MAPEO_EMPRESA_ORIGEN:
         return MAPEO_EMPRESA_ORIGEN[val]
-    
-    # Revisar razones sociales de más específico a general (CIVLAT antes que CIV)
     for razon, empresa_corta in sorted(MAPEO_RAZON_A_EMPRESA.items(), key=lambda x: len(x[0]), reverse=True):
         if razon in val:
             return empresa_corta
-            
     return val
 
 
@@ -250,7 +245,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y unificando empresas correctamente..."):
+    with st.spinner("Procesando información y conciliando diferencias..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -365,15 +360,16 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
+                # Filtrar ESTRICTAMENTE solo aquellos UUIDs que tienen diferencia o no existen en alguna base
                 df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
 
-                st.markdown("#### 📊 Resumen de UUIDs con Diferencias")
+                st.markdown("#### 📊 Resumen de UUIDs con Diferencias / Faltantes")
                 col_d1, col_d2 = st.columns(2)
                 col_d1.metric("Total UUIDs Analizados", len(df_concil))
-                col_d2.metric("UUIDs con Diferencia Estricta", len(df_con_dif))
+                col_d2.metric("UUIDs con Diferencia / Faltantes", len(df_con_dif))
 
                 st.markdown("---")
-                st.markdown("#### 📋 Detalle Exclusivo de UUIDs con Diferencias")
+                st.markdown("#### 📋 Detalle Exclusivo de UUIDs con Diferencias o Faltantes en una Base")
                 if not df_con_dif.empty:
                     st.dataframe(
                         df_con_dif[[
