@@ -786,7 +786,7 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
     start_row = 4
     df_reset = df_matriz.reset_index()
     headers = list(df_reset.columns)
-    headers[0] = "EMPRESA / CONCEPTO"
+    headers[0] = "EMPRESA"
 
     for c_idx, h_text in enumerate(headers, start=1):
         cell = ws.cell(row=start_row, column=c_idx, value=h_text)
