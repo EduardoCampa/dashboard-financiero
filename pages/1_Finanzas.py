@@ -139,7 +139,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
 
         ws.cell(row=row_idx, column=1, value=str(r.get('DateDocument', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=2, value=str(r.get('EmpresaOrigen', ''))).alignment = Alignment(horizontal="left")
-        ws.cell(row=row_idx, column=3, value=str(r.get('DocFolio', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=3, value=str(r.get('DocFolio', r.get('Folio', '')))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=4, value=str(r.get('UUID', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=5, value=str(r.get('TIPO DOC', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=6, value=str(r.get('CFDStatusCancelledName', ''))).alignment = Alignment(horizontal="center")
@@ -299,7 +299,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
                     ws.cell(row=row_idx, column=1, value=str(r.get('Tipo_Movimiento', ''))).alignment = Alignment(horizontal="center")
                     ws.cell(row=row_idx, column=2, value=str(r.get('BusinessEntityName', ''))).alignment = Alignment(horizontal="left")
                     ws.cell(row=row_idx, column=3, value=str(r.get('Fecha_Fmt', ''))).alignment = Alignment(horizontal="center")
-                    ws.cell(row=row_idx, column=4, value=str(r.get('DocFolio', ''))).alignment = Alignment(horizontal="center")
+                    ws.cell(row=row_idx, column=4, value=str(r.get('DocFolio', r.get('Folio', '')))).alignment = Alignment(horizontal="center")
                     ws.cell(row=row_idx, column=5, value=str(r.get('DocumentID', ''))).alignment = Alignment(horizontal="center")
                     ws.cell(row=row_idx, column=6, value=str(r.get('UUID', ''))).alignment = Alignment(horizontal="center")
                     ws.cell(row=row_idx, column=7, value=str(r.get('Currency', 'MXN'))).alignment = Alignment(horizontal="center")
@@ -352,11 +352,15 @@ def cargar_datos_finanzas(path):
                 )
             else:
                 df_fac['TIPO DOC'] = 'F'
+            if 'Folio' in df_fac.columns and 'DocFolio' not in df_fac.columns:
+                df_fac['DocFolio'] = df_fac['Folio']
 
         df_nc = pd.read_excel(path, sheet_name='NotaCreditoCliente') if 'NotaCreditoCliente' in sheets else pd.DataFrame()
         df_nc = filtrar_no_eliminados(df_nc)
         if df_nc is not None and not df_nc.empty:
             df_nc['TIPO DOC'] = 'NC'
+            if 'Folio' in df_nc.columns and 'DocFolio' not in df_nc.columns:
+                df_nc['DocFolio'] = df_nc['Folio']
 
         df_facturacion = pd.concat([df_fac, df_nc], ignore_index=True) if not df_fac.empty or not df_nc.empty else pd.DataFrame()
 
@@ -368,9 +372,15 @@ def cargar_datos_finanzas(path):
 
         df_tes = pd.read_excel(path, sheet_name='SolicitudPago') if 'SolicitudPago' in sheets else pd.DataFrame()
         df_tes = filtrar_no_eliminados(df_tes)
+        if df_tes is not None and not df_tes.empty:
+            if 'Folio' in df_tes.columns and 'DocFolio' not in df_tes.columns:
+                df_tes['DocFolio'] = df_tes['Folio']
 
         df_ord = pd.read_excel(path, sheet_name='OrdenCompra') if 'OrdenCompra' in sheets else pd.DataFrame()
         df_ord = filtrar_no_eliminados(df_ord)
+        if df_ord is not None and not df_ord.empty:
+            if 'Folio' in df_ord.columns and 'DocFolio' not in df_ord.columns:
+                df_ord['DocFolio'] = df_ord['Folio']
 
         df_fc = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
         df_fc = filtrar_no_eliminados(df_fc)
@@ -385,20 +395,20 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO FACTURACIÓN (CRUCE CON EDOCUENTA) ---
+# --- PROCESAMIENTO FACTURACIÓN ---
 @st.cache_data
 def procesar_facturacion_definitivo(_df_fac, _df_edo):
     if _df_fac is None or _df_fac.empty:
         return pd.DataFrame()
     
     df_f = _df_fac.copy()
+    if 'DocFolio' not in df_f.columns and 'Folio' in df_f.columns:
+        df_f['DocFolio'] = df_f['Folio']
 
-    # Calcular Subtotal2
     sub_v = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
     desc_v = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
     df_f['Subtotal2'] = sub_v - desc_v
 
-    # Cruce con EdoCuenta para obtener pagos y calcular saldo pendiente en facturas
     if _df_edo is not None and not _df_edo.empty and 'DocumentID' in df_f.columns and 'DocumentID' in _df_edo.columns:
         cols_edo = ['DocumentID', 'Amount', 'DateOperation']
         if 'EmpresaOrigen' in _df_edo.columns and 'EmpresaOrigen' in df_f.columns:
@@ -448,7 +458,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_gs_m = pd.DataFrame()
     if _df_gas is not None and not _df_gas.empty:
-        col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'OrdenCompra', 'DocFolio'] if c in _df_gas.columns), None)
+        col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'OrdenCompra', 'DocFolio', 'Folio'] if c in _df_gas.columns), None)
         col_doc_gs = 'DocumentID' if 'DocumentID' in _df_gas.columns else ('Document' if 'Document' in _df_gas.columns else None)
         col_uuid_gs = next((c for c in ['CFDIFolioFiscal', 'UUID', 'FolioFiscal'] if c in _df_gas.columns), None)
         col_emp_gs = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_gas.columns), None)
@@ -464,7 +474,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_fc_m = pd.DataFrame()
     if _df_fc is not None and not _df_fc.empty:
-        col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'OrdenCompra', 'DocFolio'] if c in _df_fc.columns), None)
+        col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'OrdenCompra', 'DocFolio', 'Folio'] if c in _df_fc.columns), None)
         col_doc_fc = 'DocumentID' if 'DocumentID' in _df_fc.columns else ('Document' if 'Document' in _df_fc.columns else None)
         col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
         col_emp_fc = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_fc.columns), None)
@@ -481,7 +491,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
-            folio_sp = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
+            f_val = row.get('DocFolio', row.get('Folio', ''))
+            folio_sp = str(f_val).replace('.0', '').strip().upper()
             emp = str(row.get('EmpresaOrigen', '')).strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
@@ -502,6 +513,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
+                if 'DocFolio' not in r_copy and 'Folio' in r_copy:
+                    r_copy['DocFolio'] = r_copy['Folio']
                 d_id = item['doc_id']
                 m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
                 r_copy['DocumentID'] = d_id
@@ -519,7 +532,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
-            folio_oc = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
+            f_val = row.get('DocFolio', row.get('Folio', ''))
+            folio_oc = str(f_val).replace('.0', '').strip().upper()
             emp = str(row.get('EmpresaOrigen', '')).strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
@@ -540,6 +554,8 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
+                if 'DocFolio' not in r_copy and 'Folio' in r_copy:
+                    r_copy['DocFolio'] = r_copy['Folio']
                 d_id = item['doc_id']
                 m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
                 r_copy['DocumentID'] = d_id
@@ -569,8 +585,8 @@ columnas_sp_visuales = [
     'TotalRetention', 'Total', 'UUID', 'Amount', 'SaldoPagoSP'
 ]
 
-# --- RENDERIZADOR DE TABLA CON FILTROS INTERACTIVOS ---
-def mostrar_tabla_filtrada_con_totales(df_entrada, cols_num, cols_orden, clave_prefijo):
+# --- RENDERIZADOR DE TABLA CON FILTROS INTERACTIVOS Y KPIs ---
+def mostrar_tabla_filtrada_con_totales(df_entrada, cols_num, cols_orden, clave_prefijo, campo_saldo):
     if df_entrada.empty:
         st.info("No hay registros para mostrar.")
         return
@@ -596,6 +612,15 @@ def mostrar_tabla_filtrada_con_totales(df_entrada, cols_num, cols_orden, clave_p
         sel_folio = st.multiselect("Filtrar por Folio:", folios, key=f"{clave_prefijo}_folio")
         if sel_folio: df_calc = df_calc[df_calc['DocFolio'].isin(sel_folio)]
 
+    st.markdown("---")
+
+    # --- KPIs SUPERIORES DE LA TABLA ---
+    total_docs = len(df_calc)
+    suma_saldo = df_calc[campo_saldo].sum() if campo_saldo in df_calc.columns else 0.0
+
+    kpi_1, kpi_2 = st.columns(2)
+    kpi_1.metric("Documentos Filtrados", f"{total_docs:,}")
+    kpi_2.metric("Saldo Pendiente Filtrado", formato_mx(suma_saldo))
     st.markdown("---")
 
     cols_existentes = [c for c in cols_orden if c in df_calc.columns]
@@ -640,7 +665,7 @@ submodulo = st.sidebar.radio(
 )
 
 # ==========================================
-# 1. SUBMÓDULO: FACTURACIÓN Y NC (Con filtro de Saldo Pendiente > $1.00)
+# 1. SUBMÓDULO: FACTURACIÓN Y NC
 # ==========================================
 if submodulo == "📊 Facturación":
     columnas_requeridas = [
@@ -654,7 +679,6 @@ if submodulo == "📊 Facturación":
     st.markdown("Muestra exclusivamente las facturas que tienen un saldo pendiente real mayor a $1.00")
 
     if df_factura_proc is not None and not df_factura_proc.empty:
-        # Aplicar filtro estricto de saldo pendiente mayor a 1 peso
         df_f = df_factura_proc[df_factura_proc['SaldoFactura'] > 1.0].copy()
 
         if not df_f.empty:
@@ -667,33 +691,36 @@ if submodulo == "📊 Facturación":
             )
 
             cols_num_fac = ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']
-            mostrar_tabla_filtrada_con_totales(df_f, cols_num_fac, columnas_requeridas, "fac")
+            mostrar_tabla_filtrada_con_totales(df_f, cols_num_fac, columnas_requeridas, "fac", "SaldoFactura")
         else:
             st.info("No hay facturas con saldo pendiente mayor a $1.00.")
     else:
         st.warning("No hay datos disponibles en Facturación.")
 
 # ==========================================
-# 2. SUBMÓDULO: ÓRDENES DE COMPRA Y SP
+# 2. SUBMÓDULO: ÓRDENES DE COMPRA Y SP (Con saldo > $1.00)
 # ==========================================
 elif submodulo == "📦 Órdenes de Compra y SP":
     st.title("📦 Órdenes de Compra y Solicitudes de Pago")
+    st.markdown("Muestra exclusivamente registros con saldo pendiente mayor a $1.00")
     
     tab1, tab2 = st.tabs(["Órdenes de Compra (OC)", "Solicitudes de Pago (SP)"])
     
     with tab1:
         st.subheader("Detalle de Órdenes de Compra")
         if not df_ordenes_proc.empty:
+            df_oc_saldo = df_ordenes_proc[df_ordenes_proc['SaldoPagoOC'] > 1.0].copy()
             cols_num_oc = ['Rate', 'SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoOC']
-            mostrar_tabla_filtrada_con_totales(df_ordenes_proc, cols_num_oc, columnas_oc_visuales, "oc")
+            mostrar_tabla_filtrada_con_totales(df_oc_saldo, cols_num_oc, columnas_oc_visuales, "oc", "SaldoPagoOC")
         else:
             st.info("No hay registros en Órdenes de Compra.")
 
     with tab2:
         st.subheader("Detalle de Solicitudes de Pago")
         if not df_tesoreria_proc.empty:
+            df_sp_saldo = df_tesoreria_proc[df_tesoreria_proc['SaldoPagoSP'] > 1.0].copy()
             cols_num_sp = ['Rate', 'SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoSP']
-            mostrar_tabla_filtrada_con_totales(df_tesoreria_proc, cols_num_sp, columnas_sp_visuales, "sp")
+            mostrar_tabla_filtrada_con_totales(df_sp_saldo, cols_num_sp, columnas_sp_visuales, "sp", "SaldoPagoSP")
         else:
             st.info("No hay registros en Solicitudes de Pago.")
 
