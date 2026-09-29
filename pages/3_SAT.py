@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativo, Detalle XML, Master y Conciliación por UUID")
+st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
 # --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES A EMPRESAS ---
 MAPEO_RAZON_A_EMPRESA = {
@@ -25,12 +25,36 @@ MAPEO_RAZON_A_EMPRESA = {
     "GRUPO PESAZA": "PESAZA"
 }
 
+MAPEO_EMPRESA_ORIGEN = {
+    "CIV": "CIV",
+    "CIVLA": "CIVLAT",
+    "CIVLAT": "CIVLAT",
+    "CIVMEX": "CIVMEX",
+    "EFCO": "EFCO",
+    "FERVIC": "FERVIC",
+    "FGS": "FGS",
+    "GRUPO FPSB": "GRUPO FPSB",
+    "GRUPOSERVYRE": "GRUPOSERVYRE",
+    "INMOBILIARIA": "INMOBILIARIA",
+    "LABORATORIO": "LABORATORIO",
+    "LAITS": "LAITS",
+    "LIMPIESPIN": "LIMPIESPIN",
+    "PESAZA": "PESAZA",
+    "SERSENAL": "SERSENAL",
+    "SERVYCARGO": "SERVYCARGO",
+    "SERVYRE": "SERVYRE"
+}
+
 def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
+    if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
+        return "OTRAS"
     for razon, empresa_corta in MAPEO_RAZON_A_EMPRESA.items():
         if razon in val or empresa_corta in val:
             return empresa_corta
-    return val if val and val != 'NAN' else "OTRAS"
+    if val in MAPEO_EMPRESA_ORIGEN:
+        return MAPEO_EMPRESA_ORIGEN[val]
+    return val
 
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
@@ -100,14 +124,27 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                         break
 
                 razon_emisor = ""
+                rfc_emisor = ""
                 for col in df_sat.columns:
-                    if 'razon' in col.lower() and 'emisor' in col.lower():
+                    c_low = col.lower()
+                    if 'razon' in c_low and 'emisor' in c_low:
                         val_razon = str(row.get(col, '')).strip()
                         if val_razon and val_razon.upper() != 'NAN':
                             razon_emisor = val_razon
-                            break
+                    elif 'rfc' in c_low and 'emisor' in c_low:
+                        val_rfc = str(row.get(col, '')).strip()
+                        if val_rfc and val_rfc.upper() != 'NAN':
+                            rfc_emisor = val_rfc
 
+                # Intentar deducir la empresa por razón social o por nombre de archivo / RFC
                 empresa_normalizada = normalizar_empresa(razon_emisor)
+                if empresa_normalizada == "OTRAS":
+                    # Intentar rescatar del nombre del archivo SAT (ej. CIV141222JD5...)
+                    base_nom = os.path.basename(archivo).upper()
+                    for k, v in MAPEO_EMPRESA_ORIGEN.items():
+                        if k in base_nom:
+                            empresa_normalizada = v
+                            break
 
                 subtotal = 0.0
                 descuento = 0.0
@@ -147,7 +184,7 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
     if not os.path.exists(ruta_master):
         return pd.DataFrame(), pd.DataFrame()
 
-    def procesar_hoja(nombre_hoja):
+    def procesar_hoja(nombre_hoja, es_egreso=False):
         try:
             df = pd.read_excel(ruta_master, sheet_name=nombre_hoja)
             if df.empty:
@@ -174,7 +211,11 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 
             subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
             descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
-            df['SubTotal_Neto'] = subtotal - descuento
+            subtotal_neto = subtotal - descuento
+
+            # Poner egresos en negativo si se solicita
+            if es_egreso:
+                subtotal_neto = subtotal_neto.abs() * -1
 
             empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
             empresa_norm = empresa_raw.apply(normalizar_empresa)
@@ -184,15 +225,15 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
                 'UUID': df['UUID'],
                 'CFDIFechaCertificacion': df['Fecha_Cert'],
                 'CFDStatusCancelledName': df['CFDStatusCancelledName'],
-                'SubTotal': df['SubTotal_Neto']
+                'SubTotal': subtotal_neto
             })
 
             return df_final
         except Exception as e:
             return pd.DataFrame()
 
-    df_ingresos_master = procesar_hoja("FacturaCliente")
-    df_egresos_master = procesar_hoja("NotaCreditoCliente")
+    df_ingresos_master = procesar_hoja("FacturaCliente", es_egreso=False)
+    df_egresos_master = procesar_hoja("NotaCreditoCliente", es_egreso=True)
 
     return df_ingresos_master, df_egresos_master
 
@@ -212,7 +253,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y generando las 4 pestañas..."):
+    with st.spinner("Procesando información y aplicando limpieza de empresas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -322,14 +363,12 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.markdown(f"### 🔍 Conciliación por UUID (Ingresos) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
             if not df_ingresos_master.empty and not df_ingresos_sat.empty:
-                # Merge por UUID para comparar SubTotal Master vs SubTotal SAT
                 df_m_agg = df_ingresos_master[['UUID', 'EmpresaOrigen', 'SubTotal']].rename(columns={'SubTotal': 'SubTotal_Master', 'EmpresaOrigen': 'Empresa'})
                 df_s_agg = df_ingresos_sat[['UUID', 'SubTotal']].rename(columns={'SubTotal': 'SubTotal_SAT'})
                 
                 df_concil = pd.merge(df_m_agg, df_s_agg, on='UUID', how='outer').fillna(0.0)
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
-                # Filtrar aquellos con diferencia significativa
                 df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
 
                 st.markdown("#### 📊 Resumen de UUIDs con Diferencia")
