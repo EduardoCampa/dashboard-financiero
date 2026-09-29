@@ -819,7 +819,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
                         cell.number_format = '$#,##0.00'
 
         for col in ws.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
+            max_len = max(len(str(cell.value or '')) for col in col)
             col_letter = get_column_letter(col[0].column)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
         ws.column_dimensions['A'].width = 28
@@ -834,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Ingresos, Costos Base, Cuenta 054 y Costo Neto", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Sin duplicación de cuentas únicas", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1068,7 +1068,7 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Ingresos, Costos Base, Cuenta 054 y Costo Neto)")
+                st.markdown("### 📑 Amarre I y G Intercos (Sin duplicación de cuentas únicas)")
                 st.info("Columna 1: Ingresos facturados. Columna 2: Costos base (-00000-). Columna 3: Cuenta 054. Columna 4: Costos menos Cuenta 054.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
@@ -1087,26 +1087,31 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Ingresos facturados a esta empresa desde las demás
+                        # 1. Ingresos facturados a esta empresa desde las demás (únicos por cuenta)
                         ingresos_facturados_a_emp = 0.0
+                        cuentas_ingresos_proc = set()
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
                                 if emp_facturadora == emp_destino:
                                     continue
                                 recs_f = datos_empresas_recs[emp_facturadora]
                                 for r in recs_f:
-                                    cta = r['cta_raw']
-                                    if cta.startswith('4'):
+                                    cta = r['cta_raw'].strip()
+                                    if cta.startswith('4') and cta not in cuentas_ingresos_proc:
                                         segs = cta.split('-')
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
+                                            cuentas_ingresos_proc.add(cta)
 
-                        # 2. Costos base (-00000-) y Cuenta 054 (-054-)
+                        # 2. Costos base (-00000-) y Cuenta 054 (-054-) sin duplicar
                         costos_base_emp = 0.0
                         cta_054_emp = 0.0
+                        cuentas_base_proc = set()
+                        cuentas_054_proc = set()
+                        
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
-                            cta = r['cta_raw']
+                            cta = r['cta_raw'].strip()
                             segs = cta.split('-')
                             
                             if len(segs) >= 3:
@@ -1115,15 +1120,15 @@ if estructura:
                                 seg3 = segs[2].strip() if len(segs) >= 3 else ''
 
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
-                                    # Cuenta base acumuladora (-00000- o -000-)
                                     es_cuenta_base = (seg2 in ('00000', '0000', '0') or seg3 in ('000', '0'))
-                                    # Cuenta 054 (-054-)
                                     es_054 = ('054' in seg3 or '54' in seg3)
 
-                                    if es_cuenta_base:
+                                    if es_cuenta_base and cta not in cuentas_base_proc:
                                         costos_base_emp += r['saldo_final']
-                                    elif es_054:
+                                        cuentas_base_proc.add(cta)
+                                    elif es_054 and cta not in cuentas_054_proc:
                                         cta_054_emp += r['saldo_final']
+                                        cuentas_054_proc.add(cta)
 
                         costo_neto_emp = costos_base_emp - cta_054_emp
 
@@ -1169,6 +1174,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Estructura separada en 4 columnas: Ingresos, Costos Base, Cuenta 054 y Costo Neto.")
+                    st.success("✅ Cuentas únicas procesadas correctamente sin duplicaciones.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
