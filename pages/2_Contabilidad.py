@@ -834,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas base -00000- menos subcuentas -054-", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Ingresos, Costos Base, Cuenta 054 y Costo Neto", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1068,8 +1068,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Cuentas base -00000- menos subcuentas -054-)")
-                st.info("Suma las cuentas acumuladoras principales (terminadas en -00000-000-0000) y resta/ajusta las subcuentas de detalle con -054-.")
+                st.markdown("### 📑 Amarre I y G Intercos (Ingresos, Costos Base, Cuenta 054 y Costo Neto)")
+                st.info("Columna 1: Ingresos facturados. Columna 2: Costos base (-00000-). Columna 3: Cuenta 054. Columna 4: Costos menos Cuenta 054.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1080,7 +1080,9 @@ if estructura:
 
                     filas_ig = []
                     tot_ingresos_gen = 0.0
-                    tot_costos_gen = 0.0
+                    tot_costos_base_gen = 0.0
+                    tot_cta_054_gen = 0.0
+                    tot_costo_neto_gen = 0.0
 
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
@@ -1099,8 +1101,9 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
 
-                        # 2. Costos de la empresa exacto según tu papel de trabajo: cuenta base -00000- más/menos subcuentas -054-
-                        costos_propios_emp = 0.0
+                        # 2. Costos base (-00000-) y Cuenta 054 (-054-)
+                        costos_base_emp = 0.0
+                        cta_054_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
                             cta = r['cta_raw']
@@ -1111,29 +1114,30 @@ if estructura:
                                 seg2 = segs[1].strip() if len(segs) >= 2 else ''
                                 seg3 = segs[2].strip() if len(segs) >= 3 else ''
 
-                                # Verificar que inicie con 5 o 6 y termine en 1 (ej. 531, 561)
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
-                                    
-                                    # Caso A: Cuenta base acumuladora general (terminada en -00000-000-0000 o similar)
+                                    # Cuenta base acumuladora (-00000- o -000-)
                                     es_cuenta_base = (seg2 in ('00000', '0000', '0') or seg3 in ('000', '0'))
-                                    
-                                    # Caso B: Subcuentas de detalle con -054-
-                                    es_subcuenta_054 = ('054' in seg3 or '54' in seg3)
+                                    # Cuenta 054 (-054-)
+                                    es_054 = ('054' in seg3 or '54' in seg3)
 
                                     if es_cuenta_base:
-                                        costos_propios_emp += r['saldo_final']
-                                    elif es_subcuenta_054:
-                                        # Aplicamos tal cual el saldo de la cuenta -054- (tu imagen muestra que se suman/restan según el renglón)
-                                        costos_propios_emp += r['saldo_final']
+                                        costos_base_emp += r['saldo_final']
+                                    elif es_054:
+                                        cta_054_emp += r['saldo_final']
+
+                        costo_neto_emp = costos_base_emp - cta_054_emp
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
-                        tot_costos_gen += costos_propios_emp
+                        tot_costos_base_gen += costos_base_emp
+                        tot_cta_054_gen += cta_054_emp
+                        tot_costo_neto_gen += costo_neto_emp
 
                         filas_ig.append({
                             'EMPRESA': emp_destino,
-                            'INGRESOS FACTURADOS A LA EMPRESA': ingresos_facturados_a_emp,
-                            'COSTO DE LA EMPRESA': costos_propios_emp,
-                            'DIFERENCIA': ingresos_facturados_a_emp - costos_propios_emp,
+                            'INGRESOS FACTURADOS': ingresos_facturados_a_emp,
+                            'COSTOS BASE (-00000-)': costos_base_emp,
+                            'CUENTA 054': cta_054_emp,
+                            'COSTO NETO (COSTOS - 054)': costo_neto_emp,
                         })
 
                     df_ig_resumen = pd.DataFrame(filas_ig)
@@ -1141,15 +1145,16 @@ if estructura:
                     # Fila de Total
                     df_ig_resumen.loc[len(df_ig_resumen)] = {
                         'EMPRESA': 'TOTAL',
-                        'INGRESOS FACTURADOS A LA EMPRESA': tot_ingresos_gen,
-                        'COSTO DE LA EMPRESA': tot_costos_gen,
-                        'DIFERENCIA': tot_ingresos_gen - tot_costos_gen,
+                        'INGRESOS FACTURADOS': tot_ingresos_gen,
+                        'COSTOS BASE (-00000-)': tot_costos_base_gen,
+                        'CUENTA 054': tot_cta_054_gen,
+                        'COSTO NETO (COSTOS - 054)': tot_costo_neto_gen,
                     }
 
                     st.dataframe(
                         df_ig_resumen.style.format({
-                            'INGRESOS FACTURADOS A LA EMPRESA': '${:,.2f}',
-                            'COSTO DE LA EMPRESA': '${:,.2f}',                             'DIFERENCIA': '${:,.2f}',
+                            'INGRESOS FACTURADOS': '${:,.2f}',                             'COSTOS BASE (-00000-)': '${:,.2f}',
+                            'CUENTA 054': '${:,.2f}',                             'COSTO NETO (COSTOS - 054)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -1164,6 +1169,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Lógica ajustada exactamente a tu papel de trabajo: cuentas base -00000- y subcuentas -054-.")
+                    st.success("✅ Estructura separada en 4 columnas: Ingresos, Costos Base, Cuenta 054 y Costo Neto.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
