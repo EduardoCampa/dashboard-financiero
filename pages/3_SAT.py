@@ -16,6 +16,26 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT & Amarres")
 
+# Diccionario de equivalencia: Empresa Origen (BusinessEntityName) -> RFC Emisor SAT
+MAPEO_EMPRESA_RFC = {
+    "CIV": "CIV1009089B0",
+    "CIVLA": "CIV141222JD5",
+    "CIVMEX": "CIV141204DN5",
+    "EFCO": "EFC840210UI4",
+    "FERVIC": "GFE811209FZ2",
+    "FGS": "FSI100908CM7",
+    "GRUPO FPSB": "GFP1409118E0",
+    "GRUPOSERVYRE": "GSE0201315C9",
+    "INMOBILIARIA": "IPS1802069U3",
+    "LABORATORIO": "LMA160202RS4",
+    "LAITS": "LAI130114KT7",
+    "LIMPIESPIN": "LIM100513860",
+    "PESAZA": "GPE100907IMA",
+    "SERSENAL": "", # Sin RFC asignado todavía
+    "SERVYCARGO": "SER100803D12",
+    "SERVYRE": "SER970728JN8"
+}
+
 def parse_monto_robusto(val):
     if pd.isnull(val):
         return 0.0
@@ -29,7 +49,7 @@ def parse_monto_robusto(val):
 
 
 def consolidar_excels_sat(carpeta_xmls="XML"):
-    """Lee y consolida los archivos de Excel del SAT."""
+    """Lee y consolida los archivos de Excel del SAT, extrayendo UUID y RFC Emisor."""
     registros_xml = []
     archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) or glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
     
@@ -47,6 +67,15 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                             break
                 if not uuid:
                     continue
+
+                # Extracción del RFC Emisor
+                rfc_emisor = ""
+                for col in df_sat.columns:
+                    if 'rfc' in col.lower() and ('emisor' in col.lower() or 'rfc' == col.lower()):
+                        val_rfc = str(row.get(col, '')).strip().upper()
+                        if val_rfc and val_rfc != 'NAN':
+                            rfc_emisor = val_rfc
+                            break
 
                 fecha_emision = ""
                 for col in df_sat.columns:
@@ -70,6 +99,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
                 registros_xml.append({
                     'UUID': uuid,
+                    'RFC_Emisor': rfc_emisor,
                     'Fecha emision': fecha_emision,
                     'Razon receptor': razon_receptor if razon_receptor != 'nan' else '',
                     'SubTotal': obtener_val(['subtotal', 'sub total']),
@@ -86,7 +116,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None):
-    """Carga y filtra la pestaña FacturaCliente únicamente por Año usando DateDocument."""
+    """Carga y filtra la pestaña FacturaCliente por Año usando DateDocument."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     try:
@@ -98,12 +128,19 @@ def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_f
         if 'UUID' in df.columns:
             df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '')]
         
+        # Asegurarnos de conservar BusinessEntityName para el cruce por empresa
         cols_a_agrupar = ['UUID', 'BusinessEntityName']
         cols_numericas = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total']
         existentes_grupo = [c for c in cols_a_agrupar if c in df.columns]
         existentes_num = [c for c in cols_numericas if c in df.columns]
         
-        return df.groupby(existentes_grupo, as_index=False)[existentes_num].sum() if existentes_grupo else df
+        # Si existe BusinessEntityName, agregamos una columna de RFC teórica basada en nuestro diccionario
+        df_agrupado = df.groupby(existentes_grupo, as_index=False)[existentes_num].sum() if existentes_grupo else df
+        
+        if 'BusinessEntityName' in df_agrupado.columns:
+            df_agrupado['RFC_Esperado'] = df_agrupado['BusinessEntityName'].map(MAPEO_EMPRESA_RFC).fillna('')
+            
+        return df_agrupado
     except Exception:
         return pd.DataFrame()
 
@@ -139,7 +176,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
 
 # --- INTERFAZ DEL MÓDULO SAT ---
-# Dejamos únicamente el selector de Año
 anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
 
 st.markdown("---")
@@ -151,39 +187,47 @@ with subtab_rh:
     st.info("Módulo para validación de nóminas y retenciones de sueldos y salarios contra CONTPAQi y SAT.")
 
 with subtab_ingresos:
-    st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs Excel del SAT - Anual)")
-    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` para el año **{anio_sel}** y lo cruza contra los reportes en Excel del SAT.")
+    st.markdown("### 💰 Amarre de Ingresos (Base de Facturación por Empresa vs Excel del SAT - Anual)")
+    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` para el año **{anio_sel}**, mapeando la empresa de origen (`BusinessEntityName`) con su respectivo RFC y cruzándolo con los reportes del SAT.")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
-    if st.button("🚀 Ejecutar Amarre de Ingresos Anual"):
-        with st.spinner("Procesando base de facturación filtrada y archivos Excel del SAT..."):
-            # Se invoca pasando solo el año seleccionado
+    if st.button("🚀 Ejecutar Amarre por Empresa / RFC"):
+        with st.spinner("Procesando base de facturación y archivos Excel del SAT..."):
             df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx", anio_filtro=anio_sel)
             df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
             if df_fact_base.empty:
-                st.warning(f"No se encontraron registros en 'FacturaCliente' para el año {anio_sel} (DateDocument).")
+                st.warning(f"No se encontraron registros en 'FacturaCliente' para el año {anio_sel}.")
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
+                # Realizamos el merge prioritariamente por UUID, y validamos concordancia de RFC si es necesario
                 df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('_Fact', '_SAT'))
+                
                 tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
                 tot_sat = 'Total_SAT' if 'Total_SAT' in df_amarre.columns else 'Total_y'
                 
                 df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_sat].fillna(0.0)
+                
+                # Opcional: Columna para revisar si el RFC emisor del SAT coincide con el mapeado por la Empresa
+                if 'RFC_Esperado' in df_amarre.columns and 'RFC_Emisor' in df_amarre.columns:
+                    df_amarre['Validacion_RFC'] = df_amarre.apply(
+                        lambda row: 'Coincide' if str(row['RFC_Emisor']).strip() == str(row['RFC_Esperado']).strip() else 'Diferente/Revisar',
+                        axis=1
+                    )
 
-                st.success("✅ Amarre de ingresos anual realizado correctamente.")
+                st.success("✅ Amarre por empresa y RFC realizado correctamente.")
                 st.dataframe(df_amarre, use_container_width=True)
 
                 output_ingresos = exportar_excel_matriz_individual(
                     df_amarre.set_index('UUID') if 'UUID' in df_amarre.columns else df_amarre,
-                    "REPORTE DE AMARRE DE INGRESOS ANUAL",
+                    "REPORTE DE AMARRE DE INGRESOS POR EMPRESA / RFC",
                     f"Ejercicio Fiscal: {anio_sel} | Base Facturación vs Excel SAT"
                 )
                 st.download_button(
-                    label="📥 Descargar Excel - Amarre de Ingresos Anual",
+                    label="📥 Descargar Excel - Amarre por Empresa",
                     data=output_ingresos,
-                    file_name=f"Amarre_Ingresos_{anio_sel}.xlsx",
+                    file_name=f"Amarre_Ingresos_Empresas_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
