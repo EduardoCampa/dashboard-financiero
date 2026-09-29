@@ -11,10 +11,10 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
-# --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES Y EMPRESAS ---
+# --- DICCIONARIO OFICIAL DE MAPEO (ORDENADO DE MÁS ESPECÍFICO A GENERAL) ---
 MAPEO_RAZON_A_EMPRESA = {
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
     "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
     "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
     "GRUPO FERVIC": "FERVIC",
@@ -26,9 +26,9 @@ MAPEO_RAZON_A_EMPRESA = {
 }
 
 MAPEO_EMPRESA_ORIGEN = {
-    "CIV": "CIV",
-    "CIVLA": "CIVLAT",
     "CIVLAT": "CIVLAT",
+    "CIVLA": "CIVLAT",
+    "CIV": "CIV",
     "CIVMEX": "CIVMEX",
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
@@ -49,11 +49,16 @@ def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
     if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
         return "OTRAS"
+    
+    # Revisar coincidencias exactas en códigos cortos primero
     if val in MAPEO_EMPRESA_ORIGEN:
         return MAPEO_EMPRESA_ORIGEN[val]
-    for razon, empresa_corta in MAPEO_RAZON_A_EMPRESA.items():
-        if razon in val or empresa_corta in val:
+    
+    # Revisar razones sociales de más específico a general (CIVLAT antes que CIV)
+    for razon, empresa_corta in sorted(MAPEO_RAZON_A_EMPRESA.items(), key=lambda x: len(x[0]), reverse=True):
+        if razon in val:
             return empresa_corta
+            
     return val
 
 
@@ -95,7 +100,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             estado = val_est
                             break
                 
-                # Filtrar estrictamente solo VIGENTE
                 if 'VIGENTE' not in estado:
                     continue
 
@@ -189,7 +193,6 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             else:
                 return pd.DataFrame()
 
-            # Filtrar estrictamente solo VIGENTE (insensible a mayúsculas/minúsculas)
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
 
@@ -247,7 +250,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y filtrando vigentes..."):
+    with st.spinner("Procesando información y unificando empresas correctamente..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -362,7 +365,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
-                # Filtrar ESTRICTAMENTE solo aquellos UUIDs que tienen diferencia real en monto
                 df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
 
                 st.markdown("#### 📊 Resumen de UUIDs con Diferencias")
