@@ -160,6 +160,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
     return pd.read_excel(ruta, sheet_name=nombre_hoja)
 
 
+# --- EXTRACCIÓN ORIGINAL INTACTA PARA ESTADOS DE RESULTADOS ---
 @st.cache_data(ttl=600)
 def extraer_registros_balanza(ruta, nombre_hoja):
     df_b = cargar_hoja_balanza(ruta, nombre_hoja)
@@ -168,9 +169,10 @@ def extraer_registros_balanza(ruta, nombre_hoja):
 
     num_cols = df_b.shape[1]
     col_cta = 0
-    
-    col_deudor_f = 6 if num_cols > 6 else num_cols - 2
-    col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+    col_cargos_m = num_cols - 4
+    col_abonos_m = num_cols - 3
+    col_deudor_f = num_cols - 2
+    col_acreedor_f = num_cols - 1
 
     balanza_records = []
     for _, row in df_b.iterrows():
@@ -181,16 +183,17 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
             continue
 
+        cargos_m = parse_monto_robusto(row.iloc[col_cargos_m])
+        abonos_m = parse_monto_robusto(row.iloc[col_abonos_m])
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-        
-        saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
             'cta_raw': cta_raw,
+            'cargos_m': cargos_m,
+            'abonos_m': abonos_m,
             'deudor_f': deudor_f,
             'acreedor_f': acreedor_f,
-            'saldo_final': saldo_final,
         })
     return balanza_records
 
@@ -379,6 +382,7 @@ def obtener_monto_cuenta_balanza(
             else:
                 return 0.0
 
+    p_prefix = pt.split('-')[0].strip() if '-' in pt else pt[:3]
     pt_clean = re.sub(r'[^0-9A-Za-z]', '', pt)
 
     exact_match = None
@@ -408,9 +412,19 @@ def obtener_monto_cuenta_balanza(
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            monto += b.get('deudor_f', 0.0) - b.get('acreedor_f', 0.0)
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['cargos_m'] - b['abonos_m'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['abonos_m'] - b['cargos_m']
+            else:
+                monto += b['cargos_m'] - b['abonos_m']
         else:
-            monto += b['saldo_final']
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['deudor_f'] - b['acreedor_f'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['acreedor_f'] - b['deudor_f']
+            else:
+                monto += b['deudor_f'] - b['acreedor_f']
 
     return monto
 
@@ -785,7 +799,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     start_row = 4
     
-    # Escribir Encabezados
     ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
     ws.cell(row=start_row, column=1).font = HEADER_FONT
     ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -799,12 +812,10 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     ws.row_dimensions[start_row].height = 28
 
-    # Escribir Filas
     for r_i, (idx_name, row_series) in enumerate(df_matriz.iterrows()):
         curr_row = start_row + 1 + r_i
         is_tot_row = (r_i == len(df_matriz) - 1 or str(idx_name).upper() == 'TOTAL')
 
-        # Columna de índice (Empresa fila)
         cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
         if is_tot_row:
             cell_idx.font = TOTAL_FONT
@@ -815,7 +826,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
             cell_idx.border = THIN_BORDER
         cell_idx.alignment = Alignment(horizontal="left", vertical="center")
 
-        # Celdas de valores
         for c_i, col_name in enumerate(cols_matriz, start=2):
             val = row_series[col_name]
             cell = ws.cell(row=curr_row, column=c_i)
@@ -1018,7 +1028,26 @@ if estructura:
                 if todas_empresas_balanza:
                     datos_empresas_recs = {}
                     for emp in todas_empresas_balanza:
-                        datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+                        df_b_raw = cargar_hoja_balanza(ruta_balanza, emp)
+                        num_cols = df_b_raw.shape[1]
+                        col_cta = 0
+                        col_deudor_f = 6 if num_cols > 6 else num_cols - 2
+                        col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+
+                        recs_list = []
+                        for _, row in df_b_raw.iterrows():
+                            cta_raw = str(row.iloc[col_cta]).strip()
+                            if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+                                continue
+                            if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+                                continue
+                            d_f = parse_monto_robusto(row.iloc[col_deudor_f])
+                            a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+                            recs_list.append({
+                                'cta_raw': cta_raw,
+                                'saldo_final': d_f - a_f
+                            })
+                        datos_empresas_recs[emp] = recs_list
 
                     # --- MATRIZ 1: FACTURACIÓN ---
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
@@ -1113,7 +1142,28 @@ if estructura:
                 if todas_empresas_balanza:
                     datos_empresas_recs = {}
                     for emp in todas_empresas_balanza:
-                        datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
+                        df_b_raw = cargar_hoja_balanza(ruta_balanza, emp)
+                        num_cols = df_b_raw.shape[1]
+                        col_cta = 0
+                        col_deudor_f = 6 if num_cols > 6 else num_cols - 2
+                        col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+
+                        recs_list = []
+                        for _, row in df_b_raw.iterrows():
+                            cta_raw = str(row.iloc[col_cta]).strip()
+                            if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+                                continue
+                            if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+                                continue
+                            d_f = parse_monto_robusto(row.iloc[col_deudor_f])
+                            a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+                            recs_list.append({
+                                'cta_raw': cta_raw,
+                                'deudor_f': d_f,
+                                'acreedor_f': a_f,
+                                'saldo_final': d_f - a_f
+                            })
+                        datos_empresas_recs[emp] = recs_list
 
                     filas_ig = []
                     tot_ingresos_gen = 0.0
@@ -1125,7 +1175,6 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Ingresos facturados a esta empresa desde las demás
                         ingresos_facturados_a_emp = 0.0
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
@@ -1139,7 +1188,6 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
-                        # 2. Costos base y cuenta 054 exacta
                         costos_base_emp = 0.0
                         cta_054_emp = 0.0
                         cuentas_base_proc = set()
