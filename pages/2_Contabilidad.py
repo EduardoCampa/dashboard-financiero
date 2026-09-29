@@ -350,7 +350,7 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL (100% FIEL Y EXACTO) ---
+# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL (CORREGIDO CON SIGNO POSITIVO PARA VENTAS/INGRESOS) ---
 def obtener_monto_cuenta_balanza(
     patron_template,
     balanza_records,
@@ -402,14 +402,14 @@ def obtener_monto_cuenta_balanza(
     for b in records_a_sumar:
         if tipo == 'mes':
             if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['cargos_m'] - b['abonos_m'])
+                monto += abs(b['abonos_m'] - b['cargos_m'])
             elif p_prefix.startswith(('4', '720', '730')):
                 monto += b['abonos_m'] - b['cargos_m']
             else:
                 monto += b['cargos_m'] - b['abonos_m']
         else:
             if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
-                monto += abs(b['deudor_f'] - b['acreedor_f'])
+                monto += abs(b['acreedor_f'] - b['deudor_f'])
             elif p_prefix.startswith(('4', '720', '730')):
                 monto += b['acreedor_f'] - b['deudor_f']
             else:
