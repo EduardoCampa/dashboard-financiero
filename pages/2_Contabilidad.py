@@ -1069,7 +1069,7 @@ if estructura:
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre I y G Intercos (Ingresos facturados y Costos Intercos)")
-                st.info("Columna 1: Ingresos facturados por otras empresas a esta. Columna 2: Costos base intercos (-00000-0000). Columna 3: Cuenta 054-0000. Columna 4: Costos netos (Costos base - Cuenta 054).")
+                st.info("Columna 1: Ingresos facturados. Columna 2: Costos base (-00000-0000). Columna 3: Cuenta 054-0000. Columna 4: Costo neto. Columna 5: Diferencia (Ingresos - Costo Neto).")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1083,6 +1083,7 @@ if estructura:
                     tot_costos_base_gen = 0.0
                     tot_cta_054_gen = 0.0
                     tot_costo_neto_gen = 0.0
+                    tot_diferencia_gen = 0.0
 
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
@@ -1132,11 +1133,15 @@ if estructura:
                                         cuentas_054_proc.add(cta)
 
                         costo_neto_emp = costos_base_emp - cta_054_emp
+                        
+                        # 3. Quinta columna: Diferencia (Ingresos facturados - Costo neto)
+                        diferencia_emp = ingresos_facturados_a_emp - costo_neto_emp
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
                         tot_costos_base_gen += costos_base_emp
                         tot_cta_054_gen += cta_054_emp
                         tot_costo_neto_gen += costo_neto_emp
+                        tot_diferencia_gen += diferencia_emp
 
                         filas_ig.append({
                             'EMPRESA': emp_destino,
@@ -1144,6 +1149,7 @@ if estructura:
                             'COSTOS BASE (-00000-)': costos_base_emp,
                             'CUENTA 054': cta_054_emp,
                             'COSTO NETO (COSTOS - 054)': costo_neto_emp,
+                            'DIFERENCIA (INGRESOS - COSTO NETO)': diferencia_emp,
                         })
 
                     df_ig_resumen = pd.DataFrame(filas_ig)
@@ -1154,12 +1160,14 @@ if estructura:
                         'COSTOS BASE (-00000-)': tot_costos_base_gen,
                         'CUENTA 054': tot_cta_054_gen,
                         'COSTO NETO (COSTOS - 054)': tot_costo_neto_gen,
+                        'DIFERENCIA (INGRESOS - COSTO NETO)': tot_diferencia_gen,
                     }
 
                     st.dataframe(
                         df_ig_resumen.style.format({
-                            'INGRESOS FACTURADOS': '${:,.2f}',                             'COSTOS BASE (-00000-)': '${:,.2f}',
-                            'CUENTA 054': '${:,.2f}',                             'COSTO NETO (COSTOS - 054)': '${:,.2f}',
+                            'INGRESOS FACTURADOS': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
