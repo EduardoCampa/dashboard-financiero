@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
-# --- DICCIONARIO OFICIAL DE MAPEO Y UNIFICACIÓN DE EMPRESAS ---
+# --- DICCIONARIO OFICIAL DE MAPEO (ORDENADO DE MÁS ESPECÍFICO A GENERAL) ---
 MAPEO_RAZON_A_EMPRESA = {
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
@@ -245,7 +245,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y unificando empresas..."):
+    with st.spinner("Procesando información y conciliando diferencias..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -360,6 +360,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
+                # Filtrar ESTRICTAMENTE solo aquellos UUIDs que tienen diferencia o no existen en alguna base
                 df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
 
                 st.markdown("#### 📊 Resumen de UUIDs con Diferencias / Faltantes")
