@@ -839,7 +839,7 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
     return output.getvalue()
 
 
-# --- FUNCIONES PARA AMARRE DE INGRESOS (EXCELES DEL SAT) ---
+# --- FUNCIONES PARA AMARRE DE INGRESOS (FILTRADO POR AÑO Y MES DE DateDocument) ---
 def consolidar_excels_sat(carpeta_xmls="XML"):
     """Lee y consolida los archivos de Excel del SAT que enlistan los comprobantes."""
     registros_xml = []
@@ -913,21 +913,39 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
     return pd.DataFrame(registros_xml)
 
 
-def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx"):
-    """Carga y agrupa la pestaña FacturaCliente del consolidado master."""
+def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_filtro=None):
+    """Carga, filtra por Año y Mes (usando DateDocument) y agrupa la pestaña FacturaCliente."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
     try:
         df = pd.read_excel(ruta_master, sheet_name="FacturaCliente")
+        
+        # Filtrar por Año y Mes usando DateDocument
+        if 'DateDocument' in df.columns:
+            df['DateDocument'] = pd.to_datetime(df['DateDocument'], errors='coerce')
+            if anio_filtro:
+                df = df[df['DateDocument'].dt.year == int(anio_filtro)]
+            if mes_filtro:
+                df = df[df['DateDocument'].dt.month == int(mes_filtro)]
+
+        # Filtrar solo UUIDs con información
         if 'UUID' in df.columns:
             df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '')]
         
+        # Seleccionar y agrupar columnas solicitadas para base de facturación
         cols_a_agrupar = ['UUID', 'BusinessEntityName']
         cols_numericas = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total']
+        
+        # Asegurarnos de conservar solo las columnas que existan
+        existentes_grupo = [c for c in cols_a_agrupar if c in df.columns]
         existentes_num = [c for c in cols_numericas if c in df.columns]
         
-        df_grouped = df.groupby(cols_a_agrupar, as_index=False)[existentes_num].sum()
+        if existentes_grupo:
+            df_grouped = df.groupby(existentes_grupo, as_index=False)[existentes_num].sum()
+        else:
+            df_grouped = df
+            
         return df_grouped
     except Exception:
         return pd.DataFrame()
@@ -1103,21 +1121,22 @@ if estructura:
 
             with subtab_ingresos:
                 st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs Excel del SAT)")
-                st.info("Cruza la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` contra los reportes en Excel del SAT.")
+                st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` por el periodo **{mes_sel}/{anio_sel}** (según `DateDocument`) y lo cruza contra los Excel del SAT.")
 
                 carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
                 if st.button("🚀 Ejecutar Amarre de Ingresos"):
-                    with st.spinner("Procesando base de facturación y archivos Excel del SAT..."):
-                        df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx")
+                    with st.spinner("Procesando base de facturación filtrada y archivos Excel del SAT..."):
+                        # Pasar año y mes seleccionados para filtrar por DateDocument
+                        df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx", anio_filtro=anio_sel, mes_filtro=mes_sel)
                         df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
                         if df_fact_base.empty:
-                            st.warning("No se encontraron registros en la pestaña 'FacturaCliente' de Consolidado_Master.xlsx.")
+                            st.warning(f"No se encontraron registros en 'FacturaCliente' para el periodo {mes_sel}/{anio_sel} (DateDocument).")
                         elif df_xml_sat.empty:
                             st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
                         else:
-                            # Realizar el merge por UUID
+                            # Realizar el merge (amarre) por UUID
                             df_amarre = pd.merge(
                                 df_fact_base,
                                 df_xml_sat,
