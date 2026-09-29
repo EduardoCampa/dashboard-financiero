@@ -1,4 +1,4 @@
-import glob
+}import glob
 import io
 import json
 import os
@@ -46,7 +46,7 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL Y EXACTO DE CÓDIGOS DE CONTPAQI (4 DÍGITOS)
+# MAPEO OFICIAL Y EXACTO DE CÓDICOS DE CONTPAQI (4 DÍGITOS)
 MAPEO_CODIGO_EMPRESA = {
     "0468": "CIVLAT",
     "0467": "CIV",
@@ -169,12 +169,14 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     num_cols = df_b.shape[1]
     col_cta = 0
     
-    # Índices exactos para Movimientos del Periodo (Deudor / Acreedor) y Saldo Final
-    col_deudor_mes = 2 if num_cols > 2 else 0
-    col_acreedor_mes = 3 if num_cols > 3 else 0
+    # Columnas típicas en balanzas CONTPAQi:
+    # Col 0: Cuenta, Col 1: Nombre, Col 2: Cargos/Deudor del Mes, Col 3: Abonos/Acreedor del Mes
+    # Col 6: Cargos/Deudor Acumulado, Col 7: Abonos/Acreedor Acumulado (o últimas 2 columnas)
+    col_deudor_mes = 2 if num_cols > 3 else 0
+    col_acreedor_mes = 3 if num_cols > 3 else 1
     
-    col_deudor_f = 6 if num_cols > 6 else num_cols - 2
-    col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+    col_deudor_ac = 6 if num_cols > 6 else num_cols - 2
+    col_acreedor_ac = 7 if num_cols > 7 else num_cols - 1
 
     balanza_records = []
     for _, row in df_b.iterrows():
@@ -185,20 +187,20 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
             continue
 
-        # Movimientos del Periodo (Mes)
-        deudor_m = parse_monto_robusto(row.iloc[col_deudor_mes]) if num_cols > 3 else 0.0
-        acreedor_m = parse_monto_robusto(row.iloc[col_acreedor_mes]) if num_cols > 3 else 0.0
+        # 1. Movimientos del Mes (Deudor - Acreedor del periodo mensual)
+        deudor_m = parse_monto_robusto(row.iloc[col_deudor_mes])
+        acreedor_m = parse_monto_robusto(row.iloc[col_acreedor_mes])
         neto_mes = deudor_m - acreedor_m
 
-        # Saldos Acumulados
-        deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
-        acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-        saldo_final = deudor_f - acreedor_f
+        # 2. Saldo Acumulado (Deudor - Acreedor acumulado al periodo)
+        deudor_ac = parse_monto_robusto(row.iloc[col_deudor_ac])
+        acreedor_ac = parse_monto_robusto(row.iloc[col_acreedor_ac])
+        saldo_acumulado = deudor_ac - acreedor_ac
 
         balanza_records.append({
             'cta_raw': cta_raw,
             'neto_mes': neto_mes,
-            'saldo_final': saldo_final,
+            'saldo_acumulado': saldo_acumulado,
         })
     return balanza_records
 
@@ -418,7 +420,7 @@ def obtener_monto_cuenta_balanza(
         if tipo == 'mes':
             monto += b.get('neto_mes', 0.0)
         else:
-            monto += b.get('saldo_final', 0.0)
+            monto += b.get('saldo_acumulado', 0.0)
 
     return monto
 
@@ -793,7 +795,6 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
         start_row = 4
         
-        # Escribir Encabezados
         ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
         ws.cell(row=start_row, column=1).font = HEADER_FONT
         ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -807,7 +808,6 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
         ws.row_dimensions[start_row].height = 28
 
-        # Escribir Filas
         for r_i, (idx_name, row_series) in enumerate(df_data.iterrows()):
             curr_row = start_row + 1 + r_i
             is_tot_row = (r_i == len(df_data) - 1 or str(idx_name).upper() == 'TOTAL')
@@ -845,15 +845,12 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
             ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
         ws.column_dimensions['A'].width = 28
 
-    # --- HOJA 1: FACTURACIÓN ---
     ws1 = wb.create_sheet(title="1. Facturación")
     poblar_hoja_excel(ws1, "REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN", f"Periodo: {mes}/{anio} | Cuentas: Clientes (101-00004) y Proveedores (201)", df_fact)
 
-    # --- HOJA 2: PRÉSTAMOS ---
     ws2 = wb.create_sheet(title="2. Préstamos")
     poblar_hoja_excel(ws2, "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS", f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)", df_prest)
 
-    # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
     poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Filtrando niveles acumuladores y excluyendo -054-", df_ig.set_index('EMPRESA') if 'EMPRESA' in df_ig.columns else df_ig)
 
@@ -907,7 +904,7 @@ if estructura:
         col_ob1, col_ob2 = st.columns([1, 3])
         with col_ob1:
             st.write("")
-            st.write("🏗️️ **Filtro de Obras:**")
+            st.write("🏗 **Filtro de Obras:**")
         with col_ob2:
             obras_a_excluir = st.multiselect(
                 "🚫 Excluir Obra(s) del Consolidado (ej. RM CARRETERO / 26001):",
@@ -1043,7 +1040,6 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    # --- TABLA 1: FACTURACIÓN ---
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1058,7 +1054,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    monto = r['saldo_final']
+                                    monto = r['saldo_acumulado']
                                     if cta.startswith("201-"):
                                         monto = -monto
                                     matriz_fact.loc[emp_receptora, emp_origen] += monto
@@ -1066,7 +1062,6 @@ if estructura:
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
 
-                    # --- TABLA 2: PRÉSTAMOS ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1081,7 +1076,7 @@ if estructura:
                                 emp_origen = MAPEO_CODIGO_EMPRESA.get(cod_contraparte, None)
 
                                 if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
-                                    monto = r['saldo_final']
+                                    monto = r['saldo_acumulado']
                                     if cta.startswith("202-00001") or "202-" in cta:
                                         monto = -abs(monto)
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
@@ -1175,6 +1170,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Filtro de movimientos del mes y acumulados configurados correctamente.")
+                    st.success("✅ Estructura de columnas y cálculos corregidos con éxito.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
