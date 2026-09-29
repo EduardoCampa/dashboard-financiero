@@ -785,7 +785,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     start_row = 4
     
-    # Escribir Encabezados
     ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
     ws.cell(row=start_row, column=1).font = HEADER_FONT
     ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
@@ -799,12 +798,10 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
 
     ws.row_dimensions[start_row].height = 28
 
-    # Escribir Filas
     for r_i, (idx_name, row_series) in enumerate(df_matriz.iterrows()):
         curr_row = start_row + 1 + r_i
         is_tot_row = (r_i == len(df_matriz) - 1 or str(idx_name).upper() == 'TOTAL')
 
-        # Columna de índice (Empresa fila)
         cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
         if is_tot_row:
             cell_idx.font = TOTAL_FONT
@@ -815,7 +812,6 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
             cell_idx.border = THIN_BORDER
         cell_idx.alignment = Alignment(horizontal="left", vertical="center")
 
-        # Celdas de valores
         for c_i, col_name in enumerate(cols_matriz, start=2):
             val = row_series[col_name]
             cell = ws.cell(row=curr_row, column=c_i)
@@ -1004,9 +1000,8 @@ if estructura:
         elif seccion_contable == "🔗 Amarres Contables":
             st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
 
-            subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
-                "👥 Amarre RH",
-                "💰 Amarre Ingresos",
+            # AQUÍ SE QUITARON ÚNICAMENTE AMARRE RH Y AMARRE INGRESOS, QUEDANDO LAS 2 DE INTERCOMPAÑÍAS
+            subtab_intercos, subtab_ig_intercos = st.tabs([
                 "🔄 Amarre Intercompañías",
                 "📑 Amarre I y G Intercos",
             ])
@@ -1201,8 +1196,8 @@ if estructura:
                     st.dataframe(
                         df_ig_resumen.style.format({
                             'INGRESOS FACTURADOS': '${:,.2f}',
-                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
-                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                           'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                           'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
