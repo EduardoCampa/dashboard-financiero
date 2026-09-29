@@ -3,7 +3,6 @@ import io
 import json
 import os
 import re
-import xml.etree.ElementTree as ET
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -840,81 +839,74 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
     return output.getvalue()
 
 
-# --- FUNCIONES PARA AMARRE DE INGRESOS ---
-def consolidar_xmls_sat(carpeta_xmls="XMLs"):
-    """Lee los archivos XML del SAT y extrae los campos requeridos."""
+# --- FUNCIONES PARA AMARRE DE INGRESOS (EXCELES DEL SAT) ---
+def consolidar_excels_sat(carpeta_xmls="XML"):
+    """Lee y consolida los archivos de Excel del SAT que enlistan los comprobantes."""
     registros_xml = []
-    archivos_xml = glob.glob(os.path.join(carpeta_xmls, "**", "*.xml"), recursive=True)
-    if not archivos_xml:
-        archivos_xml = glob.glob(os.path.join(carpeta_xmls, "*.xml"))
+    
+    archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True)
+    if not archivos_excel:
+        archivos_excel = glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
+    if not archivos_excel:
+        archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xls"), recursive=True)
 
-    for archivo in archivos_xml:
+    for archivo in archivos_excel:
         try:
-            tree = ET.parse(archivo)
-            root = tree.getroot()
-
-            subtotal = float(root.attrib.get('SubTotal', root.attrib.get('subTotal', 0.0)))
-            descuento = float(root.attrib.get('Descuento', root.attrib.get('descuento', 0.0)))
-            total = float(root.attrib.get('Total', root.attrib.get('total', 0.0)))
+            df_sat = pd.read_excel(archivo)
+            df_sat.columns = [str(c).strip() for c in df_sat.columns]
             
-            fecha_raw = root.attrib.get('Fecha', root.attrib.get('fecha', ''))
-            fecha_emision = fecha_raw.split('T')[0] if fecha_raw else ''
+            for _, row in df_sat.iterrows():
+                uuid = ""
+                for col in df_sat.columns:
+                    if 'uuid' in col.lower() or 'folio fiscal' in col.lower():
+                        val_uuid = str(row.get(col, '')).strip().upper()
+                        if val_uuid and val_uuid != 'NAN':
+                            uuid = val_uuid
+                            break
+                
+                if not uuid:
+                    continue
 
-            receptor = root.find('{http://www.sat.gob.mx/cfd/3}Receptor')
-            if receptor is None:
-                receptor = root.find('.//{http://www.sat.gob.mx/cfd/4}Receptor')
-            
-            razon_receptor = ''
-            if receptor is not None:
-                razon_receptor = receptor.attrib.get('Nombre', receptor.attrib.get('nombre', ''))
+                fecha_emision = ""
+                for col in df_sat.columns:
+                    if 'fecha' in col.lower():
+                        f_raw = str(row.get(col, ''))
+                        if f_raw and f_raw != 'NAN':
+                            fecha_emision = f_raw.split('T')[0].split(' ')[0]
+                            break
 
-            iva_trasladado = 0.0
-            iva_retenido = 0.0
-            isr_retenido = 0.0
-            local_retenido = 0.0
+                razon_receptor = ""
+                for col in df_sat.columns:
+                    if 'receptor' in col.lower() and ('nombre' in col.lower() or 'razon' in col.lower() or 'rfc' not in col.lower()):
+                        razon_receptor = str(row.get(col, ''))
+                        break
 
-            impuestos = root.find('{http://www.sat.gob.mx/cfd/3}Impuestos')
-            if impuestos is None:
-                impuestos = root.find('.//{http://www.sat.gob.mx/cfd/4}Impuestos')
+                def obtener_val(keywords):
+                    for col in df_sat.columns:
+                        if any(k in col.lower() for k in keywords):
+                            return parse_monto_robusto(row.get(col, 0.0))
+                    return 0.0
 
-            if impuestos is not None:
-                traslados = impuestos.find('{http://www.sat.gob.mx/cfd/3}Traslados')
-                if traslados is None:
-                    traslados = impuestos.find('.//{http://www.sat.gob.mx/cfd/4}Traslados')
-                if traslados is not None:
-                    for t in traslados.findall('{http://www.sat.gob.mx/cfd/3}Traslado'):
-                        if t.attrib.get('Impuesto') == '002' or t.attrib.get('impuesto') == '002':
-                            iva_trasladado += float(t.attrib.get('Importe', t.attrib.get('importe', 0.0)))
+                subtotal = obtener_val(['subtotal', 'sub total'])
+                descuento = obtener_val(['descuento', 'desc'])
+                iva_trasladado = obtener_val(['iva trasladado', 'trasladado 002', 'iva 16', 'iva_trasladado'])
+                iva_retenido = obtener_val(['iva retenido', 'retenido 002', 'iva_retenido'])
+                isr_retenido = obtener_val(['isr retenido', 'retenido 001', 'isr_retenido'])
+                local_retenido = obtener_val(['local retenido', 'impuesto local', 'retencion local'])
+                total = obtener_val(['total'])
 
-                retenciones = impuestos.find('{http://www.sat.gob.mx/cfd/3}Retenciones')
-                if retenciones is None:
-                    retenciones = impuestos.find('.//{http://www.sat.gob.mx/cfd/4}Retenciones')
-                if retenciones is not None:
-                    for r in retenciones.findall('{http://www.sat.gob.mx/cfd/3}Retencion'):
-                        imp = r.attrib.get('Impuesto', r.attrib.get('impuesto', ''))
-                        imp_val = float(r.attrib.get('Importe', r.attrib.get('importe', 0.0)))
-                        if imp == '002':
-                            iva_retenido += imp_val
-                        elif imp == '001':
-                            isr_retenido += imp_val
-
-            uuid = ''
-            tfd = root.find('.//{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital')
-            if tfd is not None:
-                uuid = tfd.attrib.get('UUID', '').strip().upper()
-
-            registros_xml.append({
-                'UUID': uuid,
-                'Fecha emision': fecha_emision,
-                'Razon receptor': razon_receptor,
-                'SubTotal': subtotal,
-                'Descuento': descuento,
-                'IVA Trasladado': iva_trasladado,
-                'IVA Retenido': iva_retenido,
-                'ISR Retenido': isr_retenido,
-                'Local retenido': local_retenido,
-                'Total': total
-            })
+                registros_xml.append({
+                    'UUID': uuid,
+                    'Fecha emision': fecha_emision,
+                    'Razon receptor': razon_receptor if razon_receptor != 'nan' else '',
+                    'SubTotal': subtotal,
+                    'Descuento': descuento,
+                    'IVA Trasladado': iva_trasladado,
+                    'IVA Retenido': iva_retenido,
+                    'ISR Retenido': isr_retenido,
+                    'Local retenido': local_retenido,
+                    'Total': total
+                })
         except Exception:
             continue
 
@@ -1110,35 +1102,35 @@ if estructura:
             ])
 
             with subtab_ingresos:
-                st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs XML SAT)")
-                st.info("Cruza la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` agrupada por UUID contra los archivos XML del SAT.")
+                st.markdown("### 💰 Amarre de Ingresos (Base de Facturación vs Excel del SAT)")
+                st.info("Cruza la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` contra los reportes en Excel del SAT.")
 
-                carpeta_xml_input = st.text_input("Carpeta que contiene los XML del SAT:", value="XMLs")
+                carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
                 if st.button("🚀 Ejecutar Amarre de Ingresos"):
-                    with st.spinner("Procesando base de facturación y archivos XML del SAT..."):
+                    with st.spinner("Procesando base de facturación y archivos Excel del SAT..."):
                         df_fact_base = cargar_base_facturacion_master("Consolidado_Master.xlsx")
-                        df_xml_sat = consolidar_xmls_sat(carpeta_xml_input)
+                        df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
                         if df_fact_base.empty:
                             st.warning("No se encontraron registros en la pestaña 'FacturaCliente' de Consolidado_Master.xlsx.")
                         elif df_xml_sat.empty:
-                            st.warning(f"No se encontraron archivos XML en la carpeta '{carpeta_xml_input}'.")
+                            st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
                         else:
-                            # Realizar el merge (amarre) por UUID
+                            # Realizar el merge por UUID
                             df_amarre = pd.merge(
                                 df_fact_base,
                                 df_xml_sat,
                                 on="UUID",
                                 how="outer",
-                                suffixes=('_Fact', '_XML')
+                                suffixes=('_Fact', '_SAT')
                             )
 
-                            # Definir columnas de totales para la resta final
+                            # Columna de resta final (Total Base Facturación - Total Excel SAT)
                             tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
-                            tot_xml = 'Total_XML' if 'Total_XML' in df_amarre.columns else 'Total_y'
+                            tot_sat = 'Total_SAT' if 'Total_SAT' in df_amarre.columns else 'Total_y'
 
-                            df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_xml].fillna(0.0)
+                            df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_sat].fillna(0.0)
 
                             st.success("✅ Amarre de ingresos realizado correctamente.")
                             st.dataframe(df_amarre, use_container_width=True)
@@ -1147,7 +1139,7 @@ if estructura:
                             output_ingresos = exportar_excel_matriz_individual(
                                 df_amarre.set_index('UUID') if 'UUID' in df_amarre.columns else df_amarre,
                                 "REPORTE DE AMARRE DE INGRESOS",
-                                f"Periodo: {mes_sel}/{anio_sel} | Base Facturación vs XML SAT"
+                                f"Periodo: {mes_sel}/{anio_sel} | Base Facturación vs Excel SAT"
                             )
                             st.download_button(
                                 label="📥 Descargar Excel - Amarre de Ingresos",
