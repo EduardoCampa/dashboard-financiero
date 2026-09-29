@@ -868,6 +868,114 @@ def exportar_excel_con_agrupaciones_openpyxl(
     return output.getvalue()
 
 
+# --- FUNCIONES Y LÓGICA DE AMARRES CONTABLES (INTERCOS Y I Y G) ---
+
+@st.cache_data(ttl=600)
+def calcular_matriz_intercos(ruta_balanza, empresas_list, tipo_rubro="facturacion"):
+    if not empresas_list:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    matriz = pd.DataFrame(0.0, index=empresas_list, columns=empresas_list)
+
+    for emp in empresas_list:
+        records = extraer_registros_balanza(ruta_balanza, emp)
+        for r in records:
+            cta = r['cta_raw']
+            deudor = r['deudor_f']
+
+            if deudor == 0:
+                continue
+
+            segs = cta.split('-')
+            if len(segs) < 3:
+                continue
+
+            cta_padre = segs[0].strip()
+            subcta = segs[2].strip()
+
+            es_interco = False
+            if tipo_rubro == "facturacion" and cta_padre in ('101', '105', '110'):
+                if subcta in ('001', '01', '1', '002', '02', '2', '054', '54'):
+                    es_interco = True
+            elif tipo_rubro == "prestamos" and cta_padre in ('103', '107', '120'):
+                if subcta not in ('000', '00'):
+                    es_interco = True
+
+            if es_interco:
+                for emp_dest in empresas_list:
+                    emp_clean = emp_dest.upper().replace(" ", "")
+                    if emp_clean in cta.upper().replace(" ", ""):
+                        matriz.loc[emp, emp_dest] += deudor
+                        break
+
+    matriz['TOTAL ORIGEN'] = matriz.sum(axis=1)
+
+    matriz_pasivos = pd.DataFrame(0.0, index=empresas_list, columns=empresas_list)
+    for emp in empresas_list:
+        records = extraer_registros_balanza(ruta_balanza, emp)
+        for r in records:
+            cta = r['cta_raw']
+            acreedor = r['acreedor_f']
+
+            if acreedor == 0:
+                continue
+
+            segs = cta.split('-')
+            if len(segs) < 3:
+                continue
+
+            cta_padre = segs[0].strip()
+            if (tipo_rubro == "facturacion" and cta_padre in ('201', '205')) or \
+               (tipo_rubro == "prestamos" and cta_padre in ('203', '207', '210')):
+                for emp_orig in empresas_list:
+                    emp_clean = emp_orig.upper().replace(" ", "")
+                    if emp_clean in cta.upper().replace(" ", ""):
+                        matriz_pasivos.loc[emp_orig, emp] += acreedor
+                        break
+
+    matriz_pasivos['TOTAL PASIVO'] = matriz_pasivos.sum(axis=1)
+    matriz_diferencias = matriz.iloc[:, :-1] - matriz_pasivos.iloc[:, :-1]
+    matriz_diferencias['DIFERENCIA TOTAL'] = matriz['TOTAL ORIGEN'] - matriz_pasivos['TOTAL PASIVO']
+
+    return matriz, matriz_pasivos, matriz_diferencias
+
+
+@st.cache_data(ttl=600)
+def calcular_amarre_ig_intercos(ruta_balanza, empresas_list):
+    if not empresas_list:
+        return pd.DataFrame()
+
+    filas = []
+    for emp in empresas_list:
+        records = extraer_registros_balanza(ruta_balanza, emp)
+
+        ing_411 = sum(r['acreedor_f'] - r['deudor_f'] for r in records if r['cta_raw'].startswith('411'))
+        ing_441 = sum(r['acreedor_f'] - r['deudor_f'] for r in records if r['cta_raw'].startswith('441'))
+        tot_ing_interco = ing_411 + ing_441
+
+        gast_511 = sum(r['deudor_f'] - r['acreedor_f'] for r in records if r['cta_raw'].startswith('511'))
+        gast_521 = sum(r['deudor_f'] - r['acreedor_f'] for r in records if r['cta_raw'].startswith('521'))
+        gast_531_054 = sum(
+            r['deudor_f'] - r['acreedor_f']
+            for r in records
+            if r['cta_raw'].startswith('531') and len(r['cta_raw'].split('-')) >= 3 and r['cta_raw'].split('-')[2].strip() in ('054', '54')
+        )
+        gast_551 = sum(r['deudor_f'] - r['acreedor_f'] for r in records if r['cta_raw'].startswith('551'))
+        tot_gast_interco = gast_511 + gast_521 + gast_531_054 + gast_551
+
+        diferencia = tot_ing_interco - tot_gast_interco
+
+        filas.append({
+            'EMPRESA': emp,
+            'INGRESOS 411/441': tot_ing_interco,
+            'COSTO/GASTO 511/521/531-054/551': tot_gast_interco,
+            'DIFERENCIA A LIMPIAR': diferencia,
+            'ESTADO': "EQUALIZADO" if abs(diferencia) < 0.01 else "REQUIERE AJUSTE"
+        })
+
+    return pd.DataFrame(filas)
+
+
 # --- INTERFAZ PRINCIPAL DE STREAMLIT ---
 estructura = obtener_estructura_balanzas()
 plantilla = cargar_plantilla_formato()
@@ -902,7 +1010,7 @@ if estructura:
         st.write("")
         st.write("")
         seleccionar_todas_emp = st.checkbox(
-            "☑️ Seleccionar Todas las Empresas", value=False
+            "☑️️ Seleccionar Todas las Empresas", value=False
         )
 
     with col_emp2:
@@ -962,7 +1070,7 @@ if estructura:
             opciones_plantillas = [
                 "📊 Resumen Ejecutivo",
                 "🔍 Detalle Completo",
-                "✏️ Personalizada",
+                "✏️️ Personalizada",
             ] + [k for k in vistas_disponibles.keys() if k.startswith("⭐ ")]
 
             with col_v1:
@@ -1180,36 +1288,50 @@ if estructura:
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas por Cobrar / Pagar y Préstamos)")
                 st.info("Conciliación y Cuadre Cruzado (Origen vs Receptor del Grupo) dividido por Facturación y Préstamos.")
-                
-                # Cédula interactiva de cruce Interco basada en las Balanzas Acumuladas
-                st.markdown("#### 📋 Matriz de Conciliación de Partes Relacionadas (Acumulado)")
-                
-                # Selector de tipo de cuenta Interco
-                tipo_cuenta_interco = st.selectbox(
+
+                tipo_rubro_sel = st.selectbox(
                     "Selecciona el rubro a conciliar:",
                     [
-                        "Clientes (Activo 101 vs Proveedores 201)",
-                        "Deudores Diversos / Préstamos (Activo 101 vs Acreedores / Pasivo 201-202)"
+                        "Clientes / Proveedores (Facturación Interco)",
+                        "Préstamos / Deudores-Acreedores (Financiamiento Interco)"
                     ]
                 )
-                
-                # Resumen y simulación de la estructura de matriz cruzada
-                empresas_lista_interco = lista_empresas
-                if empresas_lista_interco:
-                    df_matriz_ejemplo = pd.DataFrame(index=empresas_lista_interco, columns=empresas_lista_interco).fillna(0.0)
-                    df_matriz_ejemplo['TOTAL ORIGEN'] = 0.0
-                    
-                    st.markdown(f"**Matriz de Cruce Interco ({tipo_cuenta_interco})**")
-                    st.dataframe(df_matriz_ejemplo, use_container_width=True)
-                    
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        st.success("✅ **Suma Vertical / Horizontal:** Cuadradas correctamente contra Balanza Acumulada.")
-                    with col_dl2:
-                        st.info("📊 **División:** Clasificación automática en Facturación y Préstamos.")
+
+                rubro_key = "facturacion" if "Facturación" in tipo_rubro_sel else "prestamos"
+
+                df_activos, df_pasivos, df_difs = calcular_matriz_intercos(
+                    ruta_balanza, empresas_seleccionadas, tipo_rubro=rubro_key
+                )
+
+                if not df_activos.empty:
+                    st.markdown("#### 1. Cuentas por Cobrar (Activo - Balanza Origen)")
+                    st.dataframe(df_activos.style.format("${:,.2f}"), use_container_width=True)
+
+                    st.markdown("#### 2. Cuentas por Pagar (Pasivo - Balanza Receptor)")
+                    st.dataframe(df_pasivos.style.format("${:,.2f}"), use_container_width=True)
+
+                    st.markdown("#### 3. Matriz de Diferencias (Activo - Pasivo)")
+                    st.dataframe(
+                        df_difs.style.format("${:,.2f}").applymap(
+                            lambda v: 'background-color: #fca5a5; color: #7f1d1d;' if abs(v) > 0.01 else 'background-color: #dcfce7; color: #14532d;'
+                        ),
+                        use_container_width=True
+                    )
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre Ingresos y Gastos Intercompañías")
-                st.info("Conciliación cruzada de Ingresos Intercos (Cuentas 411/441) vs Gastos y Costos Intercos (Cuenta 531).")
+                st.info("Conciliación cruzada de Ingresos Intercos (Cuentas 411/441) vs Gastos y Costos Intercos (Cuentas 511, 521, 531-054, 551).")
+
+                df_ig = calcular_amarre_ig_intercos(ruta_balanza, empresas_seleccionadas)
+
+                if not df_ig.empty:
+                    st.dataframe(
+                        df_ig.style.format({
+                            'INGRESOS 411/441': "${:,.2f}",
+                            'COSTO/GASTO 511/521/531-054/551': "${:,.2f}",
+                            'DIFERENCIA A LIMPIAR': "${:,.2f}"
+                        }),
+                        use_container_width=True
+                    )
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
