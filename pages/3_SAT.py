@@ -19,7 +19,7 @@ st.title("📑 Módulo SAT & Amarres")
 # Diccionario de equivalencia oficial: Empresa Origen (Nombre Corto) -> RFC Emisor SAT
 MAPEO_EMPRESA_RFC = {
     "CIV": "CIV1009089B0",
-    "CIVLA": "CIV141222JD5",
+    "CIVLAT": "CIV141222JD5",
     "CIVMEX": "CIV141204DN5",
     "EFCO": "EFC840210UI4",
     "FERVIC": "GFE811209FZ2",
@@ -38,6 +38,31 @@ MAPEO_EMPRESA_RFC = {
 
 RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
 
+# Mapeo inverso o equivalente para balanzas
+MAPEO_NOMBRE_A_CODIGO = {
+    "CIVLAT": "0468",
+    "CIV": "0467",
+    "CIVMEX": "0469",
+    "SERVYRE": "2872",
+    "SERSEÑAL": "1636",
+    "EFCO": "0813",
+    "FGS": "0942",
+    "FERVIC": "1127",
+    "FPSB": "1216",
+    "PESAZA": "1144",
+    "GPO SERVYRE": "1149",
+    "INMOBILIARIA": "1404",
+    "LABORATORIO": "1603",
+    "LATIN": "1616",
+    "LIMPIESPIN": "1626",
+    "SERVYCARGO": "2871",
+    "VIALTECNO": "3329",
+    "SEVILAT": "2937",
+    "PROINA": "2396",
+    "IPV": "1428",
+    "COMANA": "0665"
+}
+
 def parse_monto_robusto(val):
     if pd.isnull(val):
         return 0.0
@@ -50,8 +75,97 @@ def parse_monto_robusto(val):
         return 0.0
 
 
+def obtener_estructura_balanzas():
+    archivos = glob.glob("Balanzas/**/Balanza.xlsx", recursive=True)
+    estructura = []
+    for path in archivos:
+        path_norm = path.replace("\\", "/")
+        partes = path_norm.split("/")
+        if len(partes) >= 4:
+            anio = partes[-3]
+            mes = partes[-2]
+            estructura.append({
+                'anio': str(anio),
+                'mes': str(mes),
+                'ruta': path_norm,
+                'mtime': os.path.getmtime(path),
+            })
+    if estructura:
+        estructura.sort(key=lambda x: x['mtime'], reverse=True)
+    return estructura
+
+
+@st.cache_data(ttl=600)
+def cargar_hoja_balanza(ruta, nombre_hoja):
+    return pd.read_excel(ruta, sheet_name=nombre_hoja)
+
+
+def extraer_datos_contabilidad_balanzas(anio_sel, mes_fin_sel):
+    """Extrae la contabilidad de ingresos (410, 411, 423) y notas de crédito (420, 421) de las balanzas."""
+    estructura = obtener_estructura_balanzas()
+    # Buscar balanza del año y mes final seleccionado (o el más cercano disponible)
+    mes_str = f"{int(mes_fin_sel):02d}"
+    ruta_balanza = next(
+        (x['ruta'] for x in estructura if x['anio'] == str(anio_sel) and (x['mes'] == mes_str or str(int(x['mes'])) == str(mes_fin_sel))),
+        None
+    )
+    if not ruta_balanza and estructura:
+        ruta_balanza = estructura[0]['ruta']
+
+    if not ruta_balanza or not os.path.exists(ruta_balanza):
+        return {}
+
+    xls = pd.ExcelFile(ruta_balanza)
+    sheets = xls.sheet_names
+    if len(sheets) > 1 and "Hoja1" in sheets:
+        sheets.remove("Hoja1")
+
+    datos_contables = {}
+    for emp in sheets:
+        df_b_raw = cargar_hoja_balanza(ruta_balanza, emp)
+        num_cols = df_b_raw.shape[1]
+        col_cta = 0
+        col_deudor_f = 6 if num_cols > 6 else num_cols - 2
+        col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+
+        ingresos_cont = 0.0
+        nc_cont = 0.0
+
+        for _, row in df_b_raw.iterrows():
+            cta_raw = str(row.iloc[col_cta]).strip()
+            if not cta_raw or cta_raw.lower() in ('nan', 'cuenta', 'none'):
+                continue
+            if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
+                continue
+            
+            d_f = parse_monto_robusto(row.iloc[col_deudor_f])
+            a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+            saldo_cta = a_f - d_f  # Naturaleza acreedora para ingresos
+
+            segs = cta_raw.split('-')
+            if len(segs) >= 4:
+                prefix = segs[0].strip()
+                seg2 = segs[1].strip()
+                seg3 = segs[2].strip()
+                seg4 = segs[3].strip()
+
+                es_base = (seg2 in ('00000', '0000', '0') and seg3 in ('000', '0') and seg4 in ('0000', '0'))
+
+                if es_base:
+                    if prefix in ('410', '411', '423'):
+                        ingresos_cont += saldo_cta
+                    elif prefix in ('420', '421'):
+                        nc_cont += abs(saldo_cta)
+
+        datos_contables[emp.upper()] = {
+            'Ingresos_Cont': ingresos_cont,
+            'NC_Cont': nc_cont
+        }
+
+    return datos_contables
+
+
 def consolidar_excels_sat(carpeta_xmls="XML"):
-    """Lee y consolida los archivos de Excel del SAT."""
     registros_xml = []
     archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) or glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
     
@@ -107,7 +221,6 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
-    """Carga FacturaCliente y NotaCreditoCliente aplicando notas de crédito en negativo."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
@@ -125,7 +238,6 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
             df_nc['Tipo_Doc'] = 'NotaCredito'
-            # Forzar notas de crédito en negativo
             cols_numericas = [c for c in ['SubTotal', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
                 df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0).abs() * -1
@@ -182,7 +294,6 @@ def exportar_excel_completo(df_facturas_det, df_notas_det, df_facturas_res, df_n
                     cell.alignment = Alignment(horizontal="right")
         return r + len(df) + 3
 
-    # --- Pestaña 1: Resumen ---
     ws_res = wb.active
     ws_res.title = "Resumen"
     ws_res.views.sheetView[0].showGridLines = True
@@ -192,7 +303,6 @@ def exportar_excel_completo(df_facturas_det, df_notas_det, df_facturas_res, df_n
     next_r = escribir_tabla(ws_res, 4, "RESUMEN INGRESOS (VIGENTES)", df_facturas_res)
     escribir_tabla(ws_res, next_r, "RESUMEN EGRESOS / NOTAS DE CRÉDITO (VIGENTES)", df_notas_res)
 
-    # --- Pestaña 2: Acumulado ---
     ws_det = wb.create_sheet(title="Acumulado")
     ws_det.views.sheetView[0].showGridLines = True
     ws_det.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
@@ -201,7 +311,6 @@ def exportar_excel_completo(df_facturas_det, df_notas_det, df_facturas_res, df_n
     next_r_det = escribir_tabla(ws_det, 4, "ACUMULADO - FACTURAS", df_facturas_det)
     escribir_tabla(ws_det, next_r_det, "ACUMULADO - NOTAS DE CRÉDITO", df_notas_det)
 
-    # --- Pestaña 3: UUIDs con Diferencias ---
     ws_dif = wb.create_sheet(title="Diferencias UUID")
     ws_dif.views.sheetView[0].showGridLines = True
     ws_dif.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
@@ -238,9 +347,10 @@ with subtab_ingresos:
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
     if st.button("🚀 Ejecutar Amarre y Auditoría de Diferencias"):
-        with st.spinner("Procesando información y auditando diferencias..."):
+        with st.spinner("Procesando información, balanzas contables y auditando diferencias..."):
             df_fact_base = cargar_base_master_general("Consolidado_Master.xlsx", anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
             df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
+            datos_contables_dict = extraer_datos_contabilidad_balanzas(anio_sel, mes_final)
 
             if df_fact_base.empty:
                 st.warning(f"No se encontraron registros en el maestro para el periodo seleccionado.")
@@ -267,7 +377,6 @@ with subtab_ingresos:
                 df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
 
-                # Si es nota de crédito, forzar SAT también en negativo si vino positivo
                 mask_nc = df_amarre['Tipo_Doc'] == 'NotaCredito'
                 df_amarre.loc[mask_nc, 'SubTotal'] = df_amarre.loc[mask_nc, 'SubTotal'].abs() * -1
                 df_amarre.loc[mask_nc, 'SubTotal_SAT'] = df_amarre.loc[mask_nc, 'SubTotal_SAT'].abs() * -1
@@ -279,7 +388,6 @@ with subtab_ingresos:
                 else:
                     df_amarre['Estatus'] = 'VIGENTE'
 
-                # Separar Facturas y Notas de Crédito
                 df_facturas = df_amarre[df_amarre['Tipo_Doc'] == 'Factura'].copy()
                 df_notas = df_amarre[df_amarre['Tipo_Doc'] == 'NotaCredito'].copy()
 
@@ -291,9 +399,9 @@ with subtab_ingresos:
                     d.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia']
                     return d
 
-                def preparar_resumen(df):
+                def preparar_resumen_con_contabilidad(df, tipo_doc='Factura'):
                     if df.empty:
-                        return pd.DataFrame(columns=['Empresa', 'SISTEMA (VIG)', 'SAT (VIG)', 'DIF. SIST vs SAT'])
+                        return pd.DataFrame(columns=['Empresa', 'CONTABILIDAD', 'SISTEMA (VIG)', 'SAT (VIG)', 'DIF. SIST vs SAT'])
                     vig = df[df['Estatus'] == 'VIGENTE']
                     res = vig.groupby('Empresa', as_index=False).agg({
                         'SubTotal': 'sum',
@@ -304,26 +412,50 @@ with subtab_ingresos:
                         'SubTotal_SAT': 'SAT (VIG)',
                         'Diferencia': 'DIF. SIST vs SAT'
                     })
+
+                    # Agregar columna CONTABILIDAD desde las balanzas
+                    cont_list = []
+                    for emp in res['Empresa']:
+                        emp_key = emp.upper()
+                        val_cont = 0.0
+                        if emp_key in datos_contables_dict:
+                            if tipo_doc == 'Factura':
+                                val_cont = datos_contables_dict[emp_key]['Ingresos_Cont']
+                            else:
+                                val_cont = datos_contables_dict[emp_key]['NC_Cont'] * -1 # Mostrar negativo para egresos
+                        cont_list.append(val_cont)
+                    
+                    res.insert(1, 'CONTABILIDAD', cont_list)
                     return res
 
                 df_fact_det = preparar_detalle(df_facturas)
                 df_nota_det = preparar_detalle(df_notas)
-                df_fact_res = preparar_resumen(df_facturas)
-                df_nota_res = preparar_resumen(df_notas)
+                df_fact_res = preparar_resumen_con_contabilidad(df_facturas, 'Factura')
+                df_nota_res = preparar_resumen_con_contabilidad(df_notas, 'NotaCredito')
 
-                # Tabla específica de diferencias (donde la diferencia != 0)
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Amarre, notas de crédito negativas y auditoría de diferencias realizadas correctamente.")
+                st.success("✅ Amarre, notas de crédito, contabilidad y auditoría de diferencias realizadas correctamente.")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
                 with tab_res_ui:
                     st.markdown("### 📈 RESUMEN INGRESOS (VIGENTES)")
-                    st.dataframe(df_fact_res, use_container_width=True)
+                    st.dataframe(df_fact_res.style.format({
+                        'CONTABILIDAD': '${:,.2f}',
+                        'SISTEMA (VIG)': '${:,.2f}',
+                        'SAT (VIG)': '${:,.2f}',
+                        'DIF. SIST vs SAT': '${:,.2f}'
+                    }), use_container_width=True, hide_index=True)
+
                     st.markdown("### 📉 RESUMEN EGRESOS / NOTAS DE CRÉDITO (VIGENTES)")
-                    st.dataframe(df_nota_res, use_container_width=True)
+                    st.dataframe(df_nota_res.style.format({
+                        'CONTABILIDAD': '${:,.2f}',
+                        'SISTEMA (VIG)': '${:,.2f}',
+                        'SAT (VIG)': '${:,.2f}',
+                        'DIF. SIST vs SAT': '${:,.2f}'
+                    }), use_container_width=True, hide_index=True)
 
                 with tab_det_ui:
                     st.markdown("### 📋 ACUMULADO - FACTURAS")
@@ -343,7 +475,7 @@ with subtab_ingresos:
                 )
                 
                 st.download_button(
-                    label="📥 Descargar Reporte Completo (Excel con Pestaña de Diferencias)",
+                    label="📥 Descargar Reporte Completo (Excel con Columna Contabilidad)",
                     data=output_excel,
                     file_name=f"Amarre_Ingresos_Auditoria_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
