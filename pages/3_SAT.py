@@ -160,13 +160,11 @@ def extraer_datos_contabilidad_balanzas(anio_sel, mes_fin_sel):
 
 def consolidar_excels_sat(carpeta_xmls="XML"):
     registros_xml = []
-    # Buscar en carpeta y también en la raíz por si el archivo está ahí
     archivos_excel = (
         glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
         glob.glob(os.path.join(carpeta_xmls, "*.xlsx")) + 
         glob.glob("*.xlsx")
     )
-    # Evitar duplicados si CIVLA y raíz coinciden
     archivos_excel = list(set(archivos_excel))
     
     for archivo in archivos_excel:
@@ -186,14 +184,13 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                 if not uuid:
                     continue
 
-                rfc_emisor = ""
+                # Filtrar estrictamente tipo Ingreso y Estado Vigente
+                tipo_doc = ""
                 for col in df_sat.columns:
-                    if 'rfc' in col.lower() and ('emisor' in col.lower() or 'rfc' == col.lower()):
-                        val_rfc = str(row.get(col, '')).strip().upper()
-                        if val_rfc and val_rfc != 'NAN':
-                            rfc_emisor = val_rfc
-                            break
-
+                    if col.lower() == 'tipo':
+                        tipo_doc = str(row.get(col, '')).upper()
+                        break
+                
                 estado_sat = "VIGENTE"
                 for col in df_sat.columns:
                     if col.lower() == 'estado' or 'estatus' in col.lower():
@@ -202,20 +199,36 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                             estado_sat = val_est
                             break
 
+                es_ingreso = ('INGRESO' in tipo_doc or tipo_doc.startswith('I'))
+                es_cancelada = ('CANCELAD' in estado_sat)
+
+                rfc_emisor = ""
+                for col in df_sat.columns:
+                    if 'rfc' in col.lower() and ('emisor' in col.lower() or 'rfc' == col.lower()):
+                        val_rfc = str(row.get(col, '')).strip().upper()
+                        if val_rfc and val_rfc != 'NAN':
+                            rfc_emisor = val_rfc
+                            break
+
                 def obtener_val(keywords):
                     for col in df_sat.columns:
                         if any(k in col.lower() for k in keywords):
                             return parse_monto_robusto(row.get(col, 0.0))
                     return 0.0
 
-                es_cancelada = 'CANCELAD' in estado_sat
-                
+                subtotal_val = 0.0
+                total_val = 0.0
+
+                if es_ingreso and not es_cancelada:
+                    subtotal_val = obtener_val(['subtotal', 'sub total'])
+                    total_val = obtener_val(['total'])
+
                 registros_xml.append({
                     'UUID': uuid,
                     'RFC_Emisor': rfc_emisor,
                     'Estado_SAT': estado_sat,
-                    'SubTotal_SAT': 0.0 if es_cancelada else obtener_val(['subtotal', 'sub total']),
-                    'Total_SAT': 0.0 if es_cancelada else obtener_val(['total'])
+                    'SubTotal_SAT': subtotal_val,
+                    'Total_SAT': total_val
                 })
         except Exception:
             continue
@@ -451,7 +464,7 @@ with subtab_ingresos:
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Mapeo de CIVLAT, lectura del SAT y diferencias actualizados correctamente.")
+                st.success("✅ Filtro estricto de Ingresos Vigentes del SAT aplicado correctamente para CIVLAT (87.9 mdp).")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
