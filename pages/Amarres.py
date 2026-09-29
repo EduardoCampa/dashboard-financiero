@@ -361,7 +361,7 @@ if estructura:
 
     with subtab_ig_intercos:
         st.markdown("### 📑 Amarre I y G Intercos (Ingresos facturados y Costos Intercos)")
-        st.info("Columna 1: Ingresos facturados. Columna 2: Costos base (-00000-0000). Columna 3: Cuenta 054-0000. Columna 4: Costo neto. Columna 5: Diferencia (Ingresos - Costo Neto).")
+        st.info("Ingresos Facturados vs. Ingresos Contabilidad (Cuentas 410, 411, 423 menos Notas de Crédito 420, 421) y Costos Netos.")
 
         if todas_empresas_balanza:
             datos_empresas_recs = {}
@@ -391,6 +391,7 @@ if estructura:
 
             filas_ig = []
             tot_ingresos_gen = 0.0
+            tot_ingresos_cont_gen = 0.0
             tot_costos_base_gen = 0.0
             tot_cta_054_gen = 0.0
             tot_costo_neto_gen = 0.0
@@ -412,6 +413,10 @@ if estructura:
                                 if any(seg.strip() == cod_destino for seg in segs):
                                     ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
+                # Cálculo de Ingresos Contabilidad (Cuentas 410, 411, 423 menos NC 420, 421)
+                ingresos_contables_emp = 0.0
+                cuentas_ing_proc = set()
+
                 costos_base_emp = 0.0
                 cta_054_emp = 0.0
                 cuentas_base_proc = set()
@@ -428,21 +433,32 @@ if estructura:
                         seg3 = segs[2].strip()
                         seg4 = segs[3].strip()
 
-                        if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
-                            es_cuenta_base = (seg2 in ('00000', '0000', '0') and seg3 in ('000', '0') and seg4 in ('0000', '0'))
-                            es_054_exacta = (seg3 in ('054', '54', '0054') and seg4 in ('0000', '0'))
+                        if prefix.isdigit() and len(prefix) == 3:
+                            es_base = (seg2 in ('00000', '0000', '0') and seg3 in ('000', '0') and seg4 in ('0000', '0'))
+                            saldo_cta = r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0)
 
-                            if es_cuenta_base and cta not in cuentas_base_proc:
-                                costos_base_emp += r['saldo_final']
-                                cuentas_base_proc.add(cta)
-                            elif es_054_exacta and cta not in cuentas_054_proc:
-                                cta_054_emp += r['saldo_final']
-                                cuentas_054_proc.add(cta)
+                            if prefix in ('410', '411', '423') and es_base and cta not in cuentas_ing_proc:
+                                ingresos_contables_emp += saldo_cta
+                                cuentas_ing_proc.add(cta)
+                            elif prefix in ('420', '421') and es_base and cta not in cuentas_ing_proc:
+                                ingresos_contables_emp -= saldo_cta
+                                cuentas_ing_proc.add(cta)
+                            elif prefix.startswith(('5', '6')) and prefix.endswith('1'):
+                                es_cuenta_base = es_base
+                                es_054_exacta = (seg3 in ('054', '54', '0054') and seg4 in ('0000', '0'))
+
+                                if es_cuenta_base and cta not in cuentas_base_proc:
+                                    costos_base_emp += r['saldo_final']
+                                    cuentas_base_proc.add(cta)
+                                elif es_054_exacta and cta not in cuentas_054_proc:
+                                    cta_054_emp += r['saldo_final']
+                                    cuentas_054_proc.add(cta)
 
                 costo_neto_emp = costos_base_emp - cta_054_emp
                 diferencia_emp = ingresos_facturados_a_emp - costo_neto_emp
 
                 tot_ingresos_gen += ingresos_facturados_a_emp
+                tot_ingresos_cont_gen += ingresos_contables_emp
                 tot_costos_base_gen += costos_base_emp
                 tot_cta_054_gen += cta_054_emp
                 tot_costo_neto_gen += costo_neto_emp
@@ -451,6 +467,7 @@ if estructura:
                 filas_ig.append({
                     'EMPRESA': emp_destino,
                     'INGRESOS FACTURADOS': ingresos_facturados_a_emp,
+                    'INGRESOS CONTABILIDAD': ingresos_contables_emp,
                     'COSTOS BASE (-00000-)': costos_base_emp,
                     'CUENTA 054': cta_054_emp,
                     'COSTO NETO (COSTOS - 054)': costo_neto_emp,
@@ -462,6 +479,7 @@ if estructura:
             df_ig_resumen.loc[len(df_ig_resumen)] = {
                 'EMPRESA': 'TOTAL',
                 'INGRESOS FACTURADOS': tot_ingresos_gen,
+                'INGRESOS CONTABILIDAD': tot_ingresos_cont_gen,
                 'COSTOS BASE (-00000-)': tot_costos_base_gen,
                 'CUENTA 054': tot_cta_054_gen,
                 'COSTO NETO (COSTOS - 054)': tot_costo_neto_gen,
@@ -470,7 +488,7 @@ if estructura:
 
             st.dataframe(
                 df_ig_resumen.style.format({
-                    'INGRESOS FACTURADOS': '${:,.2f}',
+                    'INGRESOS FACTURADOS': '${:,.2f}',                     'INGRESOS CONTABILIDAD': '${:,.2f}',
                     'COSTOS BASE (-00000-)': '${:,.2f}',                     'CUENTA 054': '${:,.2f}',
                     'COSTO NETO (COSTOS - 054)': '${:,.2f}',                     'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                 }),
@@ -490,6 +508,6 @@ if estructura:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-            st.success("✅ Cuentas de ingresos y costos intercos barridas y calculadas correctamente.")
+            st.success("✅ Cuentas de ingresos, notas de crédito y costos intercos barridas y calculadas correctamente.")
 else:
     st.info("Por favor coloca tus carpetas 'Balanzas' y el archivo 'FORMATO EDO RESULTADOS.xlsx' en la raíz.")
