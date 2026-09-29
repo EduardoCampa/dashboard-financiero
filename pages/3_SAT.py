@@ -31,7 +31,7 @@ MAPEO_EMPRESA_RFC = {
     "LAITS": "LAI130114KT7",
     "LIMPIESPIN": "LIM100513860",
     "PESAZA": "GPE100907IMA",
-    "SERSENAL": "", # Sin RFC asignado todavía
+    "SERSENAL": "", 
     "SERVYCARGO": "SER100803D12",
     "SERVYRE": "SER970728JN8"
 }
@@ -49,7 +49,7 @@ def parse_monto_robusto(val):
 
 
 def consolidar_excels_sat(carpeta_xmls="XML"):
-    """Lee y consolida los archivos de Excel del SAT, extrayendo UUID y RFC Emisor."""
+    """Lee y consolida los archivos de Excel del SAT, extrayendo UUID, RFC Emisor y Estado."""
     registros_xml = []
     archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) or glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
     
@@ -77,6 +77,15 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                             rfc_emisor = val_rfc
                             break
 
+                # Extracción del Estado de la factura en el SAT
+                estado_sat = "VIGENTE"
+                for col in df_sat.columns:
+                    if col.lower() == 'estado' or 'estatus' in col.lower():
+                        val_est = str(row.get(col, '')).strip().upper()
+                        if val_est and val_est != 'NAN':
+                            estado_sat = val_est
+                            break
+
                 fecha_emision = ""
                 for col in df_sat.columns:
                     if 'fecha' in col.lower():
@@ -97,18 +106,22 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                             return parse_monto_robusto(row.get(col, 0.0))
                     return 0.0
 
+                # Si el estado es cancelado, los montos deben ser 0.0 por regla de negocio solicitada
+                es_cancelada = 'CANCELAD' in estado_sat
+                
                 registros_xml.append({
                     'UUID': uuid,
                     'RFC_Emisor': rfc_emisor,
+                    'Estado_SAT': estado_sat,
                     'Fecha emision': fecha_emision,
                     'Razon receptor': razon_receptor if razon_receptor != 'nan' else '',
-                    'SubTotal': obtener_val(['subtotal', 'sub total']),
-                    'Descuento': obtener_val(['descuento', 'desc']),
-                    'IVA Trasladado': obtener_val(['iva trasladado', 'trasladado 002', 'iva 16']),
-                    'IVA Retenido': obtener_val(['iva retenido', 'retenido 002']),
-                    'ISR Retenido': obtener_val(['isr retenido', 'retenido 001']),
-                    'Local retenido': obtener_val(['local retenido', 'impuesto local']),
-                    'Total': obtener_val(['total'])
+                    'SubTotal': 0.0 if es_cancelada else obtener_val(['subtotal', 'sub total']),
+                    'Descuento': 0.0 if es_cancelada else obtener_val(['descuento', 'desc']),
+                    'IVA Trasladado': 0.0 if es_cancelada else obtener_val(['iva trasladado', 'trasladado 002', 'iva 16']),
+                    'IVA Retenido': 0.0 if es_cancelada else obtener_val(['iva retenido', 'retenido 002']),
+                    'ISR Retenido': 0.0 if es_cancelada else obtener_val(['isr retenido', 'retenido 001']),
+                    'Local retenido': 0.0 if es_cancelada else obtener_val(['local retenido', 'impuesto local']),
+                    'Total': 0.0 if es_cancelada else obtener_val(['total'])
                 })
         except Exception:
             continue
@@ -116,7 +129,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None):
-    """Carga y filtra la pestaña FacturaCliente por Año usando DateDocument."""
+    """Carga y filtra la pestaña FacturaCliente por Año usando DateDocument, incluyendo BusinessEntityName y CFDStatusCancelledName."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     try:
@@ -128,14 +141,15 @@ def cargar_base_facturacion_master(ruta_master="Consolidado_Master.xlsx", anio_f
         if 'UUID' in df.columns:
             df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '')]
         
-        # Asegurarnos de conservar BusinessEntityName para el cruce por empresa
-        cols_a_agrupar = ['UUID', 'BusinessEntityName']
-        cols_numericas = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total']
-        existentes_grupo = [c for c in cols_a_agrupar if c in df.columns]
-        existentes_num = [c for c in cols_numericas if c in df.columns]
+        # Identificar columnas disponibles para agrupar y sumar
+        cols_a_agrupar = [c for c in ['UUID', 'BusinessEntityName', 'CFDStatusCancelledName'] if c in df.columns]
+        cols_numericas = [c for c in ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total'] if c in df.columns]
         
-        # Si existe BusinessEntityName, agregamos una columna de RFC teórica basada en nuestro diccionario
-        df_agrupado = df.groupby(existentes_grupo, as_index=False)[existentes_num].sum() if existentes_grupo else df
+        if not cols_a_agrupar:
+            return pd.DataFrame()
+
+        # Agrupación conservando Empresa Origen y estatus de cancelación del maestro
+        df_agrupado = df.groupby(cols_a_agrupar, as_index=False)[cols_numericas].sum()
         
         if 'BusinessEntityName' in df_agrupado.columns:
             df_agrupado['RFC_Esperado'] = df_agrupado['BusinessEntityName'].map(MAPEO_EMPRESA_RFC).fillna('')
@@ -188,7 +202,7 @@ with subtab_rh:
 
 with subtab_ingresos:
     st.markdown("### 💰 Amarre de Ingresos (Base de Facturación por Empresa vs Excel del SAT - Anual)")
-    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` para el año **{anio_sel}**, mapeando la empresa de origen (`BusinessEntityName`) con su respectivo RFC y cruzándolo con los reportes del SAT.")
+    st.info(f"Filtra la pestaña `FacturaCliente` de `Consolidado_Master.xlsx` para el año **{anio_sel}**, considerando empresa de origen, estatus de cancelación y validación de RFC.")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
@@ -202,7 +216,7 @@ with subtab_ingresos:
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
-                # Realizamos el merge prioritariamente por UUID, y validamos concordancia de RFC si es necesario
+                # Cruzamos por UUID manteniendo la trazabilidad completa
                 df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('_Fact', '_SAT'))
                 
                 tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
@@ -210,19 +224,19 @@ with subtab_ingresos:
                 
                 df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_sat].fillna(0.0)
                 
-                # Opcional: Columna para revisar si el RFC emisor del SAT coincide con el mapeado por la Empresa
+                # Validación cruzada de RFC
                 if 'RFC_Esperado' in df_amarre.columns and 'RFC_Emisor' in df_amarre.columns:
                     df_amarre['Validacion_RFC'] = df_amarre.apply(
                         lambda row: 'Coincide' if str(row['RFC_Emisor']).strip() == str(row['RFC_Esperado']).strip() else 'Diferente/Revisar',
                         axis=1
                     )
 
-                st.success("✅ Amarre por empresa y RFC realizado correctamente.")
+                st.success("✅ Amarre por empresa, estatus y RFC realizado correctamente.")
                 st.dataframe(df_amarre, use_container_width=True)
 
                 output_ingresos = exportar_excel_matriz_individual(
                     df_amarre.set_index('UUID') if 'UUID' in df_amarre.columns else df_amarre,
-                    "REPORTE DE AMARRE DE INGRESOS POR EMPRESA / RFC",
+                    "REPORTE DE AMARRE DE INGRESOS - ANUAL",
                     f"Ejercicio Fiscal: {anio_sel} | Base Facturación vs Excel SAT"
                 )
                 st.download_button(
