@@ -41,6 +41,7 @@ RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
 MAPEO_EMPRESA_ORIGEN = {
     "CIV": "CIV",
     "CIVLA": "CIVLAT",
+    "CIVLAT": "CIVLAT",
     "CIVMEX": "CIVMEX",
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
@@ -159,9 +160,18 @@ def extraer_datos_contabilidad_balanzas(anio_sel, mes_fin_sel):
 
 def consolidar_excels_sat(carpeta_xmls="XML"):
     registros_xml = []
-    archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) or glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
+    # Buscar en carpeta y también en la raíz por si el archivo está ahí
+    archivos_excel = (
+        glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
+        glob.glob(os.path.join(carpeta_xmls, "*.xlsx")) + 
+        glob.glob("*.xlsx")
+    )
+    # Evitar duplicados si CIVLA y raíz coinciden
+    archivos_excel = list(set(archivos_excel))
     
     for archivo in archivos_excel:
+        if "Consolidado" in archivo or "Balanza" in archivo or "FORMATO" in archivo:
+            continue
         try:
             df_sat = pd.read_excel(archivo)
             df_sat.columns = [str(c).strip() for c in df_sat.columns]
@@ -263,7 +273,6 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
 
     df_master['Estatus'] = df_master.apply(determinar_estatus, axis=1)
 
-    # Usar SubTotal directamente sin restar descuento
     subtotal_val = pd.to_numeric(df_master.get('SubTotal', 0), errors='coerce').fillna(0.0)
     mask_nc = df_master['Tipo_Doc'] == 'NotaCredito'
     if mask_nc.any():
@@ -442,7 +451,7 @@ with subtab_ingresos:
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Amarre completado utilizando el SubTotal original y columnas de diferencia correctas.")
+                st.success("✅ Mapeo de CIVLAT, lectura del SAT y diferencias actualizados correctamente.")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
