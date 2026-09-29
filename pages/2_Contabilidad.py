@@ -169,6 +169,10 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     num_cols = df_b.shape[1]
     col_cta = 0
     
+    # Índices exactos para Movimientos del Periodo (Deudor / Acreedor) y Saldo Final
+    col_deudor_mes = 2 if num_cols > 2 else 0
+    col_acreedor_mes = 3 if num_cols > 3 else 0
+    
     col_deudor_f = 6 if num_cols > 6 else num_cols - 2
     col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
 
@@ -181,15 +185,19 @@ def extraer_registros_balanza(ruta, nombre_hoja):
         if not re.search(r'\d{3}[-\s]?\d{3,5}', cta_raw):
             continue
 
+        # Movimientos del Periodo (Mes)
+        deudor_m = parse_monto_robusto(row.iloc[col_deudor_mes]) if num_cols > 3 else 0.0
+        acreedor_m = parse_monto_robusto(row.iloc[col_acreedor_mes]) if num_cols > 3 else 0.0
+        neto_mes = deudor_m - acreedor_m
+
+        # Saldos Acumulados
         deudor_f = parse_monto_robusto(row.iloc[col_deudor_f])
         acreedor_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-        
         saldo_final = deudor_f - acreedor_f
 
         balanza_records.append({
             'cta_raw': cta_raw,
-            'deudor_f': deudor_f,
-            'acreedor_f': acreedor_f,
+            'neto_mes': neto_mes,
             'saldo_final': saldo_final,
         })
     return balanza_records
@@ -408,9 +416,9 @@ def obtener_monto_cuenta_balanza(
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            monto += b.get('deudor_f', 0.0) - b.get('acreedor_f', 0.0)
+            monto += b.get('neto_mes', 0.0)
         else:
-            monto += b['saldo_final']
+            monto += b.get('saldo_final', 0.0)
 
     return monto
 
@@ -784,24 +792,40 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
         ws.cell(row=2, column=1, value=subtitle_text).font = SUBTITLE_FONT
 
         start_row = 4
-        headers = list(df_data.columns)
+        
+        # Escribir Encabezados
+        ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
+        ws.cell(row=start_row, column=1).font = HEADER_FONT
+        ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
 
-        for c_idx, h_text in enumerate(headers, start=1):
-            cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+        cols_matriz = list(df_data.columns)
+        for c_idx, col_name in enumerate(cols_matriz, start=2):
+            cell = ws.cell(row=start_row, column=c_idx, value=str(col_name))
             cell.fill = HEADER_FILL
             cell.font = HEADER_FONT
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         ws.row_dimensions[start_row].height = 28
 
-        for r_i, row_data in df_data.reset_index(drop=True).iterrows():
+        # Escribir Filas
+        for r_i, (idx_name, row_series) in enumerate(df_data.iterrows()):
             curr_row = start_row + 1 + r_i
-            is_tot_row = (r_i == len(df_data) - 1)
+            is_tot_row = (r_i == len(df_data) - 1 or str(idx_name).upper() == 'TOTAL')
 
-            for c_i, col_name in enumerate(headers, start=1):
-                val = row_data[col_name]
+            cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
+            if is_tot_row:
+                cell_idx.font = TOTAL_FONT
+                cell_idx.fill = TOTAL_FILL
+                cell_idx.border = TOTAL_BORDER
+            else:
+                cell_idx.font = REGULAR_FONT
+                cell_idx.border = THIN_BORDER
+            cell_idx.alignment = Alignment(horizontal="left", vertical="center")
+
+            for c_i, col_name in enumerate(cols_matriz, start=2):
+                val = row_series[col_name]
                 cell = ws.cell(row=curr_row, column=c_i)
-                cell.value = val if pd.notnull(val) else (0.0 if c_i > 1 else "")
+                cell.value = val if pd.notnull(val) else 0.0
 
                 if is_tot_row:
                     cell.font = TOTAL_FONT
@@ -811,12 +835,9 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
                     cell.font = REGULAR_FONT
                     cell.border = THIN_BORDER
 
-                if c_i == 1:
-                    cell.alignment = Alignment(horizontal="left", vertical="center")
-                else:
-                    cell.alignment = Alignment(horizontal="right", vertical="center")
-                    if isinstance(val, (int, float)):
-                        cell.number_format = '$#,##0.00'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = '$#,##0.00'
 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -834,7 +855,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Filtrando niveles acumuladores y excluyendo -054-", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Filtrando niveles acumuladores y excluyendo -054-", df_ig.set_index('EMPRESA') if 'EMPRESA' in df_ig.columns else df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -886,7 +907,7 @@ if estructura:
         col_ob1, col_ob2 = st.columns([1, 3])
         with col_ob1:
             st.write("")
-            st.write("🏗️ **Filtro de Obras:**")
+            st.write("🏗️️ **Filtro de Obras:**")
         with col_ob2:
             obras_a_excluir = st.multiselect(
                 "🚫 Excluir Obra(s) del Consolidado (ej. RM CARRETERO / 26001):",
@@ -1085,7 +1106,6 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Ingresos facturados a esta empresa desde las demás (cuentas 4*)
                         ingresos_facturados_a_emp = 0.0
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
@@ -1097,9 +1117,8 @@ if estructura:
                                     if cta.startswith('4'):
                                         cod_contra = extraer_codigo_contraparte_robusto(cta)
                                         if cod_contra == cod_destino:
-                                            ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
+                                            ingresos_facturados_a_emp += r.get('neto_mes', 0.0)
 
-                        # 2. Costos propios de la empresa aplicando la regla exacta de niveles y ceros
                         costos_propios_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
@@ -1111,19 +1130,13 @@ if estructura:
                                 seg3 = segs[2].strip()
                                 seg4 = segs[3].strip()
 
-                                # Verificar prefijo (5 o 6, termina en 1)
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
-                                    
-                                    # EXCLUIR ACUMULADORES (Nivel 3 igual a '000' o Nivel 4 igual a '0000')
                                     if seg3 in ('000', '0') or seg4 in ('0000', '0'):
                                         continue
-                                    
-                                    # Omitir si tiene el subnivel -054-
                                     if '054' in seg3 or '54' in seg3:
                                         continue
                                     
-                                    # Sumar la cuenta válida de detalle
-                                    costos_propios_emp += r['saldo_final']
+                                    costos_propios_emp += r.get('neto_mes', 0.0)
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
                         tot_costos_gen += costos_propios_emp
@@ -1137,7 +1150,6 @@ if estructura:
 
                     df_ig_resumen = pd.DataFrame(filas_ig)
                     
-                    # Fila de Total
                     df_ig_resumen.loc[len(df_ig_resumen)] = {
                         'EMPRESA': 'TOTAL',
                         'INGRESOS FACTURADOS A LA EMPRESA': tot_ingresos_gen,
@@ -1163,6 +1175,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Filtro por niveles de detalle configurado correctamente para arrojar la suma exacta de las cuentas analíticas.")
+                    st.success("✅ Filtro de movimientos del mes y acumulados configurados correctamente.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
