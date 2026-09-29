@@ -9,9 +9,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación por UUID")
+st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
-# --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES A EMPRESAS ---
+# --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES Y EMPRESAS ---
 MAPEO_RAZON_A_EMPRESA = {
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
@@ -49,11 +49,11 @@ def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
     if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
         return "OTRAS"
+    if val in MAPEO_EMPRESA_ORIGEN:
+        return MAPEO_EMPRESA_ORIGEN[val]
     for razon, empresa_corta in MAPEO_RAZON_A_EMPRESA.items():
         if razon in val or empresa_corta in val:
             return empresa_corta
-    if val in MAPEO_EMPRESA_ORIGEN:
-        return MAPEO_EMPRESA_ORIGEN[val]
     return val
 
 
@@ -95,7 +95,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             estado = val_est
                             break
                 
-                # Guardamos tanto vigentes como cancelados para poder conciliar estatus
                 fecha_emision_str = ""
                 dt_fecha = None
                 for col in df_sat.columns:
@@ -149,9 +148,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                         descuento = float(val) if val and val.lower() != 'nan' else 0.0
 
                 subtotal_neto = subtotal - descuento
-                # Si está cancelado en SAT, el subtotal efectivo para comparativo es 0 o se marca
-                if 'CANCELAD' in estado:
-                    subtotal_neto = 0.0
 
                 registro = {
                     'Empresa': empresa_normalizada,
@@ -214,7 +210,7 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             empresa_norm = empresa_raw.apply(normalizar_empresa)
 
             df_final = pd.DataFrame({
-                'EmpresaOrigen': empresa_norm,
+                'Empresa': empresa_norm,
                 'UUID': df['UUID'],
                 'CFDIFechaCertificacion': df['Fecha_Cert'],
                 'Estado_Master': df['Estado_Master'],
@@ -246,7 +242,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y conciliando estatus y montos..."):
+    with st.spinner("Procesando información y unificando empresas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -260,16 +256,15 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Master vs XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### ⚖️️ Comparativo Master vs XML - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
-            # Filtrar solo vigentes en SAT para el comparativo general
             sat_vig = df_ingresos_sat[df_ingresos_sat['Estado_SAT'].str.contains('VIGENTE', na=False)]
             mast_vig = df_ingresos_master[df_ingresos_master['Estado_Master'].str.contains('VIGENTE', na=False)]
 
             res_ing_sat = sat_vig.groupby('Empresa', as_index=False)['SubTotal'].sum() if not sat_vig.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
 
-            res_ing_mast = mast_vig.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum() if not mast_vig.empty else pd.DataFrame(columns=['EmpresaOrigen', 'SubTotal'])
+            res_ing_mast = mast_vig.groupby('Empresa', as_index=False)['SubTotal'].sum() if not mast_vig.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_mast.columns = ['Empresa', 'Master Ingresos']
 
             st.markdown("#### 📈 Comparativo de Ingresos (Master vs XML)")
@@ -289,14 +284,13 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 st.info("No hay datos de ingresos para comparar.")
 
             st.markdown("---")
-            # Egresos
             sat_eg_vig = df_egresos_sat[df_egresos_sat['Estado_SAT'].str.contains('VIGENTE', na=False)]
             mast_eg_vig = df_egresos_master[df_egresos_master['Estado_Master'].str.contains('VIGENTE', na=False)]
 
             res_eg_sat = sat_eg_vig.groupby('Empresa', as_index=False)['SubTotal'].sum() if not sat_eg_vig.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_eg_sat.columns = ['Empresa', 'XML Egresos']
 
-            res_eg_mast = mast_eg_vig.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum() if not mast_eg_vig.empty else pd.DataFrame(columns=['EmpresaOrigen', 'SubTotal'])
+            res_eg_mast = mast_eg_vig.groupby('Empresa', as_index=False)['SubTotal'].sum() if not mast_eg_vig.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
             st.markdown("#### 📉 Comparativo de Egresos / Notas de Crédito (Master vs XML)")
@@ -355,32 +349,32 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.markdown(f"### 🔍 Conciliación por UUID (Ingresos) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
             if not df_ingresos_master.empty and not df_ingresos_sat.empty:
-                df_m_agg = df_ingresos_master[['UUID', 'EmpresaOrigen', 'SubTotal', 'Estado_Master']].rename(
-                    columns={'SubTotal': 'SubTotal_Master', 'EmpresaOrigen': 'Empresa'}
+                df_m_agg = df_ingresos_master[['UUID', 'Empresa', 'SubTotal', 'Estado_Master']].rename(
+                    columns={'SubTotal': 'SubTotal_Master'}
                 )
-                df_s_agg = df_ingresos_sat[['UUID', 'SubTotal', 'Estado_SAT']].rename(
-                    columns={'SubTotal': 'SubTotal_SAT'}
+                df_s_agg = df_ingresos_sat[['UUID', 'Empresa', 'SubTotal', 'Estado_SAT']].rename(
+                    columns={'SubTotal': 'SubTotal_SAT', 'Empresa': 'Empresa_SAT'}
                 )
                 
                 df_concil = pd.merge(df_m_agg, df_s_agg, on='UUID', how='outer')
                 df_concil['SubTotal_Master'] = df_concil['SubTotal_Master'].fillna(0.0)
                 df_concil['SubTotal_SAT'] = df_concil['SubTotal_SAT'].fillna(0.0)
-                df_concil['Empresa'] = df_concil['Empresa'].fillna('NO ENCONTRADO')
+                df_concil['Empresa'] = df_concil['Empresa'].fillna(df_concil['Empresa_SAT']).fillna('OTRAS')
                 df_concil['Estado_Master'] = df_concil['Estado_Master'].fillna('NO ENCONTRADO EN MASTER')
                 df_concil['Estado_SAT'] = df_concil['Estado_SAT'].fillna('NO ENCONTRADO EN SAT')
                 
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
-                # Filtrar estrictamente solo aquellos UUIDs que tienen diferencia en monto o en estatus
+                # Filtrar ESTRICTAMENTE solo aquellos UUIDs que tienen diferencia real
                 df_con_dif = df_concil[
                     (df_concil['Diferencia'].round(2) != 0.0) | 
                     (df_concil['Estado_Master'] != df_concil['Estado_SAT'])
                 ].copy()
 
-                st.markdown("#### 📊 Resumen de UUIDs con Diferencias o Discrepancias de Estatus")
+                st.markdown("#### 📊 Resumen de UUIDs con Diferencias o Discrepancias")
                 col_d1, col_d2 = st.columns(2)
                 col_d1.metric("Total UUIDs Analizados", len(df_concil))
-                col_d2.metric("UUIDs con Discrepancia", len(df_con_dif))
+                col_d2.metric("UUIDs con Diferencia Estricta", len(df_con_dif))
 
                 st.markdown("---")
                 st.markdown("#### 📋 Detalle Exclusivo de UUIDs con Diferencias")
@@ -398,6 +392,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                         hide_index=True
                     )
                 else:
-                    st.success("🎉 ¡Excelente! No se encontraron diferencias ni discrepancias de estatus en los UUIDs.")
+                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs cruzados.")
             else:
-                st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación por UUID.")
+                st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación.")
