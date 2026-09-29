@@ -135,27 +135,22 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
-    """Carga y consolida tanto FacturaCliente como NotaCreditoCliente (en negativo), filtrando por periodo."""
+    """Carga y consolida FacturaCliente y NotaCreditoCliente (negativo), filtrando por periodo."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
     dfs_totales = []
     
-    # 1. Cargar Facturas
     try:
         df_fact = pd.read_excel(ruta_master, sheet_name="FacturaCliente")
         if not df_fact.empty:
-            df_fact['Tipo_Documento'] = 'Factura'
             dfs_totales.append(df_fact)
     except Exception:
         pass
 
-    # 2. Cargar Notas de Crédito
     try:
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
-            df_nc['Tipo_Documento'] = 'NotaCredito'
-            # Multiplicar montos por -1 para que descuenten
             cols_numericas = [c for c in ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
                 df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0) * -1
@@ -193,10 +188,19 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
 
 
 def exportar_excel_multi_pestana(df_detalle, df_resumen, titulo_reporte, subtitulo_reporte):
-    """Genera un archivo Excel con pestañas separadas para el detalle y el resumen por empresa."""
+    """Genera un archivo Excel profesional con múltiples pestañas y estilos aplicados."""
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     
+    fill_encabezado = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    font_encabezado = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    borde_delgado = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
     # --- Pestaña 1: Resumen por Empresa ---
     ws_res = wb.active
     ws_res.title = "Resumen por Empresa"
@@ -208,16 +212,19 @@ def exportar_excel_multi_pestana(df_detalle, df_resumen, titulo_reporte, subtitu
     start_row = 4
     for c_idx, col_name in enumerate(list(df_resumen.columns), start=1):
         cell = ws_res.cell(row=start_row, column=c_idx, value=str(col_name))
-        cell.fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
-        cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        cell.fill = fill_encabezado
+        cell.font = font_encabezado
+        cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for r_i, (_, row_series) in enumerate(df_resumen.iterrows()):
         curr_row = start_row + 1 + r_i
         for c_i, col_name in enumerate(list(df_resumen.columns), start=1):
             val = row_series[col_name]
             cell = ws_res.cell(row=curr_row, column=c_i, value=val if pd.notnull(val) else 0.0)
+            cell.border = borde_delgado
             if isinstance(val, (int, float)):
                 cell.number_format = '$#,##0.00'
+                cell.alignment = Alignment(horizontal="right")
 
     # --- Pestaña 2: Detalle Amarre ---
     ws_det = wb.create_sheet(title="Detalle Amarre")
@@ -228,16 +235,19 @@ def exportar_excel_multi_pestana(df_detalle, df_resumen, titulo_reporte, subtitu
     
     for c_idx, col_name in enumerate(list(df_detalle.columns), start=1):
         cell = ws_det.cell(row=start_row, column=c_idx, value=str(col_name))
-        cell.fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
-        cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        cell.fill = fill_encabezado
+        cell.font = font_encabezado
+        cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for r_i, (_, row_series) in enumerate(df_detalle.iterrows()):
         curr_row = start_row + 1 + r_i
         for c_i, col_name in enumerate(list(df_detalle.columns), start=1):
             val = row_series[col_name]
             cell = ws_det.cell(row=curr_row, column=c_i, value=val if pd.notnull(val) else 0.0)
+            cell.border = borde_delgado
             if isinstance(val, (int, float)):
                 cell.number_format = '$#,##0.00'
+                cell.alignment = Alignment(horizontal="right")
 
     wb.save(output)
     return output.getvalue()
@@ -277,7 +287,6 @@ with subtab_ingresos:
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
-                # Cruce detallado por UUID
                 df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('_Fact', '_SAT'))
                 
                 tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
@@ -291,7 +300,6 @@ with subtab_ingresos:
                         axis=1
                     )
 
-                # --- Generar Tabla de Resumen por Empresa ---
                 col_empresa = 'BusinessEntityName' if 'BusinessEntityName' in df_amarre.columns else None
                 if col_empresa:
                     df_resumen_empresa = df_amarre.groupby(col_empresa, as_index=False).agg({
@@ -308,7 +316,6 @@ with subtab_ingresos:
 
                 st.success("✅ Amarre y resumen por empresa realizados correctamente.")
 
-                # Pestañas de visualización en Streamlit
                 tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen por Empresa", "📋 Detalle por UUID"])
                 
                 with tab_res_ui:
@@ -319,7 +326,6 @@ with subtab_ingresos:
                     st.markdown("### Detalle Completo de Amarre")
                     st.dataframe(df_amarre, use_container_width=True)
 
-                # Exportar a Excel con ambas pestañas
                 output_excel = exportar_excel_multi_pestana(
                     df_amarre,
                     df_resumen_empresa,
