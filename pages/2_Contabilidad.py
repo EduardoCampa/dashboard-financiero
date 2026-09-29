@@ -1069,7 +1069,7 @@ if estructura:
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre I y G Intercos (Ingresos facturados y Costos Intercos)")
-                st.info("Columna 1: Ingresos facturados por otras empresas a esta. Columna 2: Costos base intercos (-00000-0000). Columna 3: Cuenta 054. Columna 4: Costos netos (Costos base - Cuenta 054).")
+                st.info("Columna 1: Ingresos facturados por otras empresas a esta. Columna 2: Costos base intercos (-00000-0000). Columna 3: Cuenta 054-0000. Columna 4: Costos netos (Costos base - Cuenta 054).")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1101,7 +1101,7 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
-                        # 2. Costos base (-00000-0000) y Cuenta 054 (-054-) en las cuentas de gastos/costos (5, 6)
+                        # 2. Costos base (-00000-0000) y Cuenta 054 exacta (-054-0000) en las cuentas de gastos/costos (5, 6)
                         costos_base_emp = 0.0
                         cta_054_emp = 0.0
                         cuentas_base_proc = set()
@@ -1120,12 +1120,14 @@ if estructura:
 
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
                                     es_cuenta_base = (seg2 in ('00000', '0000', '0') and seg3 in ('000', '0') and seg4 in ('0000', '0'))
-                                    es_054 = (seg3 in ('054', '54', '0054'))
+                                    
+                                    # Filtro estricto para cuenta 054 con segmento final 0000
+                                    es_054_exacta = (seg3 in ('054', '54', '0054') and seg4 in ('0000', '0'))
 
                                     if es_cuenta_base and cta not in cuentas_base_proc:
                                         costos_base_emp += r['saldo_final']
                                         cuentas_base_proc.add(cta)
-                                    elif es_054 and cta not in cuentas_054_proc:
+                                    elif es_054_exacta and cta not in cuentas_054_proc:
                                         cta_054_emp += r['saldo_final']
                                         cuentas_054_proc.add(cta)
 
