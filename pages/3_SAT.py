@@ -16,7 +16,7 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT & Amarres")
 
-# Diccionario de equivalencia: Empresa Origen (BusinessEntityName) -> RFC Emisor SAT
+# Diccionario de equivalencia oficial: Empresa Origen (Nombre Corto) -> RFC Emisor SAT
 MAPEO_EMPRESA_RFC = {
     "CIV": "CIV1009089B0",
     "CIVLA": "CIV141222JD5",
@@ -36,6 +36,9 @@ MAPEO_EMPRESA_RFC = {
     "SERVYRE": "SER970728JN8"
 }
 
+# Inverso para buscar la empresa por RFC
+RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
+
 def parse_monto_robusto(val):
     if pd.isnull(val):
         return 0.0
@@ -49,7 +52,7 @@ def parse_monto_robusto(val):
 
 
 def consolidar_excels_sat(carpeta_xmls="XML"):
-    """Lee y consolida los archivos de Excel del SAT, extrayendo UUID, RFC, Nombre del Emisor y Estado."""
+    """Lee y consolida los archivos de Excel del SAT."""
     registros_xml = []
     archivos_excel = glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) or glob.glob(os.path.join(carpeta_xmls, "*.xlsx"))
     
@@ -76,14 +79,6 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                             rfc_emisor = val_rfc
                             break
 
-                nombre_emisor_sat = ""
-                for col in df_sat.columns:
-                    if 'emisor' in col.lower() and ('nombre' in col.lower() or 'razon' in col.lower()):
-                        val_nom = str(row.get(col, '')).strip()
-                        if val_nom and val_nom.lower() != 'nan':
-                            nombre_emisor_sat = val_nom
-                            break
-
                 estado_sat = "VIGENTE"
                 for col in df_sat.columns:
                     if col.lower() == 'estado' or 'estatus' in col.lower():
@@ -91,20 +86,6 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                         if val_est and val_est != 'NAN':
                             estado_sat = val_est
                             break
-
-                fecha_emision = ""
-                for col in df_sat.columns:
-                    if 'fecha' in col.lower():
-                        f_raw = str(row.get(col, ''))
-                        if f_raw and f_raw != 'NAN':
-                            fecha_emision = f_raw.split('T')[0].split(' ')[0]
-                            break
-
-                razon_receptor = ""
-                for col in df_sat.columns:
-                    if 'receptor' in col.lower() and ('nombre' in col.lower() or 'razon' in col.lower()):
-                        razon_receptor = str(row.get(col, ''))
-                        break
 
                 def obtener_val(keywords):
                     for col in df_sat.columns:
@@ -117,17 +98,9 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
                 registros_xml.append({
                     'UUID': uuid,
                     'RFC_Emisor': rfc_emisor,
-                    'Nombre_Emisor_SAT': nombre_emisor_sat,
                     'Estado_SAT': estado_sat,
-                    'Fecha emision': fecha_emision,
-                    'Razon receptor': razon_receptor if razon_receptor != 'nan' else '',
-                    'SubTotal': 0.0 if es_cancelada else obtener_val(['subtotal', 'sub total']),
-                    'Descuento': 0.0 if es_cancelada else obtener_val(['descuento', 'desc']),
-                    'IVA Trasladado': 0.0 if es_cancelada else obtener_val(['iva trasladado', 'trasladado 002', 'iva 16']),
-                    'IVA Retenido': 0.0 if es_cancelada else obtener_val(['iva retenido', 'retenido 002']),
-                    'ISR Retenido': 0.0 if es_cancelada else obtener_val(['isr retenido', 'retenido 001']),
-                    'Local retenido': 0.0 if es_cancelada else obtener_val(['local retenido', 'impuesto local']),
-                    'Total': 0.0 if es_cancelada else obtener_val(['total'])
+                    'SubTotal_SAT': 0.0 if es_cancelada else obtener_val(['subtotal', 'sub total']),
+                    'Total_SAT': 0.0 if es_cancelada else obtener_val(['total'])
                 })
         except Exception:
             continue
@@ -135,7 +108,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
-    """Carga y consolida FacturaCliente y NotaCreditoCliente (negativo), filtrando por periodo."""
+    """Carga FacturaCliente y NotaCreditoCliente, aplicando notas de crédito en negativo."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
@@ -144,6 +117,7 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     try:
         df_fact = pd.read_excel(ruta_master, sheet_name="FacturaCliente")
         if not df_fact.empty:
+            df_fact['Tipo_Doc'] = 'FacturaCliente'
             dfs_totales.append(df_fact)
     except Exception:
         pass
@@ -151,7 +125,8 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     try:
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
-            cols_numericas = [c for c in ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total'] if c in df_nc.columns]
+            df_nc['Tipo_Doc'] = 'NotaCredito'
+            cols_numericas = [c for c in ['SubTotal', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
                 df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0) * -1
             dfs_totales.append(df_nc)
@@ -173,41 +148,27 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     if 'UUID' in df_master.columns:
         df_master = df_master[df_master['UUID'].notnull() & (df_master['UUID'].astype(str).str.strip() != '')]
     
-    cols_a_agrupar = [c for c in ['UUID', 'BusinessEntityName', 'CFDStatusCancelledName'] if c in df_master.columns]
-    cols_numericas = [c for c in ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total'] if c in df_master.columns]
-    
-    if not cols_a_agrupar:
-        return pd.DataFrame()
-
-    df_agrupado = df_master.groupby(cols_a_agrupar, as_index=False)[cols_numericas].sum()
-    
-    if 'BusinessEntityName' in df_agrupado.columns:
-        df_agrupado['RFC_Esperado'] = df_agrupado['BusinessEntityName'].map(MAPEO_EMPRESA_RFC).fillna('')
-        
-    return df_agrupado
+    return df_master
 
 
-def exportar_excel_multi_pestana(df_detalle, df_resumen, titulo_reporte, subtitulo_reporte):
-    """Genera un archivo Excel profesional con múltiples pestañas y estilos aplicados."""
+def exportar_excel_estilo_personalizado(df_detalle, df_resumen, titulo_reporte, subtitulo_reporte):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     
     fill_encabezado = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     font_encabezado = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     borde_delgado = Border(
-        left=Side(style='thin', color='CBD5E1'),
-        right=Side(style='thin', color='CBD5E1'),
-        top=Side(style='thin', color='CBD5E1'),
-        bottom=Side(style='thin', color='CBD5E1')
+        left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1')
     )
 
-    # --- Pestaña 1: Resumen por Empresa ---
+    # --- Pestaña 1: Resumen Ingresos ---
     ws_res = wb.active
-    ws_res.title = "Resumen por Empresa"
+    ws_res.title = "Resumen"
     ws_res.views.sheetView[0].showGridLines = True
     
     ws_res.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
-    ws_res.cell(row=2, column=1, value=subtitulo_reporte + " | Resumen Ejecutivo").font = Font(name="Calibri", size=10, italic=True, color="475569")
+    ws_res.cell(row=2, column=1, value=subtitulo_reporte + " | Resumen Ingresos (Vigentes)").font = Font(name="Calibri", size=10, italic=True, color="475569")
     
     start_row = 4
     for c_idx, col_name in enumerate(list(df_resumen.columns), start=1):
@@ -226,12 +187,12 @@ def exportar_excel_multi_pestana(df_detalle, df_resumen, titulo_reporte, subtitu
                 cell.number_format = '$#,##0.00'
                 cell.alignment = Alignment(horizontal="right")
 
-    # --- Pestaña 2: Detalle Amarre ---
-    ws_det = wb.create_sheet(title="Detalle Amarre")
+    # --- Pestaña 2: Detalle / Acumulado ---
+    ws_det = wb.create_sheet(title="Acumulado")
     ws_det.views.sheetView[0].showGridLines = True
     
     ws_det.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
-    ws_det.cell(row=2, column=1, value=subtitulo_reporte + " | Detalle por UUID").font = Font(name="Calibri", size=10, italic=True, color="475569")
+    ws_det.cell(row=2, column=1, value=subtitulo_reporte + " | Detalle General").font = Font(name="Calibri", size=10, italic=True, color="475569")
     
     for c_idx, col_name in enumerate(list(df_detalle.columns), start=1):
         cell = ws_det.cell(row=start_row, column=c_idx, value=str(col_name))
@@ -272,70 +233,91 @@ with subtab_rh:
     st.info("Módulo para validación de nóminas y retenciones de sueldos y salarios contra CONTPAQi y SAT.")
 
 with subtab_ingresos:
-    st.markdown("### 💰 Amarre de Ingresos (Facturas + Notas de Crédito vs Excel del SAT)")
-    st.info(f"Filtra la base maestra para el año **{anio_sel}** (meses {mes_inicial} a {mes_final}), aplicando notas de crédito en negativo y comparando contra el SAT.")
+    st.markdown("### 💰 Amarre de Ingresos (Sistema vs SAT por Empresa)")
+    st.info(f"Filtra la base maestra para el año **{anio_sel}** (meses {mes_inicial} a {mes_final}).")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
     if st.button("🚀 Ejecutar Amarre y Resumen por Empresa"):
-        with st.spinner("Procesando facturas, notas de crédito y archivos Excel del SAT..."):
+        with st.spinner("Procesando información y cruzando con SAT..."):
             df_fact_base = cargar_base_master_general("Consolidado_Master.xlsx", anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
             df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
             if df_fact_base.empty:
-                st.warning(f"No se encontraron registros en el maestro para el periodo seleccionado ({mes_inicial} a {mes_fin} de {anio_sel}).")
+                st.warning(f"No se encontraron registros en el maestro para el periodo seleccionado.")
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
-                df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('_Fact', '_SAT'))
+                # Cruce por UUID
+                df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('', '_SAT'))
                 
-                tot_fact = 'Total_Fact' if 'Total_Fact' in df_amarre.columns else 'Total_x'
-                tot_sat = 'Total_SAT' if 'Total_SAT' in df_amarre.columns else 'Total_y'
-                
-                df_amarre['Diferencia_Total'] = df_amarre[tot_fact].fillna(0.0) - df_amarre[tot_sat].fillna(0.0)
-                
-                if 'RFC_Esperado' in df_amarre.columns and 'RFC_Emisor' in df_amarre.columns:
-                    df_amarre['Validacion_RFC'] = df_amarre.apply(
-                        lambda row: 'Coincide' if str(row['RFC_Emisor']).strip() == str(row['RFC_Esperado']).strip() else 'Diferente/Revisar',
-                        axis=1
-                    )
+                # Asignar Empresa y Origen basándonos en BusinessEntityName o RFC esperado
+                def determinar_empresa(row):
+                    ben = str(row.get('BusinessEntityName', '')).strip().upper()
+                    if ben in MAPEO_EMPRESA_RFC:
+                        return ben
+                    rfc_sat = str(row.get('RFC_Emisor', '')).strip().upper()
+                    if rfc_sat in RFC_TO_EMPRESA:
+                        return RFC_TO_EMPRESA[rfc_sat]
+                    # Buscar coincidencia parcial en BusinessEntityName
+                    for emp in MAPEO_EMPRESA_RFC.keys():
+                        if emp in ben:
+                            return emp
+                    return "OTRAS"
 
-                col_empresa = 'BusinessEntityName' if 'BusinessEntityName' in df_amarre.columns else None
-                if col_empresa:
-                    df_resumen_empresa = df_amarre.groupby(col_empresa, as_index=False).agg({
-                        tot_fact: 'sum',
-                        tot_sat: 'sum',
-                        'Diferencia_Total': 'sum'
-                    }).rename(columns={
-                        tot_fact: 'Total_Maestro',
-                        tot_sat: 'Total_SAT',
-                        'Diferencia_Total': 'Diferencia'
-                    })
+                df_amarre['Empresa'] = df_amarre.apply(determinar_empresa, axis=1)
+                df_amarre['Origen'] = df_amarre['Empresa'].apply(lambda x: f"En Acumulado {x}" if x != "OTRAS" else "En Acumulado General")
+
+                # Normalizar columnas numéricas
+                df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
+                df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
+                df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
+
+                # Estatus
+                if 'CFDStatusCancelledName' in df_amarre.columns:
+                    df_amarre['Estatus'] = df_amarre['CFDStatusCancelledName'].apply(lambda x: 'Cancelado' if pd.notnull(x) and 'CANCELAD' in str(x).upper() else 'VIGENTE')
                 else:
-                    df_resumen_empresa = pd.DataFrame()
+                    df_amarre['Estatus'] = 'VIGENTE'
+
+                # Formatear el DataFrame de Detalle idéntico a la imagen de Excel
+                cols_detalle = ['Origen', 'Empresa', 'UUID', 'Tipo_Doc', 'Estatus', 'SubTotal', 'SubTotal_SAT', 'Diferencia']
+                df_detalle_final = df_amarre[[c for c in cols_detalle if c in df_amarre.columns]].copy()
+                df_detalle_final.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia']
+
+                # Resumen Ingresos (Vigentes)
+                df_vigentes = df_amarre[df_amarre['Estatus'] == 'VIGENTE']
+                df_resumen = df_vigentes.groupby('Empresa', as_index=False).agg({
+                    'SubTotal': 'sum',
+                    'SubTotal_SAT': 'sum',
+                    'Diferencia': 'sum'
+                }).rename(columns={
+                    'SubTotal': 'SISTEMA (VIG)',
+                    'SubTotal_SAT': 'SAT (VIG)',
+                    'Diferencia': 'DIF. SIST vs SAT'
+                })
 
                 st.success("✅ Amarre y resumen por empresa realizados correctamente.")
 
-                tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen por Empresa", "📋 Detalle por UUID"])
+                tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen Ingresos", "📋 Detalle Acumulado"])
                 
                 with tab_res_ui:
-                    st.markdown("### Resumen Total por Empresa (Maestro vs SAT)")
-                    st.dataframe(df_resumen_empresa, use_container_width=True)
+                    st.markdown("### RESUMEN INGRESOS (VIGENTES)")
+                    st.dataframe(df_resumen, use_container_width=True)
 
                 with tab_det_ui:
-                    st.markdown("### Detalle Completo de Amarre")
-                    st.dataframe(df_amarre, use_container_width=True)
+                    st.markdown("### ACUMULADO DETALLE")
+                    st.dataframe(df_detalle_final, use_container_width=True)
 
-                output_excel = exportar_excel_multi_pestana(
-                    df_amarre,
-                    df_resumen_empresa,
+                output_excel = exportar_excel_estilo_personalizado(
+                    df_detalle_final,
+                    df_resumen,
                     "REPORTE DE AMARRE DE INGRESOS",
                     f"Periodo: {mes_inicial} a {mes_final} del {anio_sel}"
                 )
                 
                 st.download_button(
-                    label="📥 Descargar Reporte Completo (Excel con Resumen y Detalle)",
+                    label="📥 Descargar Reporte Completo (Excel con Estilo Ejecutivo)",
                     data=output_excel,
-                    file_name=f"Amarre_Ingresos_Resumen_Y_Detalle_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
+                    file_name=f"Amarre_Ingresos_Ejecutivo_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
