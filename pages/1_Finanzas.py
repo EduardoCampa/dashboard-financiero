@@ -9,7 +9,7 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Finanzas - Grupo SERVYRE", layout="wide")
 
 # ==========================================
-# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO ORACLE CLOUD / ENTERPRISE)
+# 🎨 ESTILOS CSS PERSONALIZADOS (ESTILO NARANJA CORPORATIVO)
 # ==========================================
 st.markdown("""
     <style>
@@ -31,8 +31,8 @@ st.markdown("""
             color: #333333;
         }
         .oracle-table th {
-            background-color: #f0f2f5;
-            color: #1f497d;
+            background-color: #fde9d9;
+            color: #833C0C;
             font-weight: bold;
             text-align: center;
             padding: 8px 10px;
@@ -50,17 +50,17 @@ st.markdown("""
             background-color: #fcfcfc;
         }
         .oracle-table tr:hover {
-            background-color: #f0f4f9;
+            background-color: #fef2ed;
         }
         .oracle-table tr.total-row {
-            background-color: #e6ecf5 !important;
+            background-color: #fce4d6 !important;
             font-weight: bold;
             color: #000000;
-            border-top: 2px solid #1f497d;
-            border-bottom: 2px solid #1f497d;
+            border-top: 2px solid #c65911;
+            border-bottom: 2px solid #c65911;
         }
         .oracle-table tr.total-row td {
-            border: 1px solid #b0c4de;
+            border: 1px solid #f8cbad;
         }
         .text-center { text-align: center; }
         .text-right { text-align: right; }
@@ -99,13 +99,13 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     ws.views.sheetView[0].showGridLines = True
 
     font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
-    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    fill_titulo = PatternFill(start_color="C65911", end_color="C65911", fill_type="solid")
     font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    fill_header = PatternFill(start_color="D66011", end_color="D66011", fill_type="solid")
     font_normal = Font(name="Calibri", size=10, color="000000")
     font_nc = Font(name="Calibri", size=10, color="9C0006")
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
-    fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
+    fill_total = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
 
     borde_delgado = Border(
         left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
@@ -205,7 +205,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     output.seek(0)
     return output
 
-# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS ---
+# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS (ESTILO NARANJA CORPORATIVO) ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
@@ -213,18 +213,24 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     ws.views.sheetView[0].showGridLines = True
 
     font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
-    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-    font_empresa = Font(name="Calibri", size=12, bold=True, color="1F497D")
-    fill_empresa = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    fill_titulo = PatternFill(start_color="C65911", end_color="C65911", fill_type="solid")
+    
+    font_empresa = Font(name="Calibri", size=12, bold=True, color="833C0C")
+    fill_empresa = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+    
     font_prov = Font(name="Calibri", size=11, bold=True, color="333333")
     fill_prov = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    font_moneda = Font(name="Calibri", size=10, bold=True, color="1F497D")
-    fill_moneda = PatternFill(start_color="E9EDF4", end_color="E9EDF4", fill_type="solid")
+    
+    font_moneda = Font(name="Calibri", size=10, bold=True, color="833C0C")
+    fill_moneda = PatternFill(start_color="FDE9D9", end_color="FDE9D9", fill_type="solid")
+    
     font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    fill_header = PatternFill(start_color="D66011", end_color="D66011", fill_type="solid")
+    
     font_normal = Font(name="Calibri", size=10, color="000000")
+    
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
-    fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
+    fill_total = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
 
     borde_delgado = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
@@ -264,7 +270,7 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
             total_prov = df_prov['Saldo_Pendiente'].sum()
 
             ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
-            cell_prov = ws.cell(row=row_idx, column=1, value=f"   👤 {str(prov)}")
+            cell_prov = ws.cell(row=row_idx, column=1, value=f"    👤 {str(prov)}")
             cell_prov.font = font_prov; cell_prov.fill = fill_prov; cell_prov.alignment = Alignment(horizontal="left", vertical="center")
             
             cell_prov_tot = ws.cell(row=row_idx, column=9, value=total_prov)
@@ -555,7 +561,7 @@ columnas_sp_visuales = [
     'TotalRetention', 'Total', 'UUID', 'Amount', 'SaldoPagoSP'
 ]
 
-# --- RENDERIZADOR DE TABLA ESTILO ORACLE ENTERPRISE ---
+# --- RENDERIZADOR DE TABLA ESTILO CORPORATIVO ---
 def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     if df_entrada.empty:
         st.info("No hay registros para mostrar.")
@@ -563,7 +569,6 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
 
     df_calc = df_entrada.copy()
 
-    # Construir encabezados HTML
     cols_existentes = [c for c in cols_orden if c in df_calc.columns]
     
     html = ['<div class="oracle-table-container"><table class="oracle-table"><thead><tr>']
@@ -571,7 +576,6 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
         html.append(f'<th>{col}</th>')
     html.append('</tr></thead><tbody>')
 
-    # Filas de Datos
     for _, row in df_calc.iterrows():
         html.append('<tr>')
         for col in cols_existentes:
@@ -585,7 +589,6 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
                 html.append(f'<td class="text-left">{val if not pd.isnull(val) else ""}</td>')
         html.append('</tr>')
 
-    # Fila de Totales
     html.append('<tr class="total-row">')
     for idx, col in enumerate(cols_existentes):
         if col in cols_num:
@@ -622,381 +625,168 @@ if submodulo == "📊 Facturación":
 
     if df_factura is not None and not df_factura.empty:
         df_f = df_factura.copy()
-
-        subtotal_val = pd.to_numeric(df_f['SubTotal'], errors='coerce').fillna(0) if 'SubTotal' in df_f.columns else 0.0
-        discount_val = pd.to_numeric(df_f['TotalDiscount'], errors='coerce').fillna(0) if 'TotalDiscount' in df_f.columns else 0.0
-        df_f['Subtotal2'] = subtotal_val - discount_val
-
-        if 'DateDocument' in df_f.columns:
-            df_f['DateDocument_Fmt'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.strftime('%Y-%m-%d')
-            df_f['Año'] = pd.to_datetime(df_f['DateDocument'], errors='coerce').dt.year.fillna(0).astype(int)
-        else:
-            df_f['DateDocument_Fmt'] = ""
-            df_f['Año'] = 0
-
-        if df_edocuenta is not None and not df_edocuenta.empty and 'DocumentID' in df_f.columns and 'DocumentID' in df_edocuenta.columns:
-            cols_edo = ['DocumentID', 'Amount', 'DateOperation']
-            if 'EmpresaOrigen' in df_edocuenta.columns and 'EmpresaOrigen' in df_f.columns:
-                cols_edo.append('EmpresaOrigen')
-
-            df_edo_sub = df_edocuenta[[c for c in cols_edo if c in df_edocuenta.columns]].copy()
-            if 'DateOperation' in df_edo_sub.columns:
-                df_edo_sub['DateOperation'] = pd.to_datetime(df_edo_sub['DateOperation'], errors='coerce').dt.strftime('%Y-%m-%d')
-            else:
-                df_edo_sub['DateOperation'] = ""
-
-            group_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_edo_sub.columns and 'EmpresaOrigen' in df_f.columns else 'DocumentID'
-            df_tot_pagado = df_edo_sub.groupby(group_keys)['Amount'].sum().reset_index().rename(columns={'Amount': 'Total_Pagos_Acumulados'})
-
-            df_f = pd.merge(df_f, df_tot_pagado, on=group_keys, how='left')
-            df_f['Total_Pagos_Acumulados'] = df_f['Total_Pagos_Acumulados'].fillna(0.0)
-
-            df_f = pd.merge(df_f, df_edo_sub, on=group_keys, how='left')
-            df_f['Amount'] = df_f['Amount'].fillna(0.0)
-            df_f['DateOperation'] = df_f['DateOperation'].fillna("")
-        else:
-            df_f['Amount'] = 0.0
-            df_f['Total_Pagos_Acumulados'] = 0.0
-            df_f['DateOperation'] = ""
-
-        total_fac_val = pd.to_numeric(df_f['Total'], errors='coerce').fillna(0) if 'Total' in df_f.columns else 0.0
-        df_f['SaldoFactura'] = (total_fac_val - df_f['Total_Pagos_Acumulados']).apply(lambda x: max(0.0, x))
-        df_f['DateDocument'] = df_f['DateDocument_Fmt']
-
-        es_nc_mask = df_f['TIPO DOC'] == 'NC'
-        cols_a_restar = ['SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'SaldoFactura', 'TotalRetention']
         
-        for col_r in cols_a_restar:
-            if col_r in df_f.columns:
-                df_f.loc[es_nc_mask, col_r] = -1 * df_f.loc[es_nc_mask, col_r].abs()
-
-        st.markdown("#### ⚙️ Filtros de Selección")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        with c1:
-            if 'EmpresaOrigen' in df_f.columns:
-                e_sel = st.multiselect("Empresa Origen:", sorted(df_f['EmpresaOrigen'].dropna().unique()), key="fac_emp")
-                if e_sel: df_f = df_f[df_f['EmpresaOrigen'].isin(e_sel)]
-        with c2:
-            if 'BusinessEntityName' in df_f.columns:
-                cli_sel = st.multiselect("Cliente:", sorted(df_f['BusinessEntityName'].dropna().unique()), key="fac_cli")
-                if cli_sel: df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
-        with c3:
-            if 'TIPO DOC' in df_f.columns:
-                tipo_sel = st.multiselect("Tipo Doc (F/NC):", sorted(df_f['TIPO DOC'].dropna().unique()), key="fac_tipo")
-                if tipo_sel: df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
-        with c4:
-            a_sel = st.multiselect("Año:", sorted([int(a) for a in df_f['Año'].unique() if a > 0], reverse=True), key="fac_anio")
-            if a_sel: df_f = df_f[df_f['Año'].isin(a_sel)]
-        with c5:
-            st.markdown("<br>", unsafe_allow_html=True)
-            solo_saldo_fac = st.checkbox("Saldo Factura > $1.00", value=False, key="fac_saldo_chk")
-            if solo_saldo_fac:
-                df_f = df_f[df_f['SaldoFactura'] > 1.0]
-
-        st.markdown("---")
-
-        df_unicos = df_f.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_f.columns and 'DocumentID' in df_f.columns else ['DocFolio'])
+        # Filtros de visualización
+        st.subheader("Filtros de Búsqueda")
+        col_f1, col_f2, col_f3 = st.columns(3)
         
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        with col_m1:
-            st.metric("Subtotal2 Total", formato_mx(df_unicos['Subtotal2'].sum()))
-        with col_m2:
-            st.metric("Total Facturado (Neto)", formato_mx(df_unicos['Total'].sum()))
-        with col_m3:
-            st.metric("Cobrado en EdoCuenta", formato_mx(df_f['Amount'].sum()))
-        with col_m4:
-            st.metric("Saldo Pendiente Neto", formato_mx(df_unicos['SaldoFactura'].sum()))
+        empresas_disp = sorted(df_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_f.columns else []
+        emp_sel = col_f1.multiselect("Filtrar por Empresa:", empresas_disp)
+        if emp_sel:
+            df_f = df_f[df_f['EmpresaOrigen'].isin(emp_sel)]
+
+        tipos_disp = sorted(df_f['TIPO DOC'].dropna().unique()) if 'TIPO DOC' in df_f.columns else []
+        tipo_sel = col_f2.multiselect("Filtrar por Tipo Doc:", tipos_disp)
+        if tipo_sel:
+            df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
+
+        clientes_disp = sorted(df_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_f.columns else []
+        cli_sel = col_f3.multiselect("Filtrar por Cliente:", clientes_disp)
+        if cli_sel:
+            df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
 
         st.markdown("---")
-
-        g1, g2 = st.columns(2)
-        with g1:
-            st.subheader("📈 Top 10 Clientes por Saldo Pendiente")
-            if 'BusinessEntityName' in df_unicos.columns:
-                top_clientes = df_unicos.groupby('BusinessEntityName')['SaldoFactura'].sum().nlargest(10).reset_index()
-                st.bar_chart(top_clientes.set_index('BusinessEntityName'))
-        with g2:
-            st.subheader("🏢 Distribución por Empresa Origen")
-            if 'EmpresaOrigen' in df_unicos.columns:
-                emp_totales = df_unicos.groupby('EmpresaOrigen')['Total'].sum().reset_index()
-                st.bar_chart(emp_totales.set_index('EmpresaOrigen'))
-
-        st.markdown("---")
-        st.subheader("📋 Tabla General de Facturación y Notas de Crédito")
-
+        
+        # Botón de Descarga Excel
+        excel_data = generar_excel_facturacion_ejecutivo(df_f)
         st.download_button(
-            label="📊 Descargar Reporte Ejecutivo de Facturación y NC en Excel",
-            data=generar_excel_facturacion_ejecutivo(df_f),
-            file_name="Reporte_Ejecutivo_Facturacion_NC.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_exp_fact_ejec_v3",
-            use_container_width=True
+            label="📥 Descargar Reporte de Facturación en Excel",
+            data=excel_data,
+            file_name="Reporte_Facturacion_Servyre.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-        st.markdown("<br>", unsafe_allow_html=True)
 
         cols_num_fac = ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']
         mostrar_tabla_con_totales(df_f, cols_num_fac, columnas_requeridas)
     else:
-        st.warning("No hay registros disponibles de Facturación.")
+        st.warning("No hay datos disponibles en Facturación.")
 
 # ==========================================
 # 2. SUBMÓDULO: ÓRDENES DE COMPRA Y SP
 # ==========================================
 elif submodulo == "📦 Órdenes de Compra y SP":
-    st.title("📦 Módulo de Órdenes de Compra y Solicitudes de Pago")
+    st.title("📦 Órdenes de Compra y Solicitudes de Pago")
+    
+    tab1, tab2 = st.tabs(["Órdenes de Compra (OC)", "Solicitudes de Pago (SP)"])
+    
+    with tab1:
+        st.subheader("Detalle de Órdenes de Compra")
+        if not df_ordenes_proc.empty:
+            cols_num_oc = ['Rate', 'SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoOC']
+            mostrar_tabla_con_totales(df_ordenes_proc, cols_num_oc, columnas_oc_visuales)
+        else:
+            st.info("No hay registros en Órdenes de Compra.")
 
-    tab_oc, tab_sp = st.tabs(["OrdenCompra", "SolicitudPago"])
-
-    cols_num_oc = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoOC']
-    cols_num_sp = ['SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoSP']
-
-    with tab_oc:
-        if df_ordenes_proc is not None and not df_ordenes_proc.empty:
-            df_oc_f = df_ordenes_proc.copy()
-            if 'DateDocument' in df_oc_f.columns:
-                df_oc_f['DateDocument'] = pd.to_datetime(df_oc_f['DateDocument'], errors='coerce').dt.strftime('%Y-%m-%d')
-                df_oc_f['Año'] = pd.to_datetime(df_oc_f['DateDocument'], errors='coerce').dt.year.fillna(0).astype(int)
-            else:
-                df_oc_f['Año'] = 0
-
-            st.markdown("#### ⚙️ Filtros Orden de Compra")
-            oc_c1, oc_c2, oc_c3, oc_c4 = st.columns(4)
-            with oc_c1:
-                l_emp_oc = sorted(df_oc_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_oc_f.columns else []
-                e_oc_sel = st.multiselect("Empresa Origen (OC):", l_emp_oc, default=[], key="oc_emp_f")
-                if e_oc_sel:
-                    df_oc_f = df_oc_f[df_oc_f['EmpresaOrigen'].isin(e_oc_sel)]
-            with oc_c2:
-                l_prov_oc = sorted(df_oc_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_oc_f.columns else []
-                p_oc_sel = st.multiselect("Proveedor (OC):", l_prov_oc, default=[], key="oc_prov_f")
-                if p_oc_sel:
-                    df_oc_f = df_oc_f[df_oc_f['BusinessEntityName'].isin(p_oc_sel)]
-            with oc_c3:
-                l_anio_oc = sorted([int(a) for a in df_oc_f['Año'].unique() if a > 0], reverse=True)
-                a_oc_sel = st.multiselect("Año (OC):", l_anio_oc, default=[], key="oc_anio_f")
-                if a_oc_sel:
-                    df_oc_f = df_oc_f[df_oc_f['Año'].isin(a_oc_sel)]
-            with oc_c4:
-                solo_saldo_oc = st.checkbox("Saldo pendiente > $1.00 (OC)", value=False, key="oc_saldo_chk")
-                if solo_saldo_oc:
-                    df_oc_f = df_oc_f[df_oc_f['Saldo_Pendiente'] > 1.0]
-
-            st.markdown("---")
-
-            # --- KPIS OC ---
-            kpi_oc1, kpi_oc2, kpi_oc3 = st.columns(3)
-            with kpi_oc1:
-                st.metric("Total OC Registradas", formato_mx(df_oc_f['Total'].sum()))
-            with kpi_oc2:
-                st.metric("Monto Pagado", formato_mx(df_oc_f['Amount'].sum()))
-            with kpi_oc3:
-                st.metric("Saldo Pendiente Real", formato_mx(df_oc_f['Saldo_Pendiente'].sum()))
-
-            st.markdown("---")
-
-            # DIVIDIR EN CUADROS POR CURRENCY (MONEDA)
-            monedas_oc = sorted(df_oc_f['Currency'].dropna().unique()) if 'Currency' in df_oc_f.columns else ['Peso mexicano']
-            if not monedas_oc:
-                monedas_oc = ['Peso mexicano']
-
-            for curr in monedas_oc:
-                df_curr = df_oc_f[df_oc_f['Currency'] == curr] if 'Currency' in df_oc_f.columns else df_oc_f
-                st.markdown(f"### 💱 Órdenes de Compra — Moneda: **{curr}**")
-                mostrar_tabla_con_totales(df_curr, cols_num_oc, columnas_oc_visuales)
-                st.markdown("<br>", unsafe_allow_html=True)
-
-    with tab_sp:
-        if df_tesoreria_proc is not None and not df_tesoreria_proc.empty:
-            df_sp_f = df_tesoreria_proc.copy()
-            if 'DateDocument' in df_sp_f.columns:
-                df_sp_f['DateDocument'] = pd.to_datetime(df_sp_f['DateDocument'], errors='coerce').dt.strftime('%Y-%m-%d')
-                df_sp_f['Año'] = pd.to_datetime(df_sp_f['DateDocument'], errors='coerce').dt.year.fillna(0).astype(int)
-            else:
-                df_sp_f['Año'] = 0
-
-            st.markdown("#### ⚙️ Filtros Solicitudes de Pago")
-            sp_c1, sp_c2, sp_c3, sp_c4 = st.columns(4)
-            with sp_c1:
-                l_emp_sp = sorted(df_sp_f['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_sp_f.columns else []
-                e_sp_sel = st.multiselect("Empresa Origen (SP):", l_emp_sp, default=[], key="sp_emp_f")
-                if e_sp_sel:
-                    df_sp_f = df_sp_f[df_sp_f['EmpresaOrigen'].isin(e_sp_sel)]
-            with sp_c2:
-                l_prov_sp = sorted(df_sp_f['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_sp_f.columns else []
-                p_sp_sel = st.multiselect("Proveedor (SP):", l_prov_sp, default=[], key="sp_prov_f")
-                if p_sp_sel:
-                    df_sp_f = df_sp_f[df_sp_f['BusinessEntityName'].isin(p_sp_sel)]
-            with sp_c3:
-                l_anio_sp = sorted([int(a) for a in df_sp_f['Año'].unique() if a > 0], reverse=True)
-                a_sp_sel = st.multiselect("Año (SP):", l_anio_sp, default=[], key="sp_anio_f")
-                if a_sp_sel:
-                    df_sp_f = df_sp_f[df_sp_f['Año'].isin(a_sp_sel)]
-            with sp_c4:
-                solo_saldo_sp = st.checkbox("Saldo pendiente > $1.00 (SP)", value=False, key="sp_saldo_chk")
-                if solo_saldo_sp:
-                    df_sp_f = df_sp_f[df_sp_f['Saldo_Pendiente'] > 1.0]
-
-            st.markdown("---")
-
-            # --- KPIS SP ---
-            kpi_sp1, kpi_sp2, kpi_sp3 = st.columns(3)
-            with kpi_sp1:
-                st.metric("Total SP Solicito", formato_mx(df_sp_f['Total'].sum()))
-            with kpi_sp2:
-                st.metric("Monto Pagado", formato_mx(df_sp_f['Amount'].sum()))
-            with kpi_sp3:
-                st.metric("Saldo Pendiente Real", formato_mx(df_sp_f['Saldo_Pendiente'].sum()))
-
-            st.markdown("---")
-
-            # DIVIDIR EN CUADROS POR CURRENCY (MONEDA)
-            monedas_sp = sorted(df_sp_f['Currency'].dropna().unique()) if 'Currency' in df_sp_f.columns else ['Peso mexicano']
-            if not monedas_sp:
-                monedas_sp = ['Peso mexicano']
-
-            for curr in monedas_sp:
-                df_curr = df_sp_f[df_sp_f['Currency'] == curr] if 'Currency' in df_sp_f.columns else df_sp_f
-                st.markdown(f"### 💱 Solicitudes de Pago — Moneda: **{curr}**")
-                mostrar_tabla_con_totales(df_curr, cols_num_sp, columnas_sp_visuales)
-                st.markdown("<br>", unsafe_allow_html=True)
+    with tab2:
+        st.subheader("Detalle de Solicitudes de Pago")
+        if not df_tesoreria_proc.empty:
+            cols_num_sp = ['Rate', 'SubTotal', 'TotalDiscount', 'TotalTax', 'TotalRetention', 'Total', 'Amount', 'SaldoPagoSP']
+            mostrar_tabla_con_totales(df_tesoreria_proc, cols_num_sp, columnas_sp_visuales)
+        else:
+            st.info("No hay registros en Solicitudes de Pago.")
 
 # ==========================================
 # 3. SUBMÓDULO: REPORTE EJECUTIVO DE PAGOS
 # ==========================================
 elif submodulo == "📋 Reporte Ejecutivo de Pagos":
     st.title("📋 Reporte Ejecutivo de Pagos con Saldo Pendiente")
-    st.markdown("### Muestra exclusivamente las OC y SP que tienen saldo pendiente real (> $1.00)")
+    st.markdown("Muestra exclusivamente las OC y SP que tienen saldo pendiente real (> $1.00)")
 
-    df_oc_base = df_ordenes_proc.copy() if df_ordenes_proc is not None and not df_ordenes_proc.empty else pd.DataFrame()
-    df_sp_base = df_tesoreria_proc.copy() if df_tesoreria_proc is not None and not df_tesoreria_proc.empty else pd.DataFrame()
+    df_total_pagos = pd.concat([df_ordenes_proc, df_tesoreria_proc], ignore_index=True) if not df_ordenes_proc.empty or not df_tesoreria_proc.empty else pd.DataFrame()
 
-    df_rep_list = []
-    if not df_oc_base.empty:
-        df_rep_list.append(df_oc_base)
-    if not df_sp_base.empty:
-        df_rep_list.append(df_sp_base)
+    if not df_total_pagos.empty and 'Saldo_Pendiente' in df_total_pagos.columns:
+        df_con_saldo = df_total_pagos[df_total_pagos['Saldo_Pendiente'] > 1.0].copy()
 
-    if df_rep_list:
-        df_rep_total = pd.concat(df_rep_list, ignore_index=True)
-        if 'Saldo_Pendiente' in df_rep_total.columns:
-            df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
+        # Formato de fecha para visualización limpia
+        if 'DateDocument' in df_con_saldo.columns:
+            df_con_saldo['Fecha_Fmt'] = pd.to_datetime(df_con_saldo['DateDocument'], errors='coerce').dt.strftime('%d/%m/%Y').fillna('')
+        else:
+            df_con_saldo['Fecha_Fmt'] = ''
 
-        col_emp_name = 'EmpresaOrigen' if 'EmpresaOrigen' in df_rep_total.columns else None
-        col_prov_name = 'BusinessEntityName' if 'BusinessEntityName' in df_rep_total.columns else None
-        col_folio_name = 'DocFolio' if 'DocFolio' in df_rep_total.columns else None
-        col_currency = 'Currency' if 'Currency' in df_rep_total.columns else None
+        # Filtros Independientes
+        st.markdown("### ⚙️ Filtros de Selección Independientes")
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
-        if col_prov_name and col_folio_name:
-            st.markdown("#### ⚙️ Filtros de Selección Independientes")
-            c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
-            with c_rf1:
-                lista_empresas = sorted(df_rep_total[col_emp_name].dropna().unique()) if col_emp_name else []
-                if col_emp_name:
-                    empresas_seleccionadas = st.multiselect("Filtrar por Empresa Origen:", lista_empresas, default=[], key="rep_emp_f")
-                    if empresas_seleccionadas:
-                        df_rep_total = df_rep_total[df_rep_total[col_emp_name].isin(empresas_seleccionadas)]
-            with c_rf2:
-                tipos_disponibles = sorted(df_rep_total['Tipo_Movimiento'].dropna().unique())
-                tipos_seleccionados = st.multiselect("Filtrar por Tipo (OC / SP):", tipos_disponibles, default=[], key="rep_tipo_f")
-                if tipos_seleccionados:
-                    df_rep_total = df_rep_total[df_rep_total['Tipo_Movimiento'].isin(tipos_seleccionados)]
-            with c_rf3:
-                lista_proveedores = sorted(df_rep_total[col_prov_name].dropna().unique())
-                prov_seleccionados = st.multiselect("Filtrar por Proveedor(es):", lista_proveedores, default=[], key="rep_prov_f")
-                if prov_seleccionados:
-                    df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
-            with c_rf4:
-                lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
-                folios_seleccionados = st.multiselect("Filtrar por Folio(s):", lista_folios, default=[], key="rep_folio_f")
-                if folios_seleccionados:
-                    df_rep_total = df_rep_total[df_rep_total[col_folio_name].isin(folios_seleccionados)]
+        empresas_p = sorted(df_con_saldo['EmpresaOrigen'].dropna().unique()) if 'EmpresaOrigen' in df_con_saldo.columns else []
+        sel_empresa = col_f1.multiselect("Filtrar por Empresa Origen:", empresas_p, key='filtro_emp_pagos')
 
-            st.markdown("---")
+        tipos_p = sorted(df_con_saldo['Tipo_Movimiento'].dropna().unique()) if 'Tipo_Movimiento' in df_con_saldo.columns else []
+        sel_tipo = col_f2.multiselect("Filtrar por Tipo (OC / SP):", tipos_p, key='filtro_tipo_pagos')
 
-            # --- METRICAS / KPIS GENERALES REPORTE ---
-            st.markdown("### 📊 Indicadores Clave de Desempeño (KPIs)")
-            col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+        prov_p = sorted(df_con_saldo['BusinessEntityName'].dropna().unique()) if 'BusinessEntityName' in df_con_saldo.columns else []
+        sel_prov = col_f3.multiselect("Filtrar por Proveedor(es):", prov_p, key='filtro_prov_pagos')
 
-            saldo_mxn = df_rep_total[df_rep_total[col_currency].astype(str).str.contains('Peso|MXN', case=False, na=False)]['Saldo_Pendiente'].sum() if col_currency else df_rep_total['Saldo_Pendiente'].sum()
-            saldo_usd = df_rep_total[df_rep_total[col_currency].astype(str).str.contains('Dólar|USD', case=False, na=False)]['Saldo_Pendiente'].sum() if col_currency else 0.0
+        folios_p = sorted(df_con_saldo['DocFolio'].dropna().unique()) if 'DocFolio' in df_con_saldo.columns else []
+        sel_folio = col_f4.multiselect("Filtrar por Folio(s):", folios_p, key='filtro_folio_pagos')
 
-            with col_kpi1:
-                st.metric("Documentos Pendientes", f"{len(df_rep_total):,}")
-            with col_kpi2:
-                st.metric("Saldo Pendiente (MXN)", formato_mx(saldo_mxn))
-            with col_kpi3:
-                st.metric("Saldo Pendiente (USD)", formato_mx(saldo_usd))
-            with col_kpi4:
-                st.metric("Total Pendiente General", formato_mx(df_rep_total['Saldo_Pendiente'].sum()))
+        # Aplicar filtros
+        df_filtrado = df_con_saldo.copy()
+        if sel_empresa:
+            df_filtrado = df_filtrado[df_filtrado['EmpresaOrigen'].isin(sel_empresa)]
+        if sel_tipo:
+            df_filtrado = df_filtrado[df_filtrado['Tipo_Movimiento'].isin(sel_tipo)]
+        if sel_prov:
+            df_filtrado = df_filtrado[df_filtrado['BusinessEntityName'].isin(sel_prov)]
+        if sel_folio:
+            df_filtrado = df_filtrado[df_filtrado['DocFolio'].isin(sel_folio)]
 
-            st.markdown("---")
+        st.markdown("---")
 
-            col_fecha = 'DateDocument' if 'DateDocument' in df_rep_total.columns else None
-            col_desc = 'Title' if 'Title' in df_rep_total.columns else None
+        # KPIs / Indicadores
+        tot_general = df_filtrado['Saldo_Pendiente'].sum() if not df_filtrado.empty else 0.0
+        cant_docs = len(df_filtrado)
 
-            if not df_rep_total.empty:
-                if col_fecha:
-                    df_rep_total['Fecha_Fmt'] = pd.to_datetime(df_rep_total[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y')
-                else:
-                    df_rep_total['Fecha_Fmt'] = ""
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Documentos Pendientes", f"{cant_docs:,}")
+        kpi2.metric("Saldo Pendiente General", formato_mx(tot_general))
+        
+        st.markdown("---")
 
-                empresas_agrupadas = df_rep_total[col_emp_name].dropna().unique() if col_emp_name else ['General']
-                empresa_para_excel = empresas_agrupadas[0] if len(empresas_agrupadas) == 1 else "Consolidado"
+        if not df_filtrado.empty:
+            # Botón de Descarga Excel Ejecutivo
+            excel_ejecutivo = generar_excel_ejecutivo(df_filtrado, "Consolidado Grupo SERVYRE")
+            st.download_button(
+                label="📥 Descargar Reporte Ejecutivo en Excel (Estilo Naranja)",
+                data=excel_ejecutivo,
+                file_name="Reporte_Ejecutivo_Pagos_Servyre.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-                st.download_button(
-                    label="📥 Descargar Reporte en Excel con UUID",
-                    data=generar_excel_ejecutivo(df_rep_total, empresa_para_excel),
-                    file_name="Reporte_Ejecutivo_Pagos_UUID.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-                st.markdown("---")
+            st.markdown("### 📊 Desglose Consolidado por Empresa, Proveedor y Moneda")
+            
+            # Agrupación jerárquica para visualización en Streamlit
+            col_emp = 'EmpresaOrigen' if 'EmpresaOrigen' in df_filtrado.columns else None
+            col_prov = 'BusinessEntityName' if 'BusinessEntityName' in df_filtrado.columns else None
+            col_curr = 'Currency' if 'Currency' in df_filtrado.columns else None
 
-                for empresa in sorted(empresas_agrupadas):
-                    df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
-                    total_empresa = df_emp_subset['Saldo_Pendiente'].sum()
-                    st.markdown(f"## 🏢 **{empresa}** (Saldo Total Pendiente: {formato_mx(total_empresa)})")
-
-                    resumen_proveedor = df_emp_subset.groupby(col_prov_name)['Saldo_Pendiente'].sum().reset_index()
-                    resumen_proveedor = resumen_proveedor.sort_values(by='Saldo_Pendiente', ascending=False)
-
-                    for _, prov_row in resumen_proveedor.iterrows():
-                        proveedor = prov_row[col_prov_name]
-                        subtotal_prov = prov_row['Saldo_Pendiente']
-
-                        with st.expander(f"👤 {proveedor} — Saldo Pendiente Total: {formato_mx(subtotal_prov)}", expanded=True):
-                            df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
-                            monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
-
-                            for moneda in monedas_del_prov:
-                                df_det_moneda = df_det_prov[df_det_prov[col_currency] == moneda] if col_currency else df_det_prov
-                                subtotal_moneda = df_det_moneda['Saldo_Pendiente'].sum()
-
-                                st.markdown(f"##### 💱 Moneda: **{moneda}**")
-
-                                data_det_list = []
-                                for _, row in df_det_moneda.iterrows():
-                                    data_det_list.append({
-                                        "Tipo": row['Tipo_Movimiento'],
-                                        "Fecha Vencimiento": row['Fecha_Fmt'],
-                                        "Folio / Documento": row[col_folio_name],
-                                        "DocumentID": row.get('DocumentID', ''),
-                                        "UUID": row.get('UUID', ''),
-                                        "Moneda": row[col_currency] if col_currency and not pd.isnull(row[col_currency]) else "MXN",
-                                        "Descripción": row[col_desc] if col_desc else "",
-                                        "Saldo Pendiente": row['Saldo_Pendiente']
-                                    })
-                                df_tabla_det = pd.DataFrame(data_det_list)
-
-                                # Fila de Suma Total para el Proveedor por Moneda con diseño Oracle
-                                mostrar_tabla_con_totales(
-                                    df_tabla_det,
-                                    ['Saldo Pendiente'],
-                                    ["Tipo", "Fecha Vencimiento", "Folio / Documento", "DocumentID", "UUID", "Moneda", "Descripción", "Saldo Pendiente"]
-                                )
-                    st.markdown("---")
-            else:
-                st.warning("No hay registros que coincidan con los filtros seleccionados.")
+            empresas_list = sorted(df_filtrado[col_emp].unique()) if col_emp else ['General']
+            
+            for empresa in empresas_list:
+                df_emp_v = df_filtrado[df_filtrado[col_emp] == empresa] if col_emp else df_filtrado
+                tot_emp = df_emp_v['Saldo_Pendiente'].sum()
+                
+                with st.expander(f"🏢 **{str(empresa).upper()}** — Saldo Total Pendiente: {formato_mx(tot_emp)}", expanded=True):
+                    proveedores_list = sorted(df_emp_v[col_prov].unique()) if col_prov else []
+                    
+                    for prov in proveedores_list:
+                        df_prov_v = df_emp_v[df_emp_v[col_prov] == prov]
+                        tot_prov = df_prov_v['Saldo_Pendiente'].sum()
+                        
+                        st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;👤 **{str(prov)}** — Subtotal: `{formato_mx(tot_prov)}`")
+                        
+                        # Mostrar tabla limpia con los registros de este proveedor
+                        cols_mostrar = ['Tipo_Movimiento', 'Fecha_Fmt', 'DocFolio', 'DocumentID', 'UUID', 'Currency', 'Title', 'Saldo_Pendiente']
+                        df_tabla_prov = df_prov_v[[c for c in cols_mostrar if c in df_prov_v.columns]].copy()
+                        
+                        # Renombrar columnas para visualización amigable
+                        df_tabla_prov.columns = [c.replace('Tipo_Movimiento', 'TIPO').replace('Fecha_Fmt', 'FECHA VENCIMIENTO').replace('DocFolio', 'FOLIO / DOCUMENTO').replace('DocumentID', 'DOCUMENT ID').replace('Currency', 'MONEDA').replace('Title', 'DESCRIPCIÓN').replace('Saldo_Pendiente', 'SALDO PENDIENTE') for c in df_tabla_prov.columns]
+                        
+                        # Formatear montos
+                        if 'SALDO PENDIENTE' in df_tabla_prov.columns:
+                            df_tabla_prov['SALDO PENDIENTE'] = df_tabla_prov['SALDO PENDIENTE'].apply(formato_mx)
+                            
+                        st.dataframe(df_tabla_prov, use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay registros que coincidan con los filtros seleccionados.")
     else:
-        st.warning("No hay datos cargados para generar el reporte.")
+        st.warning("No hay datos de saldos pendientes para procesar.")
