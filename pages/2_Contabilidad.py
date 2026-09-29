@@ -784,26 +784,42 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
     ws.cell(row=2, column=1, value=subtitulo_reporte).font = SUBTITLE_FONT
 
     start_row = 4
-    df_reset = df_matriz.reset_index()
-    headers = list(df_reset.columns)
-    headers[0] = "EMPRESA"
+    
+    # Escribir Encabezados
+    ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
+    ws.cell(row=start_row, column=1).font = HEADER_FONT
+    ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
 
-    for c_idx, h_text in enumerate(headers, start=1):
-        cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+    cols_matriz = list(df_matriz.columns)
+    for c_idx, col_name in enumerate(cols_matriz, start=2):
+        cell = ws.cell(row=start_row, column=c_idx, value=str(col_name))
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     ws.row_dimensions[start_row].height = 28
 
-    for r_i, row_data in df_reset.iterrows():
+    # Escribir Filas
+    for r_i, (idx_name, row_series) in enumerate(df_matriz.iterrows()):
         curr_row = start_row + 1 + r_i
-        is_tot_row = (r_i == len(df_reset) - 1 or str(row_data.iloc[0]).upper() == 'TOTAL')
+        is_tot_row = (r_i == len(df_matriz) - 1 or str(idx_name).upper() == 'TOTAL')
 
-        for c_i, col_name in enumerate(headers, start=1):
-            val = row_data[col_name]
+        # Columna de índice (Empresa fila)
+        cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
+        if is_tot_row:
+            cell_idx.font = TOTAL_FONT
+            cell_idx.fill = TOTAL_FILL
+            cell_idx.border = TOTAL_BORDER
+        else:
+            cell_idx.font = REGULAR_FONT
+            cell_idx.border = THIN_BORDER
+        cell_idx.alignment = Alignment(horizontal="left", vertical="center")
+
+        # Celdas de valores
+        for c_i, col_name in enumerate(cols_matriz, start=2):
+            val = row_series[col_name]
             cell = ws.cell(row=curr_row, column=c_i)
-            cell.value = val if pd.notnull(val) else (0.0 if c_i > 1 else "")
+            cell.value = val if pd.notnull(val) else 0.0
 
             if is_tot_row:
                 cell.font = TOTAL_FONT
@@ -813,12 +829,9 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
                 cell.font = REGULAR_FONT
                 cell.border = THIN_BORDER
 
-            if c_i == 1:
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            else:
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-                if isinstance(val, (int, float)):
-                    cell.number_format = '$#,##0.00'
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+            if isinstance(val, (int, float)):
+                cell.number_format = '$#,##0.00'
 
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
