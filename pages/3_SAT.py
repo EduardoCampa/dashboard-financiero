@@ -38,28 +38,24 @@ MAPEO_EMPRESA_RFC = {
 
 RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
 
-MAPEO_NOMBRE_A_CODIGO = {
-    "CIVLAT": "0468",
-    "CIV": "0467",
-    "CIVMEX": "0469",
-    "SERVYRE": "2872",
-    "SERSEÑAL": "1636",
-    "EFCO": "0813",
-    "FGS": "0942",
-    "FERVIC": "1127",
-    "FPSB": "1216",
-    "PESAZA": "1144",
-    "GPO SERVYRE": "1149",
-    "INMOBILIARIA": "1404",
-    "LABORATORIO": "1603",
-    "LATIN": "1616",
-    "LIMPIESPIN": "1626",
-    "SERVYCARGO": "2871",
-    "VIALTECNO": "3329",
-    "SEVILAT": "2937",
-    "PROINA": "2396",
-    "IPV": "1428",
-    "COMANA": "0665"
+# Mapeo oficial de EmpresaOrigen del maestro
+MAPEO_EMPRESA_ORIGEN = {
+    "CIV": "CIV",
+    "CIVLA": "CIVLAT",
+    "CIVMEX": "CIVMEX",
+    "EFCO": "EFCO",
+    "FERVIC": "FERVIC",
+    "FGS": "FGS",
+    "GRUPO FPSB": "GRUPO FPSB",
+    "GRUPOSERVYRE": "GRUPOSERVYRE",
+    "INMOBILIARIA": "INMOBILIARIA",
+    "LABORATORIO": "LABORATORIO",
+    "LAITS": "LAITS",
+    "LIMPIESPIN": "LIMPIESPIN",
+    "PESAZA": "PESAZA",
+    "SERSENAL": "SERSENAL",
+    "SERVYCARGO": "SERVYCARGO",
+    "SERVYRE": "SERVYRE"
 }
 
 def parse_monto_robusto(val):
@@ -218,6 +214,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
+    """Carga FacturaCliente y NotaCreditoCliente validando UUID, estatus vigente y usando EmpresaOrigen."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
@@ -247,19 +244,38 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
 
     df_master = pd.concat(dfs_totales, ignore_index=True)
 
-    # Limpiar columnas de estatus en el master para marcar cancelados del sistema
-    cols_estatus_sistema = [c for c in df_master.columns if any(k in c.lower() for k in ['estado', 'estatus', 'status', 'cancelad'])]
-    if cols_estatus_sistema:
-        def es_cancelado_sistema(row):
-            for c in cols_estatus_sistema:
-                val = str(row.get(c, '')).upper()
-                if 'CANCELAD' in val or 'INACTIVO' in val:
-                    return True
-            return False
-        df_master['Es_Cancelado_Sistema'] = df_master.apply(es_cancelado_sistema, axis=1)
-    else:
-        df_master['Es_Cancelado_Sistema'] = False
+    # 1. Filtrar estrictamente que tenga un UUID válido
+    if 'UUID' in df_master.columns:
+        df_master = df_master[
+            df_master['UUID'].notnull() & 
+            (df_master['UUID'].astype(str).str.strip() != '') & 
+            (df_master['UUID'].astype(str).str.upper() != 'NAN')
+        ].copy()
 
+    # 2. Determinar Estatus Vigente / Cancelado
+    def determinar_estatus(row):
+        cancelled = row.get('Cancelled', 0)
+        if cancelled == 1:
+            return 'Cancelado'
+        status_canc = str(row.get('CFDStatusCancelledName', '')).upper()
+        if 'CANCELAD' in status_canc:
+            return 'Cancelado'
+        est_sat = str(row.get('Estado_SAT', '')).upper()
+        if 'CANCELAD' in est_sat:
+            return 'Cancelado'
+        return 'VIGENTE'
+
+    df_master['Estatus'] = df_master.apply(determinar_estatus, axis=1)
+
+    # 3. Asignar empresa directamente desde la columna EmpresaOrigen del maestro
+    if 'EmpresaOrigen' in df_master.columns:
+        df_master['Empresa'] = df_master['EmpresaOrigen'].map(MAPEO_EMPRESA_ORIGEN).fillna(df_master['EmpresaOrigen'])
+    else:
+        df_master['Empresa'] = 'OTRAS'
+
+    df_master['Origen'] = df_master['Empresa'].apply(lambda x: f"En Acumulado {x}" if x != "OTRAS" else "En Acumulado General")
+
+    # 4. Filtrar por Rango de Fecha (Año y Meses)
     if 'DateDocument' in df_master.columns:
         df_master['DateDocument'] = pd.to_datetime(df_master['DateDocument'], errors='coerce')
         if anio_filtro:
@@ -267,9 +283,6 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         if mes_ini and mes_fin:
             df_master = df_master[(df_master['DateDocument'].dt.month >= int(mes_ini)) & (df_master['DateDocument'].dt.month <= int(mes_fin))]
             
-    if 'UUID' in df_master.columns:
-        df_master = df_master[df_master['UUID'].notnull() & (df_master['UUID'].astype(str).str.strip() != '')]
-    
     return df_master
 
 
@@ -369,47 +382,16 @@ with subtab_ingresos:
             else:
                 df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('', '_SAT'))
                 
-                def determinar_empresa(row):
-                    ben = str(row.get('BusinessEntityName', '')).strip().upper()
-                    if ben in MAPEO_EMPRESA_RFC:
-                        return ben
-                    rfc_sat = str(row.get('RFC_Emisor', '')).strip().upper()
-                    if rfc_sat in RFC_TO_EMPRESA:
-                        return RFC_TO_EMPRESA[rfc_sat]
-                    for emp in MAPEO_EMPRESA_RFC.keys():
-                        if emp in ben:
-                            return emp
-                    return "OTRAS"
-
-                df_amarre['Empresa'] = df_amarre.apply(determinar_empresa, axis=1)
-                df_amarre['Origen'] = df_amarre['Empresa'].apply(lambda x: f"En Acumulado {x}" if x != "OTRAS" else "En Acumulado General")
+                # Rellenar datos faltantes tras el merge outer con los datos del maestro si aplica
+                if 'Empresa' in df_amarre.columns:
+                    df_amarre['Empresa'] = df_amarre['Empresa'].fillna('OTRAS')
+                if 'Origen' in df_amarre.columns:
+                    df_amarre['Origen'] = df_amarre['Origen'].fillna('En Acumulado General')
 
                 df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
 
-                mask_nc = df_amarre['Tipo_Doc'] == 'NotaCredito'
-                df_amarre.loc[mask_nc, 'SubTotal'] = df_amarre.loc[mask_nc, 'SubTotal'].abs() * -1
-                df_amarre.loc[mask_nc, 'SubTotal_SAT'] = df_amarre.loc[mask_nc, 'SubTotal_SAT'].abs() * -1
-
                 df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
-
-                # Definir estatus considerando si está cancelado en el sistema O en el SAT
-                def determinar_estatus(row):
-                    if row.get('Es_Cancelado_Sistema', False):
-                        return 'Cancelado'
-                    est_sat = str(row.get('Estado_SAT', '')).upper()
-                    if 'CANCELAD' in est_sat:
-                        return 'Cancelado'
-                    est_can_name = str(row.get('CFDStatusCancelledName', '')).upper()
-                    if 'CANCELAD' in est_can_name:
-                        return 'Cancelado'
-                    return 'VIGENTE'
-
-                df_amarre['Estatus'] = df_amarre.apply(determinar_estatus, axis=1)
-
-                # Si está cancelado en el sistema, anular su SubTotal para que no infle la suma vigente
-                mask_cancelados = df_amarre['Estatus'] == 'Cancelado'
-                df_amarre.loc[mask_cancelados, 'SubTotal'] = 0.0
 
                 df_facturas = df_amarre[df_amarre['Tipo_Doc'] == 'Factura'].copy()
                 df_notas = df_amarre[df_amarre['Tipo_Doc'] == 'NotaCredito'].copy()
@@ -458,7 +440,7 @@ with subtab_ingresos:
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Amarre, notas de crédito, contabilidad y filtrado de cancelados realizados correctamente.")
+                st.success("✅ Amarre, notas de crédito, contabilidad y filtrado de vigentes por empresa realizados correctamente.")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
