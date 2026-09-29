@@ -834,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas analíticas puras sin acumuladores ni -054-", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuentas base -00000- menos subcuentas -054-", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1068,8 +1068,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Cuentas analíticas puras sin acumuladores)")
-                st.info("Suma las cuentas de costos/gastos terminadas en 1 excluyendo acumuladores generales y omitiendo el subnivel -054-.")
+                st.markdown("### 📑 Amarre I y G Intercos (Cuentas base -00000- menos subcuentas -054-)")
+                st.info("Suma las cuentas acumuladoras principales (terminadas en -00000-000-0000) y resta/ajusta las subcuentas de detalle con -054-.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1099,7 +1099,7 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
 
-                        # 2. Costos de la empresa: sumar cuentas analíticas de detalle puro (excluyendo acumuladores y -054-)
+                        # 2. Costos de la empresa exacto según tu papel de trabajo: cuenta base -00000- más/menos subcuentas -054-
                         costos_propios_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
@@ -1110,21 +1110,21 @@ if estructura:
                                 prefix = segs[0].strip()
                                 seg2 = segs[1].strip() if len(segs) >= 2 else ''
                                 seg3 = segs[2].strip() if len(segs) >= 3 else ''
-                                seg4 = segs[3].strip() if len(segs) >= 4 else ''
 
-                                # Verificar prefijo (5 o 6, 3 dígitos, termina en 1)
+                                # Verificar que inicie con 5 o 6 y termine en 1 (ej. 531, 561)
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
                                     
-                                    # EXCLUIR ACUMULADORES GENERALES (ej. -00000-, -000-, -0000-)
-                                    if seg2 in ('00000', '000', '0') or seg3 in ('000', '0') or seg4 in ('0000', '0'):
-                                        continue
+                                    # Caso A: Cuenta base acumuladora general (terminada en -00000-000-0000 o similar)
+                                    es_cuenta_base = (seg2 in ('00000', '0000', '0') or seg3 in ('000', '0'))
                                     
-                                    # EXCLUIR subniveles que contengan -054- o -54-
-                                    if '054' in seg3 or '54' in seg3 or '054' in seg4:
-                                        continue
-                                    
-                                    # Sumar la cuenta analítica pura
-                                    costos_propios_emp += r['saldo_final']
+                                    # Caso B: Subcuentas de detalle con -054-
+                                    es_subcuenta_054 = ('054' in seg3 or '54' in seg3)
+
+                                    if es_cuenta_base:
+                                        costos_propios_emp += r['saldo_final']
+                                    elif es_subcuenta_054:
+                                        # Aplicamos tal cual el saldo de la cuenta -054- (tu imagen muestra que se suman/restan según el renglón)
+                                        costos_propios_emp += r['saldo_final']
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
                         tot_costos_gen += costos_propios_emp
@@ -1164,6 +1164,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Filtro actualizado para sumar únicamente las cuentas analíticas sin duplicar acumuladores ni incluir -054-.")
+                    st.success("✅ Lógica ajustada exactamente a tu papel de trabajo: cuentas base -00000- y subcuentas -054-.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
