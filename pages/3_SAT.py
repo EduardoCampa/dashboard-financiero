@@ -107,7 +107,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
-    """Carga FacturaCliente y NotaCreditoCliente conservando su tipo por separado."""
+    """Carga FacturaCliente y NotaCreditoCliente aplicando notas de crédito en negativo."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
@@ -125,10 +125,10 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
             df_nc['Tipo_Doc'] = 'NotaCredito'
-            # Para notas de crédito manejamos sus montos positivos en la columna origen para luego restar en el consolidado
+            # Forzar notas de crédito en negativo
             cols_numericas = [c for c in ['SubTotal', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
-                df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0).abs()
+                df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0).abs() * -1
             dfs_totales.append(df_nc)
     except Exception:
         pass
@@ -151,7 +151,7 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     return df_master
 
 
-def exportar_excel_estilo_separado(df_facturas_det, df_notas_det, df_facturas_res, df_notas_res, titulo_reporte, subtitulo_reporte):
+def exportar_excel_completo(df_facturas_det, df_notas_det, df_facturas_res, df_notas_res, df_dif, titulo_reporte, subtitulo_reporte):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     
@@ -201,6 +201,14 @@ def exportar_excel_estilo_separado(df_facturas_det, df_notas_det, df_facturas_re
     next_r_det = escribir_tabla(ws_det, 4, "ACUMULADO - FACTURAS", df_facturas_det)
     escribir_tabla(ws_det, next_r_det, "ACUMULADO - NOTAS DE CRÉDITO", df_notas_det)
 
+    # --- Pestaña 3: UUIDs con Diferencias ---
+    ws_dif = wb.create_sheet(title="Diferencias UUID")
+    ws_dif.views.sheetView[0].showGridLines = True
+    ws_dif.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
+    ws_dif.cell(row=2, column=1, value=subtitulo_reporte + " | Auditoría de UUIDs con Diferencia").font = Font(name="Calibri", size=10, italic=True, color="475569")
+    
+    escribir_tabla(ws_dif, 4, "UUIDs QUE CONFORMAN LA DIFERENCIA", df_dif)
+
     wb.save(output)
     return output.getvalue()
 
@@ -224,13 +232,13 @@ with subtab_rh:
     st.info("Módulo para validación de nóminas y retenciones de sueldos y salarios contra CONTPAQi y SAT.")
 
 with subtab_ingresos:
-    st.markdown("### 💰 Amarre de Ingresos (Facturas y Notas de Crédito Separadas)")
+    st.markdown("### 💰 Amarre de Ingresos (Facturas y Notas de Crédito)")
     st.info(f"Filtra la base maestra para el año **{anio_sel}** (meses {mes_inicial} a {mes_final}).")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
 
-    if st.button("🚀 Ejecutar Amarre y Resumen por Empresa"):
-        with st.spinner("Procesando información y cruzando con SAT..."):
+    if st.button("🚀 Ejecutar Amarre y Auditoría de Diferencias"):
+        with st.spinner("Procesando información y auditando diferencias..."):
             df_fact_base = cargar_base_master_general("Consolidado_Master.xlsx", anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
             df_xml_sat = consolidar_excels_sat(carpeta_excel_input)
 
@@ -258,6 +266,12 @@ with subtab_ingresos:
 
                 df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
+
+                # Si es nota de crédito, forzar SAT también en negativo si vino positivo
+                mask_nc = df_amarre['Tipo_Doc'] == 'NotaCredito'
+                df_amarre.loc[mask_nc, 'SubTotal'] = df_amarre.loc[mask_nc, 'SubTotal'].abs() * -1
+                df_amarre.loc[mask_nc, 'SubTotal_SAT'] = df_amarre.loc[mask_nc, 'SubTotal_SAT'].abs() * -1
+
                 df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
 
                 if 'CFDStatusCancelledName' in df_amarre.columns:
@@ -297,9 +311,13 @@ with subtab_ingresos:
                 df_fact_res = preparar_resumen(df_facturas)
                 df_nota_res = preparar_resumen(df_notas)
 
-                st.success("✅ Amarre y separación por Facturas y Notas de Crédito realizados correctamente.")
+                # Tabla específica de diferencias (donde la diferencia != 0)
+                df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
+                df_dif_final = preparar_detalle(df_diferencias)
 
-                tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado"])
+                st.success("✅ Amarre, notas de crédito negativas y auditoría de diferencias realizadas correctamente.")
+
+                tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
                 with tab_res_ui:
                     st.markdown("### 📈 RESUMEN INGRESOS (VIGENTES)")
@@ -313,15 +331,20 @@ with subtab_ingresos:
                     st.markdown("### 📋 ACUMULADO - NOTAS DE CRÉDITO")
                     st.dataframe(df_nota_det, use_container_width=True)
 
-                output_excel = exportar_excel_estilo_separado(
-                    df_fact_det, df_nota_det, df_fact_res, df_nota_res,
+                with tab_dif_ui:
+                    st.markdown("### 🔍 UUIDs QUE CONFORMAN LA DIFERENCIA")
+                    st.info(f"Se encontraron {len(df_dif_final)} registros con discrepancias entre el Sistema y el SAT.")
+                    st.dataframe(df_dif_final, use_container_width=True)
+
+                output_excel = exportar_excel_completo(
+                    df_fact_det, df_nota_det, df_fact_res, df_nota_res, df_dif_final,
                     "REPORTE DE AMARRE DE INGRESOS",
                     f"Periodo: {mes_inicial} a {mes_final} del {anio_sel}"
                 )
                 
                 st.download_button(
-                    label="📥 Descargar Reporte Completo (Excel Separado)",
+                    label="📥 Descargar Reporte Completo (Excel con Pestaña de Diferencias)",
                     data=output_excel,
-                    file_name=f"Amarre_Ingresos_Separado_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
+                    file_name=f"Amarre_Ingresos_Auditoria_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
