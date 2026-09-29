@@ -46,7 +46,7 @@ ORDEN_EMPRESAS_PRIORIDAD = [
     "SIGNAL",
 ]
 
-# MAPEO OFICIAL Y EXACTO DE CÓDICOS DE CONTPAQI (4 DÍGITOS)
+# MAPEO OFICIAL Y EXACTO DE CÓDIGOS DE CONTPAQI (4 DÍGITOS)
 MAPEO_CODIGO_EMPRESA = {
     "0468": "CIVLAT",
     "0467": "CIV",
@@ -756,12 +756,10 @@ def exportar_excel_con_agrupaciones_openpyxl(
     return output.getvalue()
 
 
-def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_reporte):
+def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Reporte"
-    ws.views.sheetView[0].showGridLines = True
+    default_sheet = wb.active
 
     TITLE_FONT = Font(name="Calibri", size=14, bold=True, color="1E293B")
     SUBTITLE_FONT = Font(name="Calibri", size=10, italic=True, color="475569")
@@ -780,60 +778,66 @@ def exportar_excel_matriz_individual(df_matriz, titulo_reporte, subtitulo_report
         left=Side(style='thin', color='E2E8F0'), right=Side(style='thin', color='E2E8F0')
     )
 
-    ws.cell(row=1, column=1, value=titulo_reporte).font = TITLE_FONT
-    ws.cell(row=2, column=1, value=subtitulo_reporte).font = SUBTITLE_FONT
+    def poblar_hoja_excel(ws, title_text, subtitle_text, df_data):
+        ws.views.sheetView[0].showGridLines = True
+        ws.cell(row=1, column=1, value=title_text).font = TITLE_FONT
+        ws.cell(row=2, column=1, value=subtitle_text).font = SUBTITLE_FONT
 
-    start_row = 4
-    
-    ws.cell(row=start_row, column=1, value="EMPRESA").fill = HEADER_FILL
-    ws.cell(row=start_row, column=1).font = HEADER_FONT
-    ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        start_row = 4
+        headers = list(df_data.columns)
 
-    cols_matriz = list(df_matriz.columns)
-    for c_idx, col_name in enumerate(cols_matriz, start=2):
-        cell = ws.cell(row=start_row, column=c_idx, value=str(col_name))
-        cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for c_idx, h_text in enumerate(headers, start=1):
+            cell = ws.cell(row=start_row, column=c_idx, value=h_text)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    ws.row_dimensions[start_row].height = 28
+        ws.row_dimensions[start_row].height = 28
 
-    for r_i, (idx_name, row_series) in enumerate(df_matriz.iterrows()):
-        curr_row = start_row + 1 + r_i
-        is_tot_row = (r_i == len(df_matriz) - 1 or str(idx_name).upper() == 'TOTAL')
+        for r_i, row_data in df_data.reset_index(drop=True).iterrows():
+            curr_row = start_row + 1 + r_i
+            is_tot_row = (r_i == len(df_data) - 1)
 
-        cell_idx = ws.cell(row=curr_row, column=1, value=str(idx_name))
-        if is_tot_row:
-            cell_idx.font = TOTAL_FONT
-            cell_idx.fill = TOTAL_FILL
-            cell_idx.border = TOTAL_BORDER
-        else:
-            cell_idx.font = REGULAR_FONT
-            cell_idx.border = THIN_BORDER
-        cell_idx.alignment = Alignment(horizontal="left", vertical="center")
+            for c_i, col_name in enumerate(headers, start=1):
+                val = row_data[col_name]
+                cell = ws.cell(row=curr_row, column=c_i)
+                cell.value = val if pd.notnull(val) else (0.0 if c_i > 1 else "")
 
-        for c_i, col_name in enumerate(cols_matriz, start=2):
-            val = row_series[col_name]
-            cell = ws.cell(row=curr_row, column=c_i)
-            cell.value = val if pd.notnull(val) else 0.0
+                if is_tot_row:
+                    cell.font = TOTAL_FONT
+                    cell.fill = TOTAL_FILL
+                    cell.border = TOTAL_BORDER
+                else:
+                    cell.font = REGULAR_FONT
+                    cell.border = THIN_BORDER
 
-            if is_tot_row:
-                cell.font = TOTAL_FONT
-                cell.fill = TOTAL_FILL
-                cell.border = TOTAL_BORDER
-            else:
-                cell.font = REGULAR_FONT
-                cell.border = THIN_BORDER
+                if c_i == 1:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    if isinstance(val, (int, float)):
+                        cell.number_format = '$#,##0.00'
 
-            cell.alignment = Alignment(horizontal="right", vertical="center")
-            if isinstance(val, (int, float)):
-                cell.number_format = '$#,##0.00'
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for col in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+        ws.column_dimensions['A'].width = 28
 
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
-    ws.column_dimensions['A'].width = 28
+    # --- HOJA 1: FACTURACIÓN ---
+    ws1 = wb.create_sheet(title="1. Facturación")
+    poblar_hoja_excel(ws1, "REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN", f"Periodo: {mes}/{anio} | Cuentas: Clientes (101-00004) y Proveedores (201)", df_fact)
+
+    # --- HOJA 2: PRÉSTAMOS ---
+    ws2 = wb.create_sheet(title="2. Préstamos")
+    poblar_hoja_excel(ws2, "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS", f"Periodo: {mes}/{anio} | Cuentas: Deudores (101-00015) vs Pasivo LP (202-00001)", df_prest)
+
+    # --- HOJA 3: I y G Intercos ---
+    ws3 = wb.create_sheet(title="3. I y G Intercos")
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Sin duplicación de cuentas únicas", df_ig)
+
+    if default_sheet in wb.worksheets:
+        wb.remove(default_sheet)
 
     wb.save(output)
     return output.getvalue()
@@ -1000,15 +1004,16 @@ if estructura:
         elif seccion_contable == "🔗 Amarres Contables":
             st.subheader(f"🔗 Módulo de Amarres Contables ({mes_sel}/{anio_sel})")
 
-            # AQUÍ SE QUITARON ÚNICAMENTE AMARRE RH Y AMARRE INGRESOS, QUEDANDO LAS 2 DE INTERCOMPAÑÍAS
-            subtab_intercos, subtab_ig_intercos = st.tabs([
+            subtab_rh, subtab_ingresos, subtab_intercos, subtab_ig_intercos = st.tabs([
+                "👥 Amarre RH",
+                "💰 Amarre Ingresos",
                 "🔄 Amarre Intercompañías",
                 "📑 Amarre I y G Intercos",
             ])
 
             with subtab_intercos:
                 st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-                st.info(f"Cálculo estricto con saldos netos consolidados por contraparte: `{ruta_balanza}`.")
+                st.info(f"Cálculo estricto con saldos netos: `{ruta_balanza}`.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1017,7 +1022,7 @@ if estructura:
                     for emp in todas_empresas_balanza:
                         datos_empresas_recs[emp] = extraer_registros_balanza(ruta_balanza, emp)
 
-                    # --- MATRIZ 1: FACTURACIÓN ---
+                    # --- TABLA 1: FACTURACIÓN ---
                     matriz_fact = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1040,27 +1045,7 @@ if estructura:
                     matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
                     matriz_fact.loc['TOTAL'] = matriz_fact.sum(axis=0)
 
-                    st.markdown("#### 📄 Matriz de Clientes y Proveedores (Facturación)")
-                    st.dataframe(
-                        matriz_fact.style.format('${:,.2f}'),
-                        use_container_width=True
-                    )
-
-                    excel_fact = exportar_excel_matriz_individual(
-                        matriz_fact,
-                        "REPORTE EJECUTIVO - AMARRE DE FACTURACIÓN",
-                        f"Periodo: {mes_sel}/{anio_sel} | Cuentas netas por empresa contraparte"
-                    )
-                    st.download_button(
-                        label="📥 Descargar Excel - Matriz de Facturación",
-                        data=excel_fact,
-                        file_name=f"Amarre_Facturacion_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-
-                    st.markdown("---")
-
-                    # --- MATRIZ 2: PRÉSTAMOS ---
+                    # --- TABLA 2: PRÉSTAMOS ---
                     matriz_prest = pd.DataFrame(0.0, index=todas_empresas_balanza, columns=todas_empresas_balanza)
 
                     for emp_receptora in todas_empresas_balanza:
@@ -1081,25 +1066,6 @@ if estructura:
                                     matriz_prest.loc[emp_receptora, emp_origen] += monto
 
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
-                    matriz_prest.loc['TOTAL'] = matriz_prest.sum(axis=0)
-
-                    st.markdown("#### 💸 Matriz de Préstamos Intercompañías")
-                    st.dataframe(
-                        matriz_prest.style.format('${:,.2f}'),
-                        use_container_width=True
-                    )
-
-                    excel_prest = exportar_excel_matriz_individual(
-                        matriz_prest,
-                        "REPORTE EJECUTIVO - AMARRE DE PRÉSTAMOS",
-                        f"Periodo: {mes_sel}/{anio_sel} | Cuentas netas por empresa contraparte"
-                    )
-                    st.download_button(
-                        label="📥 Descargar Excel - Matriz de Préstamos",
-                        data=excel_prest,
-                        file_name=f"Amarre_Prestamos_{mes_sel}_{anio_sel}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
 
             with subtab_ig_intercos:
                 st.markdown("### 📑 Amarre I y G Intercos (Ingresos facturados y Costos Intercos)")
@@ -1122,7 +1088,7 @@ if estructura:
                     for emp_destino in todas_empresas_balanza:
                         cod_destino = MAPEO_NOMBRE_A_CODIGO.get(emp_destino, "")
 
-                        # 1. Ingresos facturados a esta empresa desde las demás
+                        # 1. Ingresos facturados a esta empresa desde las demás (acumulando todas las cuentas 4)
                         ingresos_facturados_a_emp = 0.0
                         if cod_destino:
                             for emp_facturadora in todas_empresas_balanza:
@@ -1136,7 +1102,7 @@ if estructura:
                                         if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
-                        # 2. Costos base y cuenta 054 exacta
+                        # 2. Costos base (-00000-0000) y Cuenta 054 exacta (-054-0000) en las cuentas de gastos/costos (5, 6)
                         costos_base_emp = 0.0
                         cta_054_emp = 0.0
                         cuentas_base_proc = set()
@@ -1155,6 +1121,8 @@ if estructura:
 
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
                                     es_cuenta_base = (seg2 in ('00000', '0000', '0') and seg3 in ('000', '0') and seg4 in ('0000', '0'))
+                                    
+                                    # Filtro estricto para cuenta 054 con segmento final 0000
                                     es_054_exacta = (seg3 in ('054', '54', '0054') and seg4 in ('0000', '0'))
 
                                     if es_cuenta_base and cta not in cuentas_base_proc:
@@ -1165,6 +1133,8 @@ if estructura:
                                         cuentas_054_proc.add(cta)
 
                         costo_neto_emp = costos_base_emp - cta_054_emp
+                        
+                        # 3. Quinta columna: Diferencia (Ingresos facturados - Costo neto)
                         diferencia_emp = ingresos_facturados_a_emp - costo_neto_emp
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
@@ -1196,22 +1166,19 @@ if estructura:
                     st.dataframe(
                         df_ig_resumen.style.format({
                             'INGRESOS FACTURADOS': '${:,.2f}',
-                            'COSTOS BASE (-00000-)': '${:,.2f}',                           'CUENTA 054': '${:,.2f}',
-                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                           'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
+                            'COSTOS BASE (-00000-)': '${:,.2f}',                             'CUENTA 054': '${:,.2f}',
+                            'COSTO NETO (COSTOS - 054)': '${:,.2f}',                             'DIFERENCIA (INGRESOS - COSTO NETO)': '${:,.2f}',
                         }),
                         use_container_width=True,
                         hide_index=True
                     )
 
-                    excel_ig = exportar_excel_matriz_individual(
-                        df_ig_resumen.set_index('EMPRESA'),
-                        "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)",
-                        f"Periodo: {mes_sel}/{anio_sel} | Resumen consolidado por empresa"
-                    )
+                    st.markdown("---")
+                    excel_todos = exportar_excel_reporte_ejecutivo_ambas(matriz_fact, matriz_prest, df_ig_resumen, anio_sel, mes_sel)
                     st.download_button(
-                        label="📥 Descargar Excel - Amarre I y G Intercos",
-                        data=excel_ig,
-                        file_name=f"Amarre_IyG_Intercos_{mes_sel}_{anio_sel}.xlsx",
+                        label="📥 Descargar Reporte Ejecutivo Completo (Facturación, Préstamos y I y G) en Excel",
+                        data=excel_todos,
+                        file_name=f"Reporte_Ejecutivo_Intercompañias_Completo_{mes_sel}_{anio_sel}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
