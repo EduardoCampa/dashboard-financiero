@@ -834,7 +834,7 @@ def exportar_excel_reporte_ejecutivo_ambas(df_fact, df_prest, df_ig, anio, mes):
 
     # --- HOJA 3: I y G Intercos ---
     ws3 = wb.create_sheet(title="3. I y G Intercos")
-    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Búsqueda flexible de contraparte y costos terminados en 1", df_ig)
+    poblar_hoja_excel(ws3, "REPORTE EJECUTIVO - AMARRE INGRESOS VS COSTOS/GASTOS (I y G)", f"Periodo: {mes}/{anio} | Cuenta base acumuladora + subcuenta -054-0000", df_ig)
 
     if default_sheet in wb.worksheets:
         wb.remove(default_sheet)
@@ -1068,8 +1068,8 @@ if estructura:
                     matriz_prest['TOTAL'] = matriz_prest.sum(axis=1)
 
             with subtab_ig_intercos:
-                st.markdown("### 📑 Amarre I y G Intercos (Búsqueda flexible por código de empresa y costos terminados en 1)")
-                st.info("Barrer pestaña por pestaña buscando el código de la empresa en cualquier segmento de las cuentas de ingresos 4*, y sumando todas las cuentas de costos/gastos que terminan en 1 omitiendo -054-.")
+                st.markdown("### 📑 Amarre I y G Intercos (Cuenta Base -00000- y subcuenta -054-0000)")
+                st.info("Suma la cuenta base acumuladora general (terminada en -00000-000-0000 o similar) más la subcuenta de detalle terminada en -054-0000.")
 
                 todas_empresas_balanza = obtener_lista_empresas(ruta_balanza)
 
@@ -1096,12 +1096,10 @@ if estructura:
                                     cta = r['cta_raw']
                                     if cta.startswith('4'):
                                         segs = cta.split('-')
-                                        # Verificar si el código de destino está en cualquiera de los segmentos de la cuenta
-                                        encontrado_contraparte = any(seg.strip() == cod_destino for seg in segs)
-                                        if encontrado_contraparte:
+                                        if any(seg.strip() == cod_destino for seg in segs):
                                             ingresos_facturados_a_emp += (r['acreedor_f'] - r['deudor_f'])
 
-                        # 2. Costos de la empresa (cuentas 5*, 6* cuyo primer segmento tenga 3 dígitos y termine en 1, omitiendo -054-)
+                        # 2. Costos de la empresa: suma la cuenta base acumuladora (-00000-) más la subcuenta -054-0000
                         costos_propios_emp = 0.0
                         recs_d = datos_empresas_recs[emp_destino]
                         for r in recs_d:
@@ -1110,17 +1108,18 @@ if estructura:
                             
                             if len(segs) >= 3:
                                 prefix = segs[0].strip()
+                                seg2 = segs[1].strip() if len(segs) >= 2 else ''
                                 seg3 = segs[2].strip() if len(segs) >= 3 else ''
 
-                                # Verificar prefijo (5 o 6, 3 dígitos, termina en 1)
+                                # Verificar que inicie con 5 o 6 y termine en 1 (ej. 531, 551, 651)
                                 if prefix.isdigit() and len(prefix) == 3 and prefix.startswith(('5', '6')) and prefix.endswith('1'):
                                     
-                                    # Omitir estrictamente si contiene el subnivel -054- o similar
-                                    if '054' in seg3 or '54' in seg3:
-                                        continue
-                                    
-                                    # Sumar saldo final
-                                    costos_propios_emp += r['saldo_final']
+                                    # Condición: Tomar la cuenta base acumuladora (-00000-) o la subcuenta -054-
+                                    es_cuenta_base = (seg2 in ('00000', '0000', '0') or seg3 in ('000', '0'))
+                                    es_subcuenta_054 = ('054' in seg3 or '54' in seg3)
+
+                                    if es_cuenta_base or es_subcuenta_054:
+                                        costos_propios_emp += r['saldo_final']
 
                         tot_ingresos_gen += ingresos_facturados_a_emp
                         tot_costos_gen += costos_propios_emp
@@ -1160,6 +1159,6 @@ if estructura:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
-                    st.success("✅ Módulo actualizado con búsqueda flexible de contraparte en cualquier segmento de ingresos y suma correcta de niveles de costos.")
+                    st.success("✅ Módulo actualizado tomando la cuenta base acumuladora y sumando la subcuenta -054-0000.")
 else:
     st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
