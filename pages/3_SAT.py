@@ -4,12 +4,34 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT y Consolidado Master - Comparativo",
+    page_title="Módulo SAT y Consolidado Master - Mapeo de Empresas",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Resumen Comparativo XMLs vs. Consolidado Master")
+st.title("📑 Módulo SAT - Resumen Comparativo con Mapeo de Razones Sociales")
+
+# --- DICCIONARIO OFICIAL DE MAPEO DE RAZONES SOCIALES A EMPRESAS ---
+MAPEO_RAZON_A_EMPRESA = {
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
+    "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
+    "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
+    "GRUPO FERVIC": "FERVIC",
+    "GRUPO SERVYRE": "GRUPOSERVYRE",
+    "INMOBILIARIA PSZ": "INMOBILIARIA",
+    "LABORATORIO MAJONINMAR": "LABORATORIO",
+    "LATIN AMERICAN ITS": "LAITS",
+    "GRUPO PESAZA": "PESAZA"
+}
+
+def normalizar_empresa(razon_o_empresa):
+    val = str(razon_o_empresa).strip().upper()
+    for razon, empresa_corta in MAPEO_RAZON_A_EMPRESA.items():
+        if razon in val or empresa_corta in val:
+            return empresa_corta
+    return val if val and val != 'NAN' else "OTRAS"
+
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
 def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
@@ -85,6 +107,8 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             razon_emisor = val_razon
                             break
 
+                empresa_normalizada = normalizar_empresa(razon_emisor)
+
                 subtotal = 0.0
                 descuento = 0.0
                 for col in df_sat.columns:
@@ -99,6 +123,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                 subtotal_neto = subtotal - descuento
 
                 registro = {
+                    'Empresa': empresa_normalizada,
                     'Razon emisor': razon_emisor if razon_emisor else "SIN RAZÓN EMISOR",
                     'UUID': uuid,
                     'Fecha emision': fecha_emision_str,
@@ -151,18 +176,15 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
             df['SubTotal_Neto'] = subtotal - descuento
 
-            empresa = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
-            uuid_col = df['UUID']
-            fecha_col = df['Fecha_Cert']
-            status_col = df['CFDStatusCancelledName']
-            neto_col = df['SubTotal_Neto']
+            empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
+            empresa_norm = empresa_raw.apply(normalizar_empresa)
 
             df_final = pd.DataFrame({
-                'EmpresaOrigen': empresa,
-                'UUID': uuid_col,
-                'CFDIFechaCertificacion': fecha_col,
-                'CFDStatusCancelledName': status_col,
-                'SubTotal': neto_col
+                'EmpresaOrigen': empresa_norm,
+                'UUID': df['UUID'],
+                'CFDIFechaCertificacion': df['Fecha_Cert'],
+                'CFDStatusCancelledName': df['CFDStatusCancelledName'],
+                'SubTotal': df['SubTotal_Neto']
             })
 
             return df_final
@@ -190,14 +212,11 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Análisis SAT y Master"):
-    with st.spinner("Procesando información y generando comparativo..."):
-        # 1. Datos SAT
+    with st.spinner("Procesando información y aplicando mapeo de empresas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
-        
-        # 2. Datos Consolidado Master
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
-        st.success("✅ Procesamiento completado correctamente.")
+        st.success("✅ Procesamiento y mapeo completados correctamente.")
 
         tab_sat, tab_master = st.tabs([
             "📊 Módulo SAT & Comparativo Master", 
@@ -207,30 +226,29 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
         with tab_sat:
             st.markdown(f"### 📊 Resumen SAT vs Consolidado Master - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
             
-            # Preparar resúmenes para la comparación
-            res_ing_sat = pd.DataFrame(columns=['Razon emisor', 'SAT Ingresos'])
+            res_ing_sat = pd.DataFrame(columns=['Empresa', 'SAT Ingresos'])
             if not df_ingresos_sat.empty:
-                res_ing_sat = df_ingresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                res_ing_sat.columns = ['Emisor / Empresa', 'SAT Ingresos']
+                res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum()
+                res_ing_sat.columns = ['Empresa', 'SAT Ingresos']
 
-            res_eg_sat = pd.DataFrame(columns=['Razon emisor', 'SAT Egresos'])
+            res_eg_sat = pd.DataFrame(columns=['Empresa', 'SAT Egresos'])
             if not df_egresos_sat.empty:
-                res_eg_sat = df_egresos_sat.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
-                res_eg_sat.columns = ['Emisor / Empresa', 'SAT Egresos']
+                res_eg_sat = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum()
+                res_eg_sat.columns = ['Empresa', 'SAT Egresos']
 
             res_ing_mast = pd.DataFrame(columns=['EmpresaOrigen', 'Master Ingresos'])
             if not df_ingresos_master.empty:
                 res_ing_mast = df_ingresos_master.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum()
-                res_ing_mast.columns = ['Emisor / Empresa', 'Master Ingresos']
+                res_ing_mast.columns = ['Empresa', 'Master Ingresos']
 
             res_eg_mast = pd.DataFrame(columns=['EmpresaOrigen', 'Master Egresos'])
             if not df_egresos_master.empty:
                 res_eg_mast = df_egresos_master.groupby('EmpresaOrigen', as_index=False)['SubTotal'].sum()
-                res_eg_mast.columns = ['Emisor / Empresa', 'Master Egresos']
+                res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
             st.markdown("#### 📈 Comparativo de Ingresos (SAT vs Master)")
             if not res_ing_sat.empty or not res_ing_mast.empty:
-                df_comp_ing = pd.merge(res_ing_sat, res_ing_mast, on='Emisor / Empresa', how='outer').fillna(0.0)
+                df_comp_ing = pd.merge(res_ing_sat, res_ing_mast, on='Empresa', how='outer').fillna(0.0)
                 df_comp_ing['Diferencia (SAT - Master)'] = df_comp_ing['SAT Ingresos'] - df_comp_ing['Master Ingresos']
                 st.dataframe(
                     df_comp_ing.style.format({
@@ -247,7 +265,7 @@ if st.button("🚀 Ejecutar Análisis SAT y Master"):
             st.markdown("---")
             st.markdown("#### 📉 Comparativo de Egresos / Notas de Crédito (SAT vs Master)")
             if not res_eg_sat.empty or not res_eg_mast.empty:
-                df_comp_eg = pd.merge(res_eg_sat, res_eg_mast, on='Emisor / Empresa', how='outer').fillna(0.0)
+                df_comp_eg = pd.merge(res_eg_sat, res_eg_mast, on='Empresa', how='outer').fillna(0.0)
                 df_comp_eg['Diferencia (SAT - Master)'] = df_comp_eg['SAT Egresos'] - df_comp_eg['Master Egresos']
                 st.dataframe(
                     df_comp_eg.style.format({
