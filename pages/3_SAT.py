@@ -36,7 +36,6 @@ MAPEO_EMPRESA_RFC = {
     "SERVYRE": "SER970728JN8"
 }
 
-# Inverso para buscar la empresa por RFC
 RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
 
 def parse_monto_robusto(val):
@@ -108,7 +107,7 @@ def consolidar_excels_sat(carpeta_xmls="XML"):
 
 
 def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
-    """Carga FacturaCliente y NotaCreditoCliente, aplicando notas de crédito en negativo."""
+    """Carga FacturaCliente y NotaCreditoCliente conservando su tipo por separado."""
     if not os.path.exists(ruta_master):
         return pd.DataFrame()
     
@@ -117,7 +116,7 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     try:
         df_fact = pd.read_excel(ruta_master, sheet_name="FacturaCliente")
         if not df_fact.empty:
-            df_fact['Tipo_Doc'] = 'FacturaCliente'
+            df_fact['Tipo_Doc'] = 'Factura'
             dfs_totales.append(df_fact)
     except Exception:
         pass
@@ -126,9 +125,10 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
             df_nc['Tipo_Doc'] = 'NotaCredito'
+            # Para notas de crédito manejamos sus montos positivos en la columna origen para luego restar en el consolidado
             cols_numericas = [c for c in ['SubTotal', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
-                df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0) * -1
+                df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0).abs()
             dfs_totales.append(df_nc)
     except Exception:
         pass
@@ -151,7 +151,7 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
     return df_master
 
 
-def exportar_excel_estilo_personalizado(df_detalle, df_resumen, titulo_reporte, subtitulo_reporte):
+def exportar_excel_estilo_separado(df_facturas_det, df_notas_det, df_facturas_res, df_notas_res, titulo_reporte, subtitulo_reporte):
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     
@@ -162,53 +162,44 @@ def exportar_excel_estilo_personalizado(df_detalle, df_resumen, titulo_reporte, 
         top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1')
     )
 
-    # --- Pestaña 1: Resumen Ingresos ---
+    def escribir_tabla(ws, start_r, titulo_sec, df):
+        ws.cell(row=start_r, column=1, value=titulo_sec).font = Font(name="Calibri", size=12, bold=True, color="1E293B")
+        r = start_r + 1
+        for c_idx, col_name in enumerate(list(df.columns), start=1):
+            cell = ws.cell(row=r, column=c_idx, value=str(col_name))
+            cell.fill = fill_encabezado
+            cell.font = font_encabezado
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for r_i, (_, row_series) in enumerate(df.iterrows()):
+            curr_row = r + 1 + r_i
+            for c_i, col_name in enumerate(list(df.columns), start=1):
+                val = row_series[col_name]
+                cell = ws.cell(row=curr_row, column=c_i, value=val if pd.notnull(val) else 0.0)
+                cell.border = borde_delgado
+                if isinstance(val, (int, float)):
+                    cell.number_format = '$#,##0.00'
+                    cell.alignment = Alignment(horizontal="right")
+        return r + len(df) + 3
+
+    # --- Pestaña 1: Resumen ---
     ws_res = wb.active
     ws_res.title = "Resumen"
     ws_res.views.sheetView[0].showGridLines = True
-    
     ws_res.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
-    ws_res.cell(row=2, column=1, value=subtitulo_reporte + " | Resumen Ingresos (Vigentes)").font = Font(name="Calibri", size=10, italic=True, color="475569")
+    ws_res.cell(row=2, column=1, value=subtitulo_reporte + " | Resumen Ejecutivo").font = Font(name="Calibri", size=10, italic=True, color="475569")
     
-    start_row = 4
-    for c_idx, col_name in enumerate(list(df_resumen.columns), start=1):
-        cell = ws_res.cell(row=start_row, column=c_idx, value=str(col_name))
-        cell.fill = fill_encabezado
-        cell.font = font_encabezado
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+    next_r = escribir_tabla(ws_res, 4, "RESUMEN INGRESOS (VIGENTES)", df_facturas_res)
+    escribir_tabla(ws_res, next_r, "RESUMEN EGRESOS / NOTAS DE CRÉDITO (VIGENTES)", df_notas_res)
 
-    for r_i, (_, row_series) in enumerate(df_resumen.iterrows()):
-        curr_row = start_row + 1 + r_i
-        for c_i, col_name in enumerate(list(df_resumen.columns), start=1):
-            val = row_series[col_name]
-            cell = ws_res.cell(row=curr_row, column=c_i, value=val if pd.notnull(val) else 0.0)
-            cell.border = borde_delgado
-            if isinstance(val, (int, float)):
-                cell.number_format = '$#,##0.00'
-                cell.alignment = Alignment(horizontal="right")
-
-    # --- Pestaña 2: Detalle / Acumulado ---
+    # --- Pestaña 2: Acumulado ---
     ws_det = wb.create_sheet(title="Acumulado")
     ws_det.views.sheetView[0].showGridLines = True
-    
     ws_det.cell(row=1, column=1, value=titulo_reporte).font = Font(name="Calibri", size=14, bold=True, color="1E293B")
     ws_det.cell(row=2, column=1, value=subtitulo_reporte + " | Detalle General").font = Font(name="Calibri", size=10, italic=True, color="475569")
     
-    for c_idx, col_name in enumerate(list(df_detalle.columns), start=1):
-        cell = ws_det.cell(row=start_row, column=c_idx, value=str(col_name))
-        cell.fill = fill_encabezado
-        cell.font = font_encabezado
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-
-    for r_i, (_, row_series) in enumerate(df_detalle.iterrows()):
-        curr_row = start_row + 1 + r_i
-        for c_i, col_name in enumerate(list(df_detalle.columns), start=1):
-            val = row_series[col_name]
-            cell = ws_det.cell(row=curr_row, column=c_i, value=val if pd.notnull(val) else 0.0)
-            cell.border = borde_delgado
-            if isinstance(val, (int, float)):
-                cell.number_format = '$#,##0.00'
-                cell.alignment = Alignment(horizontal="right")
+    next_r_det = escribir_tabla(ws_det, 4, "ACUMULADO - FACTURAS", df_facturas_det)
+    escribir_tabla(ws_det, next_r_det, "ACUMULADO - NOTAS DE CRÉDITO", df_notas_det)
 
     wb.save(output)
     return output.getvalue()
@@ -233,7 +224,7 @@ with subtab_rh:
     st.info("Módulo para validación de nóminas y retenciones de sueldos y salarios contra CONTPAQi y SAT.")
 
 with subtab_ingresos:
-    st.markdown("### 💰 Amarre de Ingresos (Sistema vs SAT por Empresa)")
+    st.markdown("### 💰 Amarre de Ingresos (Facturas y Notas de Crédito Separadas)")
     st.info(f"Filtra la base maestra para el año **{anio_sel}** (meses {mes_inicial} a {mes_final}).")
 
     carpeta_excel_input = st.text_input("Carpeta que contiene los Excel del SAT (ej. XML):", value="XML")
@@ -248,10 +239,8 @@ with subtab_ingresos:
             elif df_xml_sat.empty:
                 st.warning(f"No se encontraron archivos Excel en la carpeta '{carpeta_excel_input}'.")
             else:
-                # Cruce por UUID
                 df_amarre = pd.merge(df_fact_base, df_xml_sat, on="UUID", how="outer", suffixes=('', '_SAT'))
                 
-                # Asignar Empresa y Origen basándonos en BusinessEntityName o RFC esperado
                 def determinar_empresa(row):
                     ben = str(row.get('BusinessEntityName', '')).strip().upper()
                     if ben in MAPEO_EMPRESA_RFC:
@@ -259,7 +248,6 @@ with subtab_ingresos:
                     rfc_sat = str(row.get('RFC_Emisor', '')).strip().upper()
                     if rfc_sat in RFC_TO_EMPRESA:
                         return RFC_TO_EMPRESA[rfc_sat]
-                    # Buscar coincidencia parcial en BusinessEntityName
                     for emp in MAPEO_EMPRESA_RFC.keys():
                         if emp in ben:
                             return emp
@@ -268,56 +256,72 @@ with subtab_ingresos:
                 df_amarre['Empresa'] = df_amarre.apply(determinar_empresa, axis=1)
                 df_amarre['Origen'] = df_amarre['Empresa'].apply(lambda x: f"En Acumulado {x}" if x != "OTRAS" else "En Acumulado General")
 
-                # Normalizar columnas numéricas
                 df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
                 df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
 
-                # Estatus
                 if 'CFDStatusCancelledName' in df_amarre.columns:
                     df_amarre['Estatus'] = df_amarre['CFDStatusCancelledName'].apply(lambda x: 'Cancelado' if pd.notnull(x) and 'CANCELAD' in str(x).upper() else 'VIGENTE')
                 else:
                     df_amarre['Estatus'] = 'VIGENTE'
 
-                # Formatear el DataFrame de Detalle idéntico a la imagen de Excel
-                cols_detalle = ['Origen', 'Empresa', 'UUID', 'Tipo_Doc', 'Estatus', 'SubTotal', 'SubTotal_SAT', 'Diferencia']
-                df_detalle_final = df_amarre[[c for c in cols_detalle if c in df_amarre.columns]].copy()
-                df_detalle_final.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia']
+                # Separar Facturas y Notas de Crédito
+                df_facturas = df_amarre[df_amarre['Tipo_Doc'] == 'Factura'].copy()
+                df_notas = df_amarre[df_amarre['Tipo_Doc'] == 'NotaCredito'].copy()
 
-                # Resumen Ingresos (Vigentes)
-                df_vigentes = df_amarre[df_amarre['Estatus'] == 'VIGENTE']
-                df_resumen = df_vigentes.groupby('Empresa', as_index=False).agg({
-                    'SubTotal': 'sum',
-                    'SubTotal_SAT': 'sum',
-                    'Diferencia': 'sum'
-                }).rename(columns={
-                    'SubTotal': 'SISTEMA (VIG)',
-                    'SubTotal_SAT': 'SAT (VIG)',
-                    'Diferencia': 'DIF. SIST vs SAT'
-                })
+                def preparar_detalle(df):
+                    if df.empty:
+                        return pd.DataFrame(columns=['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia'])
+                    cols = ['Origen', 'Empresa', 'UUID', 'Tipo_Doc', 'Estatus', 'SubTotal', 'SubTotal_SAT', 'Diferencia']
+                    d = df[[c for c in cols if c in df.columns]].copy()
+                    d.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia']
+                    return d
 
-                st.success("✅ Amarre y resumen por empresa realizados correctamente.")
+                def preparar_resumen(df):
+                    if df.empty:
+                        return pd.DataFrame(columns=['Empresa', 'SISTEMA (VIG)', 'SAT (VIG)', 'DIF. SIST vs SAT'])
+                    vig = df[df['Estatus'] == 'VIGENTE']
+                    res = vig.groupby('Empresa', as_index=False).agg({
+                        'SubTotal': 'sum',
+                        'SubTotal_SAT': 'sum',
+                        'Diferencia': 'sum'
+                    }).rename(columns={
+                        'SubTotal': 'SISTEMA (VIG)',
+                        'SubTotal_SAT': 'SAT (VIG)',
+                        'Diferencia': 'DIF. SIST vs SAT'
+                    })
+                    return res
 
-                tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen Ingresos", "📋 Detalle Acumulado"])
+                df_fact_det = preparar_detalle(df_facturas)
+                df_nota_det = preparar_detalle(df_notas)
+                df_fact_res = preparar_resumen(df_facturas)
+                df_nota_res = preparar_resumen(df_notas)
+
+                st.success("✅ Amarre y separación por Facturas y Notas de Crédito realizados correctamente.")
+
+                tab_res_ui, tab_det_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado"])
                 
                 with tab_res_ui:
-                    st.markdown("### RESUMEN INGRESOS (VIGENTES)")
-                    st.dataframe(df_resumen, use_container_width=True)
+                    st.markdown("### 📈 RESUMEN INGRESOS (VIGENTES)")
+                    st.dataframe(df_fact_res, use_container_width=True)
+                    st.markdown("### 📉 RESUMEN EGRESOS / NOTAS DE CRÉDITO (VIGENTES)")
+                    st.dataframe(df_nota_res, use_container_width=True)
 
                 with tab_det_ui:
-                    st.markdown("### ACUMULADO DETALLE")
-                    st.dataframe(df_detalle_final, use_container_width=True)
+                    st.markdown("### 📋 ACUMULADO - FACTURAS")
+                    st.dataframe(df_fact_det, use_container_width=True)
+                    st.markdown("### 📋 ACUMULADO - NOTAS DE CRÉDITO")
+                    st.dataframe(df_nota_det, use_container_width=True)
 
-                output_excel = exportar_excel_estilo_personalizado(
-                    df_detalle_final,
-                    df_resumen,
+                output_excel = exportar_excel_estilo_separado(
+                    df_fact_det, df_nota_det, df_fact_res, df_nota_res,
                     "REPORTE DE AMARRE DE INGRESOS",
                     f"Periodo: {mes_inicial} a {mes_final} del {anio_sel}"
                 )
                 
                 st.download_button(
-                    label="📥 Descargar Reporte Completo (Excel con Estilo Ejecutivo)",
+                    label="📥 Descargar Reporte Completo (Excel Separado)",
                     data=output_excel,
-                    file_name=f"Amarre_Ingresos_Ejecutivo_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
+                    file_name=f"Amarre_Ingresos_Separado_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
