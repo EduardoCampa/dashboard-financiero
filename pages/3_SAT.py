@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Módulo SAT - Ingresos y Egresos",
+    page_title="Módulo SAT - Resumen por Razón Emisor",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Tablas de Ingresos y Egresos Vigentes")
+st.title("📑 Módulo SAT - Resumen Consolidado por Razón Emisor (Ingresos y Egresos)")
 
 def cargar_y_procesar_sat(carpeta_xmls="XML"):
     """Consolida y separa los CFDis de Ingresos y Egresos desde los archivos Excel del SAT."""
@@ -52,7 +52,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
                             break
                 
                 if 'VIGENTE' not in estado:
-                    continue # Excluir todo lo que no sea vigente
+                    continue
 
                 # Tipo (Ingreso o Egreso)
                 tipo_doc = ""
@@ -96,7 +96,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
                 subtotal_neto = subtotal - descuento
 
                 registro = {
-                    'Razon emisor': razon_emisor,
+                    'Razon emisor': razon_emisor if razon_emisor else "SIN RAZÓN EMISOR",
                     'UUID': uuid,
                     'Fecha emision': fecha_emision,
                     'Estado': estado,
@@ -116,34 +116,77 @@ def cargar_y_procesar_sat(carpeta_xmls="XML"):
 # Interfaz en Streamlit
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 
-if st.button("🚀 Cargar y Clasificar CFDis"):
-    with st.spinner("Procesando y filtrando comprobantes vigentes..."):
+if st.button("🚀 Cargar, Clasificar y Resumir"):
+    with st.spinner("Procesando y generando tabla resumen por Razón Emisor..."):
         df_ingresos, df_egresos = cargar_y_procesar_sat(carpeta_input)
 
         st.success("✅ Datos procesados correctamente.")
 
-        tab_ing, tab_eg = st.tabs(["📈 Tabla de Ingresos", "📉 Tabla de Egresos"])
+        tab_res, tab_ing, tab_eg = st.tabs([
+            "📊 Resumen por Razón Emisor", 
+            "📈 Detalle de Ingresos", 
+            "📉 Detalle de Egresos"
+        ])
+
+        with tab_res:
+            st.markdown("### 📊 Resumen de Ingresos y Egresos Vigentes por Razón Emisor")
+            
+            if not df_ingresos.empty or not df_egresos.empty:
+                # Agrupar ingresos
+                df_ing_sum = pd.DataFrame(columns=['Razon emisor', 'Total Ingresos'])
+                if not df_ingresos.empty:
+                    df_ing_sum = df_ingresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                    df_ing_sum.columns = ['Razon emisor', 'Total Ingresos']
+
+                # Agrupar egresos
+                df_eg_sum = pd.DataFrame(columns=['Razon emisor', 'Total Egresos'])
+                if not df_egresos.empty:
+                    df_eg_sum = df_egresos.groupby('Razon emisor', as_index=False)['SubTotal'].sum()
+                    df_eg_sum.columns = ['Razon emisor', 'Total Egresos']
+
+                # Unir ambas tablas por Razón Emisor (Outer join)
+                df_resumen = pd.merge(df_ing_sum, df_eg_sum, on='Razon emisor', how='outer').fillna(0.0)
+                df_resumen['Neto (Ingresos - Egresos)'] = df_resumen['Total Ingresos'] - df_resumen['Total Egresos']
+
+                st.dataframe(
+                    df_resumen.style.format({
+                        'Total Ingresos': '${:,.2f}',
+                        'Total Egresos': '${:,.2f}',
+                        'Neto (Ingresos - Egresos)': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                tot_ing = df_resumen['Total Ingresos'].sum()
+                tot_eg = df_resumen['Total Egresos'].sum()
+                neto_gen = df_resumen['Neto (Ingresos - Egresos)'].sum()
+
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric("Suma Total Ingresos Vigentes", f"${tot_ing:,.2f}")
+                col_m2.metric("Suma Total Egresos Vigentes", f"${tot_eg:,.2f}")
+                col_m3.metric("Balance Neto General", f"${neto_gen:,.2f}")
+            else:
+                st.info("No se encontraron registros vigentes para resumir.")
 
         with tab_ing:
-            st.markdown("### Comprobantes de Ingresos Vigentes")
+            st.markdown("### 📋 Detalle de Comprobantes de Ingresos Vigentes")
             if not df_ingresos.empty:
                 st.dataframe(
                     df_ingresos.style.format({'SubTotal': '${:,.2f}'}),
                     use_container_width=True,
                     hide_index=True
                 )
-                st.info(f"Total de registros de ingresos vigentes: {len(df_ingresos)} | Suma SubTotal Neto: ${df_ingresos['SubTotal'].sum():,.2f}")
             else:
                 st.warning("No se encontraron ingresos vigentes.")
 
         with tab_eg:
-            st.markdown("### Comprobantes de Egresos Vigentes")
+            st.markdown("### 📋 Detalle de Comprobantes de Egresos Vigentes")
             if not df_egresos.empty:
                 st.dataframe(
                     df_egresos.style.format({'SubTotal': '${:,.2f}'}),
                     use_container_width=True,
                     hide_index=True
                 )
-                st.info(f"Total de registros de egresos vigentes: {len(df_egresos)} | Suma SubTotal Neto: ${df_egresos['SubTotal'].sum():,.2f}")
             else:
                 st.warning("No se encontraron egresos vigentes.")
