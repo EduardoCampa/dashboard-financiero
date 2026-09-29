@@ -230,7 +230,7 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         df_nc = pd.read_excel(ruta_master, sheet_name="NotaCreditoCliente")
         if not df_nc.empty:
             df_nc['Tipo_Doc'] = 'NotaCredito'
-            cols_numericas = [c for c in ['SubTotal', 'Total', 'TotalDiscount'] if c in df_nc.columns]
+            cols_numericas = [c for c in ['SubTotal', 'Total'] if c in df_nc.columns]
             for col in cols_numericas:
                 df_nc[col] = pd.to_numeric(df_nc[col], errors='coerce').fillna(0.0).abs() * -1
             dfs_totales.append(df_nc)
@@ -263,20 +263,13 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
 
     df_master['Estatus'] = df_master.apply(determinar_estatus, axis=1)
 
-    # Calcular SubTotal Neto (SubTotal - TotalDiscount)
+    # Usar SubTotal directamente sin restar descuento
     subtotal_val = pd.to_numeric(df_master.get('SubTotal', 0), errors='coerce').fillna(0.0)
-    discount_val = pd.to_numeric(df_master.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
-    
-    # Si es Nota de Crédito, asegurar que descuento se maneje adecuadamente
     mask_nc = df_master['Tipo_Doc'] == 'NotaCredito'
-    subtotal_val = subtotal_val.abs()
-    discount_val = discount_val.abs()
-    
-    subtotal_neto = subtotal_val - discount_val
     if mask_nc.any():
-        subtotal_neto = subtotal_neto.mask(mask_nc, subtotal_neto * -1)
+        subtotal_val = subtotal_val.mask(mask_nc, subtotal_val.abs() * -1)
 
-    df_master['SubTotal_Neto'] = subtotal_neto
+    df_master['SubTotal'] = subtotal_val
 
     if 'EmpresaOrigen' in df_master.columns:
         df_master['Empresa'] = df_master['EmpresaOrigen'].map(MAPEO_EMPRESA_ORIGEN).fillna(df_master['EmpresaOrigen'])
@@ -396,38 +389,37 @@ with subtab_ingresos:
                 if 'Origen' in df_amarre.columns:
                     df_amarre['Origen'] = df_amarre['Origen'].fillna('En Acumulado General')
 
-                df_amarre['SubTotal_Neto'] = pd.to_numeric(df_amarre.get('SubTotal_Neto', 0), errors='coerce').fillna(0.0)
+                df_amarre['SubTotal'] = pd.to_numeric(df_amarre.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 df_amarre['SubTotal_SAT'] = pd.to_numeric(df_amarre.get('SubTotal_SAT', 0), errors='coerce').fillna(0.0)
 
-                df_amarre['Diferencia'] = df_amarre['SubTotal_Neto'] - df_amarre['SubTotal_SAT']
+                df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
 
                 df_facturas = df_amarre[df_amarre['Tipo_Doc'] == 'Factura'].copy()
                 df_notas = df_amarre[df_amarre['Tipo_Doc'] == 'NotaCredito'].copy()
 
                 def preparar_detalle(df):
                     if df.empty:
-                        return pd.DataFrame(columns=['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Neto', 'SubTotal Destino', 'Diferencia'])
-                    cols = ['Origen', 'Empresa', 'UUID', 'Tipo_Doc', 'Estatus', 'SubTotal_Neto', 'SubTotal_SAT', 'Diferencia']
+                        return pd.DataFrame(columns=['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia'])
+                    cols = ['Origen', 'Empresa', 'UUID', 'Tipo_Doc', 'Estatus', 'SubTotal', 'SubTotal_SAT', 'Diferencia']
                     d = df[[c for c in cols if c in df.columns]].copy()
-                    d.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Neto', 'SubTotal Destino', 'Diferencia']
+                    d.columns = ['Origen', 'Empresa', 'UUID', 'Tipo Doc', 'Estatus', 'SubTotal Origen', 'SubTotal Destino', 'Diferencia']
                     return d
 
                 def preparar_resumen_con_contabilidad(df, tipo_doc='Factura'):
                     if df.empty:
-                        return pd.DataFrame(columns=['Empresa', 'CONTABILIDAD', 'SISTEMA (VIG)', 'SAT (VIG)', 'DIF. SIST vs SAT', 'DIF. CONT vs SAT'])
+                        return pd.DataFrame(columns=['Empresa', 'CONTABILIDAD', 'SISTEMA (VIG)', 'SAT (VIG)', 'DIF. SIST vs SAT'])
                     vig = df[df['Estatus'] == 'VIGENTE']
                     res = vig.groupby('Empresa', as_index=False).agg({
-                        'SubTotal_Neto': 'sum',
+                        'SubTotal': 'sum',
                         'SubTotal_SAT': 'sum',
                         'Diferencia': 'sum'
                     }).rename(columns={
-                        'SubTotal_Neto': 'SISTEMA (VIG)',
+                        'SubTotal': 'SISTEMA (VIG)',
                         'SubTotal_SAT': 'SAT (VIG)',
                         'Diferencia': 'DIF. SIST vs SAT'
                     })
 
                     cont_list = []
-                    dif_cont_sat_list = []
                     for idx, row in res.iterrows():
                         emp = row['Empresa']
                         emp_key = emp.upper()
@@ -438,13 +430,8 @@ with subtab_ingresos:
                             else:
                                 val_cont = datos_contables_dict[emp_key]['NC_Cont'] * -1
                         cont_list.append(val_cont)
-                        
-                        # Diferencia Contabilidad VS SAT
-                        val_sat = row['SAT (VIG)']
-                        dif_cont_sat_list.append(val_cont - val_sat)
                     
                     res.insert(1, 'CONTABILIDAD', cont_list)
-                    res['DIF. CONT vs SAT'] = dif_cont_sat_list
                     return res
 
                 df_fact_det = preparar_detalle(df_facturas)
@@ -455,7 +442,7 @@ with subtab_ingresos:
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Amarre, cálculo neto (SubTotal - Descuentos), contabilidad y nueva columna de diferencia Contabilidad vs SAT realizados correctamente.")
+                st.success("✅ Amarre completado utilizando el SubTotal original y columnas de diferencia correctas.")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
@@ -465,8 +452,7 @@ with subtab_ingresos:
                         'CONTABILIDAD': '${:,.2f}',
                         'SISTEMA (VIG)': '${:,.2f}',
                         'SAT (VIG)': '${:,.2f}',
-                        'DIF. SIST vs SAT': '${:,.2f}',
-                        'DIF. CONT vs SAT': '${:,.2f}'
+                        'DIF. SIST vs SAT': '${:,.2f}'
                     }), use_container_width=True, hide_index=True)
 
                     st.markdown("### 📉 RESUMEN EGRESOS / NOTAS DE CRÉDITO (VIGENTES)")
@@ -474,8 +460,7 @@ with subtab_ingresos:
                         'CONTABILIDAD': '${:,.2f}',
                         'SISTEMA (VIG)': '${:,.2f}',
                         'SAT (VIG)': '${:,.2f}',
-                        'DIF. SIST vs SAT': '${:,.2f}',
-                        'DIF. CONT vs SAT': '${:,.2f}'
+                        'DIF. SIST vs SAT': '${:,.2f}'
                     }), use_container_width=True, hide_index=True)
 
                 with tab_det_ui:
@@ -496,7 +481,7 @@ with subtab_ingresos:
                 )
                 
                 st.download_button(
-                    label="📥 Descargar Reporte Completo (Excel con Columna Diferencia Cont vs SAT)",
+                    label="📥 Descargar Reporte Completo en Excel",
                     data=output_excel,
                     file_name=f"Amarre_Ingresos_Auditoria_{mes_inicial}_a_{mes_final}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
