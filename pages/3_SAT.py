@@ -38,7 +38,6 @@ MAPEO_EMPRESA_RFC = {
 
 RFC_TO_EMPRESA = {rfc: emp for emp, rfc in MAPEO_EMPRESA_RFC.items() if rfc}
 
-# Mapeo inverso o equivalente para balanzas
 MAPEO_NOMBRE_A_CODIGO = {
     "CIVLAT": "0468",
     "CIV": "0467",
@@ -101,9 +100,7 @@ def cargar_hoja_balanza(ruta, nombre_hoja):
 
 
 def extraer_datos_contabilidad_balanzas(anio_sel, mes_fin_sel):
-    """Extrae la contabilidad de ingresos (410, 411, 423) y notas de crédito (420, 421) de las balanzas."""
     estructura = obtener_estructura_balanzas()
-    # Buscar balanza del año y mes final seleccionado (o el más cercano disponible)
     mes_str = f"{int(mes_fin_sel):02d}"
     ruta_balanza = next(
         (x['ruta'] for x in estructura if x['anio'] == str(anio_sel) and (x['mes'] == mes_str or str(int(x['mes'])) == str(mes_fin_sel))),
@@ -140,7 +137,7 @@ def extraer_datos_contabilidad_balanzas(anio_sel, mes_fin_sel):
             
             d_f = parse_monto_robusto(row.iloc[col_deudor_f])
             a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
-            saldo_cta = a_f - d_f  # Naturaleza acreedora para ingresos
+            saldo_cta = a_f - d_f
 
             segs = cta_raw.split('-')
             if len(segs) >= 4:
@@ -249,6 +246,19 @@ def cargar_base_master_general(ruta_master="Consolidado_Master.xlsx", anio_filtr
         return pd.DataFrame()
 
     df_master = pd.concat(dfs_totales, ignore_index=True)
+
+    # Limpiar columnas de estatus en el master para marcar cancelados del sistema
+    cols_estatus_sistema = [c for c in df_master.columns if any(k in c.lower() for k in ['estado', 'estatus', 'status', 'cancelad'])]
+    if cols_estatus_sistema:
+        def es_cancelado_sistema(row):
+            for c in cols_estatus_sistema:
+                val = str(row.get(c, '')).upper()
+                if 'CANCELAD' in val or 'INACTIVO' in val:
+                    return True
+            return False
+        df_master['Es_Cancelado_Sistema'] = df_master.apply(es_cancelado_sistema, axis=1)
+    else:
+        df_master['Es_Cancelado_Sistema'] = False
 
     if 'DateDocument' in df_master.columns:
         df_master['DateDocument'] = pd.to_datetime(df_master['DateDocument'], errors='coerce')
@@ -383,10 +393,23 @@ with subtab_ingresos:
 
                 df_amarre['Diferencia'] = df_amarre['SubTotal'] - df_amarre['SubTotal_SAT']
 
-                if 'CFDStatusCancelledName' in df_amarre.columns:
-                    df_amarre['Estatus'] = df_amarre['CFDStatusCancelledName'].apply(lambda x: 'Cancelado' if pd.notnull(x) and 'CANCELAD' in str(x).upper() else 'VIGENTE')
-                else:
-                    df_amarre['Estatus'] = 'VIGENTE'
+                # Definir estatus considerando si está cancelado en el sistema O en el SAT
+                def determinar_estatus(row):
+                    if row.get('Es_Cancelado_Sistema', False):
+                        return 'Cancelado'
+                    est_sat = str(row.get('Estado_SAT', '')).upper()
+                    if 'CANCELAD' in est_sat:
+                        return 'Cancelado'
+                    est_can_name = str(row.get('CFDStatusCancelledName', '')).upper()
+                    if 'CANCELAD' in est_can_name:
+                        return 'Cancelado'
+                    return 'VIGENTE'
+
+                df_amarre['Estatus'] = df_amarre.apply(determinar_estatus, axis=1)
+
+                # Si está cancelado en el sistema, anular su SubTotal para que no infle la suma vigente
+                mask_cancelados = df_amarre['Estatus'] == 'Cancelado'
+                df_amarre.loc[mask_cancelados, 'SubTotal'] = 0.0
 
                 df_facturas = df_amarre[df_amarre['Tipo_Doc'] == 'Factura'].copy()
                 df_notas = df_amarre[df_amarre['Tipo_Doc'] == 'NotaCredito'].copy()
@@ -413,7 +436,6 @@ with subtab_ingresos:
                         'Diferencia': 'DIF. SIST vs SAT'
                     })
 
-                    # Agregar columna CONTABILIDAD desde las balanzas
                     cont_list = []
                     for emp in res['Empresa']:
                         emp_key = emp.upper()
@@ -422,7 +444,7 @@ with subtab_ingresos:
                             if tipo_doc == 'Factura':
                                 val_cont = datos_contables_dict[emp_key]['Ingresos_Cont']
                             else:
-                                val_cont = datos_contables_dict[emp_key]['NC_Cont'] * -1 # Mostrar negativo para egresos
+                                val_cont = datos_contables_dict[emp_key]['NC_Cont'] * -1
                         cont_list.append(val_cont)
                     
                     res.insert(1, 'CONTABILIDAD', cont_list)
@@ -436,7 +458,7 @@ with subtab_ingresos:
                 df_diferencias = df_amarre[df_amarre['Diferencia'].round(2) != 0.0].copy()
                 df_dif_final = preparar_detalle(df_diferencias)
 
-                st.success("✅ Amarre, notas de crédito, contabilidad y auditoría de diferencias realizadas correctamente.")
+                st.success("✅ Amarre, notas de crédito, contabilidad y filtrado de cancelados realizados correctamente.")
 
                 tab_res_ui, tab_det_ui, tab_dif_ui = st.tabs(["📊 Resumen Ejecutivo", "📋 Detalle Acumulado", "🔍 UUIDs con Diferencias"])
                 
