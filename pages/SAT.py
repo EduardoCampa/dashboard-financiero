@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativo Master vs XML, Contabilidad y Conciliación")
+st.title("📑 Módulo SAT - Comparativos y Conciliación")
 
 # --- DICCIONARIO OFICIAL ESTRICTO Y CERRADO (TUS 15 EMPRESAS) ---
 MAPEO_OFICIAL = {
@@ -373,7 +373,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         st.success("✅ Procesamiento completado con éxito.")
 
         tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-            "⚖️ 1.- Comparativo General", 
+            "⚖️ 1.- Comparativos", 
             "📑 2.- Ingresos y Egresos de los XML", 
             "📁 3.- Ingresos y Egresos Master",
             "🔍 4.- Conciliacion por UUID",
@@ -381,94 +381,107 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖ Comparativo General (XML vs Master vs Contabilidad) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### ⚖ Comparativos Generales - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
+            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
+
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
 
             res_ing_mast = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_mast.columns = ['Empresa', 'Master Ingresos']
 
-            st.markdown("#### 📈 Comparativo de Ingresos Vigentes")
-            
-            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
-
-            df_comp_ing = df_base_empresas.copy()
-            if not res_ing_mast.empty:
-                df_comp_ing = pd.merge(df_comp_ing, res_ing_mast, on='Empresa', how='left')
-            else:
-                df_comp_ing['Master Ingresos'] = 0.0
-
-            if not res_ing_sat.empty:
-                df_comp_ing = pd.merge(df_comp_ing, res_ing_sat, on='Empresa', how='left')
-            else:
-                df_comp_ing['XML Ingresos'] = 0.0
-
-            if not df_balanzas.empty and 'Contabilidad Ingresos' in df_balanzas.columns:
-                df_comp_ing = pd.merge(df_comp_ing, df_balanzas[['Empresa', 'Contabilidad Ingresos']], on='Empresa', how='left')
-            else:
-                df_comp_ing['Contabilidad Ingresos'] = 0.0
-
-            df_comp_ing = df_comp_ing.fillna(0.0)
-                
-            df_comp_ing['Diferencia (Master vs XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
-            df_comp_ing['Diferencia (Contabilidad vs XML)'] = df_comp_ing['Contabilidad Ingresos'] - df_comp_ing['XML Ingresos']
-            
-            df_comp_ing = df_comp_ing[[
-                'Empresa', 'Master Ingresos', 'XML Ingresos', 'Contabilidad Ingresos', 
-                'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
-            ]]
-            
-            st.dataframe(
-                df_comp_ing.style.format({
-                    'Master Ingresos': '${:,.2f}',
-                    'XML Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}',
-                    'Diferencia (Master vs XML)': '${:,.2f}',                     'Diferencia (Contabilidad vs XML)': '${:,.2f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.markdown("---")
             res_eg_sat = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_eg_sat.columns = ['Empresa', 'XML Egresos']
 
             res_eg_mast = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
-            st.markdown("#### 📉 Comparativo de Egresos Vigentes / Notas de Crédito")
-            
-            df_comp_eg = df_base_empresas.copy()
-            if not res_eg_mast.empty:
-                df_comp_eg = pd.merge(df_comp_eg, res_eg_mast, on='Empresa', how='left')
-            else:
-                df_comp_eg['Master Egresos'] = 0.0
-
-            if not res_eg_sat.empty:
-                df_comp_eg = pd.merge(df_comp_eg, res_eg_sat, on='Empresa', how='left')
-            else:
-                df_comp_eg['XML Egresos'] = 0.0
-
-            if not df_balanzas.empty and 'Contabilidad Egresos' in df_balanzas.columns:
-                df_comp_eg = pd.merge(df_comp_eg, df_balanzas[['Empresa', 'Contabilidad Egresos']], on='Empresa', how='left')
-            else:
-                df_comp_eg['Contabilidad Egresos'] = 0.0
-
-            df_comp_eg = df_comp_eg.fillna(0.0)
-                
-            df_comp_eg['Diferencia (Master vs XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
-            df_comp_eg['Diferencia (Contabilidad vs XML)'] = df_comp_eg['Contabilidad Egresos'] - df_comp_eg['XML Egresos']
-            
-            df_comp_eg = df_comp_eg[[
-                'Empresa', 'Master Egresos', 'XML Egresos', 'Contabilidad Egresos', 
-                'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
-            ]]
+            # ==========================================
+            # TABLA 1: XML vs MASTER - INGRESOS
+            # ==========================================
+            st.markdown("#### 📈 1. XML vs Master - Ingresos Vigentes")
+            df_t1 = df_base_empresas.copy()
+            df_t1 = pd.merge(df_t1, res_ing_sat, on='Empresa', how='left')
+            df_t1 = pd.merge(df_t1, res_ing_mast, on='Empresa', how='left').fillna(0.0)
+            df_t1['Diferencia (XML vs Master)'] = df_t1['XML Ingresos'] - df_t1['Master Ingresos']
+            df_t1 = df_t1[['Empresa', 'XML Ingresos', 'Master Ingresos', 'Diferencia (XML vs Master)']]
             
             st.dataframe(
-                df_comp_eg.style.format({
-                    'Master Egresos': '${:,.2f}',
-                    'XML Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}',
-                    'Diferencia (Master vs XML)': '${:,.2f}',                     'Diferencia (Contabilidad vs XML)': '${:,.2f}'
+                df_t1.style.format({
+                    'XML Ingresos': '${:,.2f}',
+                    'Master Ingresos': '${:,.2f}',                     'Diferencia (XML vs Master)': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("---")
+
+            # ==========================================
+            # TABLA 2: XML vs MASTER - EGRESOS
+            # ==========================================
+            st.markdown("#### 📉 2. XML vs Master - Egresos Vigentes")
+            df_t2 = df_base_empresas.copy()
+            df_t2 = pd.merge(df_t2, res_eg_sat, on='Empresa', how='left')
+            df_t2 = pd.merge(df_t2, res_eg_mast, on='Empresa', how='left').fillna(0.0)
+            df_t2['Diferencia (XML vs Master)'] = df_t2['XML Egresos'] - df_t2['Master Egresos']
+            df_t2 = df_t2[['Empresa', 'XML Egresos', 'Master Egresos', 'Diferencia (XML vs Master)']]
+            
+            st.dataframe(
+                df_t2.style.format({
+                    'XML Egresos': '${:,.2f}',
+                    'Master Egresos': '${:,.2f}',                     'Diferencia (XML vs Master)': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("---")
+
+            # ==========================================
+            # TABLA 3: XML vs CONTABILIDAD - INGRESOS
+            # ==========================================
+            st.markdown("#### 📈 3. XML vs Contabilidad - Ingresos Vigentes")
+            df_t3 = df_base_empresas.copy()
+            df_t3 = pd.merge(df_t3, res_ing_sat, on='Empresa', how='left')
+            if not df_balanzas.empty and 'Contabilidad Ingresos' in df_balanzas.columns:
+                df_t3 = pd.merge(df_t3, df_balanzas[['Empresa', 'Contabilidad Ingresos']], on='Empresa', how='left')
+            else:
+                df_t3['Contabilidad Ingresos'] = 0.0
+            df_t3 = df_t3.fillna(0.0)
+            df_t3['Diferencia (XML vs Contabilidad)'] = df_t3['XML Ingresos'] - df_t3['Contabilidad Ingresos']
+            df_t3 = df_t3[['Empresa', 'XML Ingresos', 'Contabilidad Ingresos', 'Diferencia (XML vs Contabilidad)']]
+            
+            st.dataframe(
+                df_t3.style.format({
+                    'XML Ingresos': '${:,.2f}',
+                    'Contabilidad Ingresos': '${:,.2f}',                     'Diferencia (XML vs Contabilidad)': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("---")
+
+            # ==========================================
+            # TABLA 4: XML vs CONTABILIDAD - EGRESOS
+            # ==========================================
+            st.markdown("#### 📉 4. XML vs Contabilidad - Egresos Vigentes")
+            df_t4 = df_base_empresas.copy()
+            df_t4 = pd.merge(df_t4, res_eg_sat, on='Empresa', how='left')
+            if not df_balanzas.empty and 'Contabilidad Egresos' in df_balanzas.columns:
+                df_t4 = pd.merge(df_t4, df_balanzas[['Empresa', 'Contabilidad Egresos']], on='Empresa', how='left')
+            else:
+                df_t4['Contabilidad Egresos'] = 0.0
+            df_t4 = df_t4.fillna(0.0)
+            df_t4['Diferencia (XML vs Contabilidad)'] = df_t4['XML Egresos'] - df_t4['Contabilidad Egresos']
+            df_t4 = df_t4[['Empresa', 'XML Egresos', 'Contabilidad Egresos', 'Diferencia (XML vs Contabilidad)']]
+            
+            st.dataframe(
+                df_t4.style.format({
+                    'XML Egresos': '${:,.2f}',
+                    'Contabilidad Egresos': '${:,.2f}',                     'Diferencia (XML vs Contabilidad)': '${:,.2f}'
                 }),
                 use_container_width=True,
                 hide_index=True
