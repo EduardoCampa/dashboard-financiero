@@ -231,13 +231,12 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
     return df_ingresos_master, df_egresos_master
 
 
-# --- CARGAR BALANZAS DESDE LA RUTA Balanzas/[Año]/[Mes]/Balanza.xlsx ---
+# --- CARGAR BALANZAS DESDE Balanzas/[Año]/[Mes]/Balanza.xlsx ---
 def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     """
-    Lee la balanza del mes y año especificados, donde cada pestaña es una empresa.
-    Reglas exactas solicitadas:
-      - Ingresos (410, 411) = Columna 'Acredor F'
-      - Egresos  (420, 421, 423) = Columna 'Deudor F'
+    Lee la balanza del mes y año especificados, buscando en Balanzas/[Año]/[Mes]/Balanza.xlsx.
+     - Ingresos (410, 411) = Columna 'Acredor F'
+     - Egresos  (420, 421, 423) = Columna 'Deudor F'
     """
     mes_str = f"{int(mes):02d}"
     ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
@@ -253,14 +252,17 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     try:
         xls = pd.ExcelFile(ruta_balanza)
         for hoja in xls.sheet_names:
-            if hoja.lower() == 'hoja1':
+            if hoja.lower() in ['hoja1', 'resumen']:
                 continue
             empresa_normalizada = normalizar_empresa(hoja)
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-            df_hoja.columns = [str(c).strip() for c in df_hoja.columns]
+            
+            # Limpiar nombres de columnas eliminando espacios y saltos de línea
+            df_hoja.columns = [str(c).strip().replace('\n', ' ') for c in df_hoja.columns]
             
             col_cta = df_hoja.columns[0]
-            # Identificar columnas Acredor F y Deudor F de forma flexible
+            
+            # Localizar exactamente las columnas 'Acredor F' y 'Deudor F'
             col_acredor_f = next((c for c in df_hoja.columns if 'acredor' in c.lower() and 'f' in c.lower()), None)
             col_deudor_f = next((c for c in df_hoja.columns if 'deudor' in c.lower() and 'f' in c.lower()), None)
             
@@ -269,7 +271,7 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             
             for _, row in df_hoja.iterrows():
                 cta = str(row.get(col_cta, '')).strip()
-                if not cta or cta.lower() == 'nan':
+                if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                     continue
                 
                 if cta.startswith(('410', '411')) and col_acredor_f:
@@ -312,6 +314,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         
+        # Cargar balanzas del mes seleccionado
         df_balanzas = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
 
         st.success("✅ Procesamiento completado con éxito.")
