@@ -233,11 +233,6 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 
 # --- CARGAR BALANZAS DESDE Balanzas/[Año]/[Mes]/Balanza.xlsx ---
 def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
-    """
-    Lee la balanza del mes y año especificados, buscando en Balanzas/[Año]/[Mes]/Balanza.xlsx.
-     - Ingresos (410, 411) = Columna 'Acredor F'
-     - Egresos  (420, 421, 423) = Columna 'Deudor F'
-    """
     mes_str = f"{int(mes):02d}"
     ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
     
@@ -257,13 +252,12 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             empresa_normalizada = normalizar_empresa(hoja)
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             
-            # Limpiar nombres de columnas eliminando espacios y saltos de línea
             df_hoja.columns = [str(c).strip().replace('\n', ' ') for c in df_hoja.columns]
             
             col_cta = df_hoja.columns[0]
             
-            # Localizar exactamente las columnas 'Acredor F' y 'Deudor F'
-            col_acredor_f = next((c for c in df_hoja.columns if 'acredor' in c.lower() and 'f' in c.lower()), None)
+            # Búsqueda flexible de Acreedor F y Deudor F (soporta variaciones de ortografía)
+            col_acreedor_f = next((c for c in df_hoja.columns if ('acreedor' in c.lower() or 'acredor' in c.lower()) and 'f' in c.lower()), None)
             col_deudor_f = next((c for c in df_hoja.columns if 'deudor' in c.lower() and 'f' in c.lower()), None)
             
             val_410_11 = 0.0
@@ -274,8 +268,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                     continue
                 
-                if cta.startswith(('410', '411')) and col_acredor_f:
-                    monto = pd.to_numeric(row.get(col_acredor_f, 0), errors='coerce') or 0.0
+                if cta.startswith(('410', '411')) and col_acreedor_f:
+                    monto = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
                     val_410_11 += monto
                 elif cta.startswith(('420', '421', '423')) and col_deudor_f:
                     monto = pd.to_numeric(row.get(col_deudor_f, 0), errors='coerce') or 0.0
@@ -314,7 +308,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         
-        # Cargar balanzas del mes seleccionado
         df_balanzas = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
 
         st.success("✅ Procesamiento completado con éxito.")
