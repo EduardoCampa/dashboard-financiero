@@ -231,23 +231,25 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 
 
 # --- CONTROLES DE FILTRO POR PERIODO ---
+nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
 col_a, col_mini, col_mfin = st.columns([1, 1, 1])
 
 with col_a:
     anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
 with col_mini:
-    mes_inicial = st.selectbox("Mes Inicial:", list(range(1, 13)), index=0, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+    mes_inicial = st.selectbox("Mes Inicial:", list(range(1, 13)), index=0, format_func=lambda x: nombres_meses[x-1])
 with col_mfin:
-    mes_final = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+    mes_final = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: nombres_meses[x-1])
 
 st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y conciliando diferencias..."):
-        df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_fin)
-        df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_fin)
+    with st.spinner("Procesando información y unificando empresas..."):
+        df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
+        df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
         st.success("✅ Procesamiento completado con éxito.")
 
@@ -259,7 +261,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Master vs XML (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### ⚖️ Comparativo Master vs XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
@@ -307,7 +309,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 st.info("No hay datos de egresos para comparar.")
 
         with tab_xml:
-            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             subtab_x_ing, subtab_x_eg = st.tabs(["📈 Ingresos XML", "📉 Egresos XML"])
             
             with subtab_x_ing:
@@ -325,7 +327,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en XML.")
 
         with tab_master:
-            st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             subtab_m_ing, subtab_m_eg = st.tabs(["📈 Ingresos Master", "📉 Egresos Master"])
             
             with subtab_m_ing:
@@ -343,7 +345,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en Master.")
 
         with tab_conc:
-            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             if not df_ingresos_master.empty and not df_ingresos_sat.empty:
                 df_m_agg = df_ingresos_master[['UUID', 'Empresa', 'SubTotal']].rename(
