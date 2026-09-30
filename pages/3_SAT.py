@@ -235,15 +235,14 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     """
     Lee la balanza del mes y año especificados, donde cada pestaña es una empresa.
-    Calcula:
-      - Ingresos = Cuenta 410 + Cuenta 411 - Cuenta 423
-      - Egresos  = Cuenta 420 + Cuenta 423
+    Calcula de forma robusta por prefijo de cuenta:
+      - Ingresos = Cuentas que empiezan con 410 o 411 menos 423
+      - Egresos  = Cuentas que empiezan con 420 o 423
     """
     mes_str = f"{int(mes):02d}"
     ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
     
     if not os.path.exists(ruta_balanza):
-        # Intentar buscar de manera flexible si cambia alguna mayúscula o nombre
         posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
         if posibles:
             ruta_balanza = posibles[0]
@@ -254,17 +253,16 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     try:
         xls = pd.ExcelFile(ruta_balanza)
         for hoja in xls.sheet_names:
+            if hoja.lower() == 'hoja1':
+                continue
             empresa_normalizada = normalizar_empresa(hoja)
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             df_hoja.columns = [str(c).strip() for c in df_hoja.columns]
             
-            # Buscar columnas de cuenta y saldo final (Deudor F / Acredor F o Saldo)
-            col_cta = next((c for c in df_hoja.columns if 'cuenta' in c.lower() or 'cta' in c.lower()), None)
-            col_val = next((c for c in df_hoja.columns if 'deudor f' in c.lower() or 'acredor f' in c.lower() or 'saldo' in c.lower() or 'neto' in c.lower()), None)
+            # Detectar columna de cuenta (usualmente la primera) y columna de saldo final o neto
+            col_cta = df_hoja.columns[0]
+            col_val = next((c for c in df_hoja.columns if any(k in c.lower() for k in ['deudor f', 'acredor f', 'saldo', 'neto', 'final'])), df_hoja.columns[-1])
             
-            if not col_cta or not col_val:
-                continue
-                
             val_410 = 0.0
             val_411 = 0.0
             val_420 = 0.0
@@ -272,15 +270,18 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             
             for _, row in df_hoja.iterrows():
                 cta = str(row.get(col_cta, '')).strip()
+                if not cta or cta.lower() == 'nan':
+                    continue
+                
                 monto = pd.to_numeric(row.get(col_val, 0), errors='coerce') or 0.0
                 
-                if cta.startswith('410-00000-000-0000') or cta == '410':
+                if cta.startswith('410'):
                     val_410 += monto
-                elif cta.startswith('411-00000-000-0000') or cta == '411':
+                elif cta.startswith('411'):
                     val_411 += monto
-                elif cta.startswith('420-00000-000-0000') or cta == '420':
+                elif cta.startswith('420'):
                     val_420 += monto
-                elif cta.startswith('423-00000-000-0000') or cta == '423':
+                elif cta.startswith('423'):
                     val_423 += monto
             
             ingresos_cont = val_410 + val_411 - val_423
@@ -319,7 +320,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         
-        # Cargar balanzas del mes final seleccionado (o consolidado del periodo)
         df_balanzas = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
 
         st.success("✅ Procesamiento completado con éxito.")
@@ -332,7 +332,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️️ Comparativo Master vs XML vs Contabilidad - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### ⚖ Comparativo Master vs XML vs Contabilidad - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
