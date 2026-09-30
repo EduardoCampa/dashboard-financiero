@@ -18,10 +18,10 @@ MAPEO_RAZON_A_EMPRESA = {
     "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
     "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
     "GRUPO FERVIC": "FERVIC",
-    "GRUPO SERVYRE": "GRUPOSERVYRE",
+    "GRUPO SERVYRE": "GPO SERVYRE",
     "INMOBILIARIA PSZ": "INMOBILIARIA",
     "LABORATORIO MAJONINMAR": "LABORATORIO",
-    "LATIN AMERICAN ITS": "LAITS",
+    "LATIN AMERICAN ITS": "LATIN",
     "GRUPO PESAZA": "PESAZA"
 }
 
@@ -33,11 +33,14 @@ MAPEO_EMPRESA_ORIGEN = {
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
     "FGS": "FGS",
-    "GRUPO FPSB": "GRUPO FPSB",
-    "GRUPOSERVYRE": "GRUPOSERVYRE",
+    "GRUPO FPSB": "FPSB",
+    "FPSB": "FPSB",
+    "GRUPOSERVYRE": "GPO SERVYRE",
+    "GPO SERVYRE": "GPO SERVYRE",
     "INMOBILIARIA": "INMOBILIARIA",
     "LABORATORIO": "LABORATORIO",
-    "LAITS": "LAITS",
+    "LAITS": "LATIN",
+    "LATIN": "LATIN",
     "LIMPIESPIN": "LIMPIESPIN",
     "PESAZA": "PESAZA",
     "SERSENAL": "SERSENAL",
@@ -272,7 +275,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 
                 cta_limpia = cta.replace(' ', '')
                 
-                # REGLA ESTRICTA: Solo tomar cuentas de primer nivel (que contienen -00000-)
                 if '-00000-' in cta_limpia:
                     if col_acreedor_f:
                         monto_ac = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
