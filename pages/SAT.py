@@ -26,26 +26,27 @@ MAPEO_RAZON_A_EMPRESA = {
 }
 
 MAPEO_EMPRESA_ORIGEN = {
+    "CIV": "CIV",
     "CIVLAT": "CIVLAT",
     "CIVLA": "CIVLAT",
-    "CIV": "CIV",
     "CIVMEX": "CIVMEX",
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
     "FGS": "FGS",
-    "GRUPO FPSB": "FPSB",
     "FPSB": "FPSB",
-    "GRUPOSERVYRE": "GPO SERVYRE",
+    "GRUPO FPSB": "FPSB",
     "GPO SERVYRE": "GPO SERVYRE",
+    "GRUPOSERVYRE": "GPO SERVYRE",
     "INMOBILIARIA": "INMOBILIARIA",
     "LABORATORIO": "LABORATORIO",
-    "LAITS": "LATIN",
     "LATIN": "LATIN",
+    "LAITS": "LATIN",
     "LIMPIESPIN": "LIMPIESPIN",
     "PESAZA": "PESAZA",
-    "SERSENAL": "SERSENAL",
     "SERVYCARGO": "SERVYCARGO",
-    "SERVYRE": "SERVYRE"
+    "SERVYRE": "SERVYRE",
+    "SERSEÑAL": "SERSEÑAL",
+    "SERSENAL": "SERSEÑAL"
 }
 
 def normalizar_empresa(razon_o_empresa):
@@ -262,8 +263,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 continue
                 
             col_cta = 0
-            col_deudor_f = num_cols - 2  # Penúltima columna: Saldo Deudor Final
-            col_acreedor_f = num_cols - 1  # Última columna: Saldo Acreedor Final
+            col_deudor_f = num_cols - 2     # Penúltima columna: Deudor F
+            col_acreedor_f = num_cols - 1   # Última columna: Acreedor F
             
             val_410 = 0.0
             val_411 = 0.0
@@ -278,20 +279,22 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 
                 cta_limpia = cta.replace(' ', '')
                 
-                # Ingresos (Acreedor Final)
-                monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
-                if cta_limpia.startswith('410-') or cta_limpia == '410':
+                # Extracción exacta de cuentas de primer nivel (410, 411, 423 para ingresos; 420, 421 para egresos)
+                if cta_limpia.startswith(('410-00000-000-0000', '410')):
+                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
                     val_410 += monto_ac
-                elif cta_limpia.startswith('411-') or cta_limpia == '411':
+                elif cta_limpia.startswith(('411-00000-000-0000', '411')):
+                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
                     val_411 += monto_ac
-                elif cta_limpia.startswith('423-') or cta_limpia == '423':
+                elif cta_limpia.startswith(('423-00000-000-0000', '423')):
+                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
                     val_423 += monto_ac
 
-                # Egresos (Deudor Final)
-                monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
-                if cta_limpia.startswith('420-') or cta_limpia == '420':
+                if cta_limpia.startswith(('420-00000-000-0000', '420')):
+                    monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
                     val_420 += monto_de
-                elif cta_limpia.startswith('421-') or cta_limpia == '421':
+                elif cta_limpia.startswith(('421-00000-000-0000', '421')):
+                    monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
                     val_421 += monto_de
             
             ingresos_cont = val_410 + val_411 - val_423
