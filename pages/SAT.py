@@ -275,7 +275,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 
                 cta_limpia = cta.replace(' ', '')
                 
-                # Búsqueda flexible por prefijo principal de cuenta sin requerir guiones fijos
                 if col_acreedor_f:
                     monto_ac = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
                     if cta_limpia.startswith('410-') or cta_limpia == '410':
