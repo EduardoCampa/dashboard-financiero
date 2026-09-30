@@ -231,80 +231,70 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
     return df_ingresos_master, df_egresos_master
 
 
-# --- FUNCION PARA CARGAR BALANZAS DESDE EL MÓDULO DE CONTABILIDAD / CARPETA ---
-def cargar_balanzas(ruta_master="Consolidado_Master.xlsx", carpeta_balanzas="Contabilidad"):
-    """Busca archivos o carpetas de balanzas contables para extraer saldos por cuenta y empresa."""
-    datos_contabilidad = []
+# --- CARGAR BALANZAS DESDE LA RUTA Balanzas/[Año]/[Mes]/Balanza.xlsx ---
+def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
+    """
+    Lee la balanza del mes y año especificados, donde cada pestaña es una empresa.
+    Calcula:
+      - Ingresos = Cuenta 410 + Cuenta 411 - Cuenta 423
+      - Egresos  = Cuenta 420 + Cuenta 423
+    """
+    mes_str = f"{int(mes):02d}"
+    ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
     
-    # Buscar en la carpeta de contabilidad, ruta master, o archivos en el directorio
-    rutas_a_buscar = [
-        ruta_master,
-        carpeta_balanzas,
-        os.path.join("Contabilidad", "Balanzas"),
-        "."
-    ]
-    
-    archivos_excel = []
-    for r in rutas_a_buscar:
-        if os.path.isdir(r):
-            archivos_excel.extend(glob.glob(os.path.join(r, "**", "*.xlsx"), recursive=True))
-            archivos_excel.extend(glob.glob(os.path.join(r, "*.xlsx")))
-        elif os.path.isfile(r):
-            archivos_excel.append(r)
+    if not os.path.exists(ruta_balanza):
+        # Intentar buscar de manera flexible si cambia alguna mayúscula o nombre
+        posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+        if posibles:
+            ruta_balanza = posibles[0]
+        else:
+            return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos'])
+
+    resultados = []
+    try:
+        xls = pd.ExcelFile(ruta_balanza)
+        for hoja in xls.sheet_names:
+            empresa_normalizada = normalizar_empresa(hoja)
+            df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+            df_hoja.columns = [str(c).strip() for c in df_hoja.columns]
             
-    archivos_excel = list(set(archivos_excel))
-    
-    for arch in archivos_excel:
-        try:
-            xls = pd.ExcelFile(arch)
-            for hoja in xls.sheet_names:
-                if any(k in hoja.lower() for k in ['balanza', 'cuenta', 'saldo', 'contab']):
-                    df_b = pd.read_excel(arch, sheet_name=hoja)
-                    df_b.columns = [str(c).strip() for c in df_b.columns]
-                    
-                    col_cuenta = next((c for c in df_b.columns if 'cuenta' in c.lower() or 'cta' in c.lower()), None)
-                    col_empresa = next((c for c in df_b.columns if 'empresa' in c.lower() or 'origen' in c.lower() or 'cia' in c.lower()), None)
-                    col_saldo = next((c for c in df_b.columns if 'saldo' in c.lower() or 'monto' in c.lower() or 'importe' in c.lower() or 'neto' in c.lower() or 'cargo' in c.lower()), None)
-                    
-                    if col_cuenta and col_saldo:
-                        for _, row in df_b.iterrows():
-                            cta = str(row.get(col_cuenta, '')).strip()
-                            emp_raw = row.get(col_empresa, os.path.basename(arch)) if col_empresa else os.path.basename(arch)
-                            emp = normalizar_empresa(emp_raw)
-                            val = pd.to_numeric(row.get(col_saldo, 0), errors='coerce') or 0.0
-                            
-                            datos_contabilidad.append({
-                                'Empresa': emp,
-                                'Cuenta': cta,
-                                'Valor': val
-                            })
-        except Exception:
-            continue
+            # Buscar columnas de cuenta y saldo final (Deudor F / Acredor F o Saldo)
+            col_cta = next((c for c in df_hoja.columns if 'cuenta' in c.lower() or 'cta' in c.lower()), None)
+            col_val = next((c for c in df_hoja.columns if 'deudor f' in c.lower() or 'acredor f' in c.lower() or 'saldo' in c.lower() or 'neto' in c.lower()), None)
             
-    df_cont = pd.DataFrame(datos_contabilidad)
-    if df_cont.empty:
-        return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos'])
-    
-    res_list = []
-    for emp, grupo in df_cont.groupby('Empresa'):
-        # Ingresos: 410-00000-000-0000 + 411-00000-000-0000 - 423-00000-000-0000
-        ingresos = (
-            grupo[grupo['Cuenta'].str.contains('410', na=False)]['Valor'].sum() +
-            grupo[grupo['Cuenta'].str.contains('411', na=False)]['Valor'].sum() -
-            grupo[grupo['Cuenta'].str.contains('423', na=False)]['Valor'].sum()
-        )
-        # Egresos: 420-00000-000-0000 + 423-00000-000-0000
-        egresos = (
-            grupo[grupo['Cuenta'].str.contains('420', na=False)]['Valor'].sum() +
-            grupo[grupo['Cuenta'].str.contains('423', na=False)]['Valor'].sum()
-        )
-        res_list.append({
-            'Empresa': emp,
-            'Contabilidad Ingresos': ingresos,
-            'Contabilidad Egresos': egresos
-        })
-        
-    return pd.DataFrame(res_list)
+            if not col_cta or not col_val:
+                continue
+                
+            val_410 = 0.0
+            val_411 = 0.0
+            val_420 = 0.0
+            val_423 = 0.0
+            
+            for _, row in df_hoja.iterrows():
+                cta = str(row.get(col_cta, '')).strip()
+                monto = pd.to_numeric(row.get(col_val, 0), errors='coerce') or 0.0
+                
+                if cta.startswith('410-00000-000-0000') or cta == '410':
+                    val_410 += monto
+                elif cta.startswith('411-00000-000-0000') or cta == '411':
+                    val_411 += monto
+                elif cta.startswith('420-00000-000-0000') or cta == '420':
+                    val_420 += monto
+                elif cta.startswith('423-00000-000-0000') or cta == '423':
+                    val_423 += monto
+            
+            ingresos_cont = val_410 + val_411 - val_423
+            egresos_cont = val_420 + val_423
+            
+            resultados.append({
+                'Empresa': empresa_normalizada,
+                'Contabilidad Ingresos': ingresos_cont,
+                'Contabilidad Egresos': egresos_cont
+            })
+    except Exception as e:
+        pass
+
+    return pd.DataFrame(resultados)
 
 
 # --- CONTROLES DE FILTRO POR PERIODO ---
@@ -322,13 +312,15 @@ with col_mfin:
 st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
-carpeta_contabilidad = st.text_input("Carpeta del Módulo de Contabilidad (Balanzas):", value="Contabilidad")
+ruta_balanzas_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información, balanzas y conciliando..."):
+    with st.spinner("Procesando información, balanzas por mes y conciliando..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
-        df_balanzas = cargar_balanzas(ruta_master_input, carpeta_contabilidad)
+        
+        # Cargar balanzas del mes final seleccionado (o consolidado del periodo)
+        df_balanzas = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
 
         st.success("✅ Procesamiento completado con éxito.")
 
@@ -340,7 +332,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Master vs XML vs Contabilidad - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### ⚖️️ Comparativo Master vs XML vs Contabilidad - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
@@ -357,7 +349,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     df_comp_ing['Contabilidad Ingresos'] = 0.0
                     
                 df_comp_ing['Diferencia (Master - XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
-                
                 df_comp_ing = df_comp_ing[['Empresa', 'Master Ingresos', 'XML Ingresos', 'Contabilidad Ingresos', 'Diferencia (Master - XML)']]
                 
                 st.dataframe(
@@ -389,7 +380,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     df_comp_eg['Contabilidad Egresos'] = 0.0
                     
                 df_comp_eg['Diferencia (Master - XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
-                
                 df_comp_eg = df_comp_eg[['Empresa', 'Master Egresos', 'XML Egresos', 'Contabilidad Egresos', 'Diferencia (Master - XML)']]
                 
                 st.dataframe(
