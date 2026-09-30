@@ -329,7 +329,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                     })
             
             ingresos_cont = float(val_410) + float(val_411) - float(val_423)
-            # Egresos en negativo para el resumen general
             egresos_cont = -1 * (float(val_420) + float(val_421))
             
             resultados.append({
@@ -392,7 +391,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
 
             st.markdown("#### 📈 Comparativo de Ingresos Vigentes")
             
-            # DataFrame base estrictamente con las 15 empresas oficiales
             df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
 
             df_comp_ing = df_base_empresas.copy()
