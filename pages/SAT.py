@@ -11,24 +11,10 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
-# --- DICCIONARIO OFICIAL DE MAPEO Y UNIFICACIÓN DE EMPRESAS ---
-MAPEO_RAZON_A_EMPRESA = {
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
-    "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
-    "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
-    "GRUPO FERVIC": "FERVIC",
-    "GRUPO SERVYRE": "GPO SERVYRE",
-    "INMOBILIARIA PSZ": "INMOBILIARIA",
-    "LABORATORIO MAJONINMAR": "LABORATORIO",
-    "LATIN AMERICAN ITS": "LATIN",
-    "GRUPO PESAZA": "PESAZA"
-}
-
-MAPEO_EMPRESA_ORIGEN = {
+# --- DICCIONARIO OFICIAL ESTRICTO DE MAPEO ---
+MAPEO_EMPRESAS_EXACTO = {
     "CIV": "CIV",
     "CIVLAT": "CIVLAT",
-    "CIVLA": "CIVLAT",
     "CIVMEX": "CIVMEX",
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
@@ -38,26 +24,29 @@ MAPEO_EMPRESA_ORIGEN = {
     "GPO SERVYRE": "GPO SERVYRE",
     "GRUPOSERVYRE": "GPO SERVYRE",
     "INMOBILIARIA": "INMOBILIARIA",
+    "INMOBILIARIA PSZ": "INMOBILIARIA",
     "LABORATORIO": "LABORATORIO",
+    "LABORATORIO MAJONINMAR": "LABORATORIO",
     "LATIN": "LATIN",
+    "LATIN AMERICAN ITS": "LATIN",
     "LAITS": "LATIN",
     "LIMPIESPIN": "LIMPIESPIN",
     "PESAZA": "PESAZA",
+    "GRUPO PESAZA": "PESAZA",
     "SERVYCARGO": "SERVYCARGO",
-    "SERVYRE": "SERVYRE",
-    "SERSEÑAL": "SERSEÑAL",
-    "SERSENAL": "SERSEÑAL"
+    "SERVYRE": "SERVYRE"
 }
 
 def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
     if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
         return "OTRAS"
-    if val in MAPEO_EMPRESA_ORIGEN:
-        return MAPEO_EMPRESA_ORIGEN[val]
-    for razon, empresa_corta in sorted(MAPEO_RAZON_A_EMPRESA.items(), key=lambda x: len(x[0]), reverse=True):
-        if razon in val:
-            return empresa_corta
+    if val in MAPEO_EMPRESAS_EXACTO:
+        return MAPEO_EMPRESAS_EXACTO[val]
+    # Búsqueda parcial segura por si el nombre incluye texto adicional
+    for k, v in MAPEO_EMPRESAS_EXACTO.items():
+        if k in val:
+            return v
     return val
 
 
@@ -138,7 +127,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                 empresa_normalizada = normalizar_empresa(razon_emisor)
                 if empresa_normalizada == "OTRAS":
                     base_nom = os.path.basename(archivo).upper()
-                    for k, v in MAPEO_EMPRESA_ORIGEN.items():
+                    for k, v in MAPEO_EMPRESAS_EXACTO.items():
                         if k in base_nom:
                             empresa_normalizada = v
                             break
@@ -279,23 +268,18 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 
                 cta_limpia = cta.replace(' ', '')
                 
-                # Extracción exacta de cuentas de primer nivel (410, 411, 423 para ingresos; 420, 421 para egresos)
-                if cta_limpia.startswith(('410-00000-000-0000', '410')):
-                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
-                    val_410 += monto_ac
-                elif cta_limpia.startswith(('411-00000-000-0000', '411')):
-                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
-                    val_411 += monto_ac
-                elif cta_limpia.startswith(('423-00000-000-0000', '423')):
-                    monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
-                    val_423 += monto_ac
+                # REGLA ESTRICTA: Solo tomar la cuenta matriz exacta de primer nivel (-00000-000-0000)
+                if cta_limpia.startswith('410-00000-000-0000'):
+                    val_410 += pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
+                elif cta_limpia.startswith('411-00000-000-0000'):
+                    val_411 += pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
+                elif cta_limpia.startswith('423-00000-000-0000'):
+                    val_423 += pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
 
-                if cta_limpia.startswith(('420-00000-000-0000', '420')):
-                    monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
-                    val_420 += monto_de
-                elif cta_limpia.startswith(('421-00000-000-0000', '421')):
-                    monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
-                    val_421 += monto_de
+                if cta_limpia.startswith('420-00000-000-0000'):
+                    val_420 += pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
+                elif cta_limpia.startswith('421-00000-000-0000'):
+                    val_421 += pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
             
             ingresos_cont = val_410 + val_411 - val_423
             egresos_cont = val_420 + val_421
