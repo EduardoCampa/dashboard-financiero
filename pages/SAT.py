@@ -303,8 +303,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
 
       col_cta = 0
       col_nom = 1
-      col_deudor_f = num_cols - 2  # Deudor F
-      col_acreedor_f = num_cols - 1  # Acreedor F
+      col_deudor_f = num_cols - 2
+      col_acreedor_f = num_cols - 1
 
       val_410 = 0.0
       val_411 = 0.0
@@ -320,7 +320,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         cta_limpia = cta.replace(" ", "")
         nom = str(row.iloc[col_nom]) if num_cols > col_nom else ""
 
-        # Verificación exacta de cuentas contables solicitadas
         monto_ac = (
             pd.to_numeric(row.iloc[col_acreedor_f], errors="coerce") or 0.0
         )
@@ -451,7 +450,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
 
     with tab_comp:
       st.markdown(
-          f"### ⚖ Comparativo Master vs XML vs Contabilidad - Periodo:"
+          f"### ⚖ Comparativo Master vs XML - Periodo:"
           f" {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del"
           f" {anio_sel}"
       )
@@ -470,27 +469,11 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
       )
       res_ing_mast.columns = ["Empresa", "Master Ingresos"]
 
-      st.markdown(
-          "#### 📈 Comparativo de Ingresos Vigentes (Master vs XML vs"
-          " Contabilidad)"
-      )
+      st.markdown("#### 📈 Comparativo de Ingresos Vigentes (Master vs XML)")
       if not res_ing_sat.empty or not res_ing_mast.empty:
         df_comp_ing = pd.merge(
             res_ing_mast, res_ing_sat, on="Empresa", how="outer"
         ).fillna(0.0)
-        if (
-            not df_balanzas.empty
-            and "Contabilidad Ingresos" in df_balanzas.columns
-        ):
-          df_comp_ing = pd.merge(
-              df_comp_ing,
-              df_balanzas[["Empresa", "Contabilidad Ingresos"]],
-              on="Empresa",
-              how="left",
-          ).fillna(0.0)
-        else:
-          df_comp_ing["Contabilidad Ingresos"] = 0.0
-
         df_comp_ing["Diferencia (Master - XML)"] = (
             df_comp_ing["Master Ingresos"] - df_comp_ing["XML Ingresos"]
         )
@@ -498,7 +481,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             "Empresa",
             "Master Ingresos",
             "XML Ingresos",
-            "Contabilidad Ingresos",
             "Diferencia (Master - XML)",
         ]]
 
@@ -506,7 +488,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             df_comp_ing.style.format({
                 "Master Ingresos": "${:,.2f}",
                 "XML Ingresos": "${:,.2f}",
-                "Contabilidad Ingresos": "${:,.2f}",
                 "Diferencia (Master - XML)": "${:,.2f}",
             }),
             use_container_width=True,
@@ -532,25 +513,12 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
 
       st.markdown(
           "#### 📉 Comparativo de Egresos Vigentes / Notas de Crédito (Master"
-          " vs XML vs Contabilidad)"
+          " vs XML)"
       )
       if not res_eg_sat.empty or not res_eg_mast.empty:
         df_comp_eg = pd.merge(
             res_eg_mast, res_eg_sat, on="Empresa", how="outer"
         ).fillna(0.0)
-        if (
-            not df_balanzas.empty
-            and "Contabilidad Egresos" in df_balanzas.columns
-        ):
-          df_comp_eg = pd.merge(
-              df_comp_eg,
-              df_balanzas[["Empresa", "Contabilidad Egresos"]],
-              on="Empresa",
-              how="left",
-          ).fillna(0.0)
-        else:
-          df_comp_eg["Contabilidad Egresos"] = 0.0
-
         df_comp_eg["Diferencia (Master - XML)"] = (
             df_comp_eg["Master Egresos"] - df_comp_eg["XML Egresos"]
         )
@@ -558,7 +526,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             "Empresa",
             "Master Egresos",
             "XML Egresos",
-            "Contabilidad Egresos",
             "Diferencia (Master - XML)",
         ]]
 
@@ -566,7 +533,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             df_comp_eg.style.format({
                 "Master Egresos": "${:,.2f}",
                 "XML Egresos": "${:,.2f}",
-                "Contabilidad Egresos": "${:,.2f}",
                 "Diferencia (Master - XML)": "${:,.2f}",
             }),
             use_container_width=True,
