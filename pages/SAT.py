@@ -11,52 +11,57 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT - Comparativo Master vs XML, Contabilidad y Conciliación")
 
-# --- DICCIONARIO OFICIAL UNIFICADO SEGÚN TU TABLA ---
-MAPEO_UNIFICADO = {
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
+# --- DICCIONARIO OFICIAL ESTRICTO Y CERRADO (TUS 15 EMPRESAS) ---
+MAPEO_OFICIAL = {
+    "CIV": "CIV",
     "CIVLAT": "CIVLAT",
     "CIVLA": "CIVLAT",
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
-    "CIV": "CIV",
     "CIVMEX": "CIVMEX",
-    "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
     "EFCO": "EFCO",
-    "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
+    "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
     "FGS": "FGS",
-    "GRUPO FERVIC": "FERVIC",
+    "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
     "FERVIC": "FERVIC",
-    "GRUPO FPSB": "FPSB",
+    "GRUPO FERVIC": "FERVIC",
     "FPSB": "FPSB",
-    "GRUPO PESAZA": "PESAZA",
+    "GRUPO FPSB": "FPSB",
     "PESAZA": "PESAZA",
-    "GRUPO SERVYRE": "GPO SERVYRE",
+    "GRUPO PESAZA": "PESAZA",
     "GPO SERVYRE": "GPO SERVYRE",
     "GRUPOSERVYRE": "GPO SERVYRE",
-    "INMOBILIARIA PSZ": "INMOBILIARIA",
+    "SERVYRE": "SERVYRE",
     "INMOBILIARIA": "INMOBILIARIA",
-    "LABORATORIO MAJONINMAR": "LABORATORIO",
+    "INMOBILIARIA PSZ": "INMOBILIARIA",
     "LABORATORIO": "LABORATORIO",
-    "LATIN AMERICAN ITS": "LATIN",
+    "LABORATORIO MAJONINMAR": "LABORATORIO",
     "LATIN": "LATIN",
+    "LATIN AMERICAN ITS": "LATIN",
     "LAITS": "LATIN",
     "LIMPIESPIN": "LIMPIESPIN",
-    "SERVYCARGO": "SERVYCARGO",
-    "SERVYRE": "SERVYRE"
+    "SERVYCARGO": "SERVYCARGO"
 }
+
+LISTA_EMPRESAS_VALIDAS = [
+    "CIV", "CIVLAT", "CIVMEX", "EFCO", "FERVIC", "FGS", "FPSB", 
+    "GPO SERVYRE", "INMOBILIARIA", "LABORATORIO", "LATIN", 
+    "LIMPIESPIN", "PESAZA", "SERVYCARGO", "SERVYRE"
+]
 
 def normalizar_empresa(razon_o_empresa):
     val = str(razon_o_empresa).strip().upper()
     if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
-        return "OTRAS"
+        return None
     
-    if val in MAPEO_UNIFICADO:
-        return MAPEO_UNIFICADO[val]
+    if val in MAPEO_OFICIAL:
+        return MAPEO_OFICIAL[val]
     
-    for clave in sorted(MAPEO_UNIFICADO.keys(), key=len, reverse=True):
+    for clave in sorted(MAPEO_OFICIAL.keys(), key=len, reverse=True):
         if clave in val:
-            return MAPEO_UNIFICADO[clave]
+            return MAPEO_OFICIAL[clave]
             
-    return val
+    return None
 
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
@@ -134,12 +139,12 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             break
 
                 empresa_normalizada = normalizar_empresa(razon_emisor)
-                if empresa_normalizada == "OTRAS":
+                if not empresa_normalizada:
                     base_nom = os.path.basename(archivo).upper()
-                    for k, v in MAPEO_UNIFICADO.items():
-                        if k in base_nom:
-                            empresa_normalizada = v
-                            break
+                    empresa_normalizada = normalizar_empresa(base_nom)
+                
+                if not empresa_normalizada:
+                    continue
 
                 subtotal = 0.0
                 descuento = 0.0
@@ -213,10 +218,11 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
                 subtotal_neto = subtotal_neto.abs() * -1
 
             empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
-            empresa_norm = empresa_raw.apply(normalizar_empresa)
+            df['Empresa'] = empresa_raw.apply(normalizar_empresa)
+            df = df[df['Empresa'].notnull()].copy()
 
             df_final = pd.DataFrame({
-                'Empresa': empresa_norm,
+                'Empresa': df['Empresa'],
                 'UUID': df['UUID'],
                 'CFDIFechaCertificacion': df['Fecha_Doc'],
                 'Estado_Master': 'VIGENTE',
@@ -252,7 +258,11 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         for hoja in xls.sheet_names:
             if hoja.lower() in ['hoja1', 'resumen']:
                 continue
+            
             empresa_normalizada = normalizar_empresa(hoja)
+            if not empresa_normalizada:
+                continue
+
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             if df_hoja.empty:
                 continue
@@ -381,52 +391,45 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             res_ing_mast.columns = ['Empresa', 'Master Ingresos']
 
             st.markdown("#### 📈 Comparativo de Ingresos Vigentes")
-            if not res_ing_sat.empty or not res_ing_mast.empty or not df_balanzas.empty:
-                # Generar lista completa de empresas unificadas
-                empresas_todas = set(
-                    list(res_ing_sat['Empresa'].unique() if not res_ing_sat.empty else []) + 
-                    list(res_ing_mast['Empresa'].unique() if not res_ing_mast.empty else []) + 
-                    list(df_balanzas['Empresa'].unique() if not df_balanzas.empty else [])
-                )
-                df_base_empresas = pd.DataFrame({'Empresa': list(empresas_todas)})
+            
+            # DataFrame base estrictamente con las 15 empresas oficiales
+            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
 
-                df_comp_ing = df_base_empresas.copy()
-                if not res_ing_mast.empty:
-                    df_comp_ing = pd.merge(df_comp_ing, res_ing_mast, on='Empresa', how='left')
-                else:
-                    df_comp_ing['Master Ingresos'] = 0.0
-
-                if not res_ing_sat.empty:
-                    df_comp_ing = pd.merge(df_comp_ing, res_ing_sat, on='Empresa', how='left')
-                else:
-                    df_comp_ing['XML Ingresos'] = 0.0
-
-                if not df_balanzas.empty and 'Contabilidad Ingresos' in df_balanzas.columns:
-                    df_comp_ing = pd.merge(df_comp_ing, df_balanzas[['Empresa', 'Contabilidad Ingresos']], on='Empresa', how='left')
-                else:
-                    df_comp_ing['Contabilidad Ingresos'] = 0.0
-
-                df_comp_ing = df_comp_ing.fillna(0.0)
-                    
-                df_comp_ing['Diferencia (Master vs XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
-                df_comp_ing['Diferencia (Contabilidad vs XML)'] = df_comp_ing['Contabilidad Ingresos'] - df_comp_ing['XML Ingresos']
-                
-                df_comp_ing = df_comp_ing[[
-                    'Empresa', 'Master Ingresos', 'XML Ingresos', 'Contabilidad Ingresos', 
-                    'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
-                ]]
-                
-                st.dataframe(
-                    df_comp_ing.style.format({
-                        'Master Ingresos': '${:,.2f}',
-                        'XML Ingresos': '${:,.2f}',                         'Contabilidad Ingresos': '${:,.2f}',
-                        'Diferencia (Master vs XML)': '${:,.2f}',                         'Diferencia (Contabilidad vs XML)': '${:,.2f}'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
-                )
+            df_comp_ing = df_base_empresas.copy()
+            if not res_ing_mast.empty:
+                df_comp_ing = pd.merge(df_comp_ing, res_ing_mast, on='Empresa', how='left')
             else:
-                st.info("No hay datos de ingresos para comparar.")
+                df_comp_ing['Master Ingresos'] = 0.0
+
+            if not res_ing_sat.empty:
+                df_comp_ing = pd.merge(df_comp_ing, res_ing_sat, on='Empresa', how='left')
+            else:
+                df_comp_ing['XML Ingresos'] = 0.0
+
+            if not df_balanzas.empty and 'Contabilidad Ingresos' in df_balanzas.columns:
+                df_comp_ing = pd.merge(df_comp_ing, df_balanzas[['Empresa', 'Contabilidad Ingresos']], on='Empresa', how='left')
+            else:
+                df_comp_ing['Contabilidad Ingresos'] = 0.0
+
+            df_comp_ing = df_comp_ing.fillna(0.0)
+                
+            df_comp_ing['Diferencia (Master vs XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
+            df_comp_ing['Diferencia (Contabilidad vs XML)'] = df_comp_ing['Contabilidad Ingresos'] - df_comp_ing['XML Ingresos']
+            
+            df_comp_ing = df_comp_ing[[
+                'Empresa', 'Master Ingresos', 'XML Ingresos', 'Contabilidad Ingresos', 
+                'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
+            ]]
+            
+            st.dataframe(
+                df_comp_ing.style.format({
+                    'Master Ingresos': '${:,.2f}',
+                    'XML Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}',
+                    'Diferencia (Master vs XML)': '${:,.2f}',                     'Diferencia (Contabilidad vs XML)': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
 
             st.markdown("---")
             res_eg_sat = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
@@ -436,51 +439,42 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
             st.markdown("#### 📉 Comparativo de Egresos Vigentes / Notas de Crédito")
-            if not res_eg_sat.empty or not res_eg_mast.empty or not df_balanzas.empty:
-                empresas_eg_todas = set(
-                    list(res_eg_sat['Empresa'].unique() if not res_eg_sat.empty else []) + 
-                    list(res_eg_mast['Empresa'].unique() if not res_eg_mast.empty else []) + 
-                    list(df_balanzas['Empresa'].unique() if not df_balanzas.empty else [])
-                )
-                df_base_eg_empresas = pd.DataFrame({'Empresa': list(empresas_eg_todas)})
-
-                df_comp_eg = df_base_eg_empresas.copy()
-                if not res_eg_mast.empty:
-                    df_comp_eg = pd.merge(df_comp_eg, res_eg_mast, on='Empresa', how='left')
-                else:
-                    df_comp_eg['Master Egresos'] = 0.0
-
-                if not res_eg_sat.empty:
-                    df_comp_eg = pd.merge(df_comp_eg, res_eg_sat, on='Empresa', how='left')
-                else:
-                    df_comp_eg['XML Egresos'] = 0.0
-
-                if not df_balanzas.empty and 'Contabilidad Egresos' in df_balanzas.columns:
-                    df_comp_eg = pd.merge(df_comp_eg, df_balanzas[['Empresa', 'Contabilidad Egresos']], on='Empresa', how='left')
-                else:
-                    df_comp_eg['Contabilidad Egresos'] = 0.0
-
-                df_comp_eg = df_comp_eg.fillna(0.0)
-                    
-                df_comp_eg['Diferencia (Master vs XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
-                df_comp_eg['Diferencia (Contabilidad vs XML)'] = df_comp_eg['Contabilidad Egresos'] - df_comp_eg['XML Egresos']
-                
-                df_comp_eg = df_comp_eg[[
-                    'Empresa', 'Master Egresos', 'XML Egresos', 'Contabilidad Egresos', 
-                    'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
-                ]]
-                
-                st.dataframe(
-                    df_comp_eg.style.format({
-                        'Master Egresos': '${:,.2f}',
-                        'XML Egresos': '${:,.2f}',                         'Contabilidad Egresos': '${:,.2f}',
-                        'Diferencia (Master vs XML)': '${:,.2f}',                         'Diferencia (Contabilidad vs XML)': '${:,.2f}'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
-                )
+            
+            df_comp_eg = df_base_empresas.copy()
+            if not res_eg_mast.empty:
+                df_comp_eg = pd.merge(df_comp_eg, res_eg_mast, on='Empresa', how='left')
             else:
-                st.info("No hay datos de egresos para comparar.")
+                df_comp_eg['Master Egresos'] = 0.0
+
+            if not res_eg_sat.empty:
+                df_comp_eg = pd.merge(df_comp_eg, res_eg_sat, on='Empresa', how='left')
+            else:
+                df_comp_eg['XML Egresos'] = 0.0
+
+            if not df_balanzas.empty and 'Contabilidad Egresos' in df_balanzas.columns:
+                df_comp_eg = pd.merge(df_comp_eg, df_balanzas[['Empresa', 'Contabilidad Egresos']], on='Empresa', how='left')
+            else:
+                df_comp_eg['Contabilidad Egresos'] = 0.0
+
+            df_comp_eg = df_comp_eg.fillna(0.0)
+                
+            df_comp_eg['Diferencia (Master vs XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
+            df_comp_eg['Diferencia (Contabilidad vs XML)'] = df_comp_eg['Contabilidad Egresos'] - df_comp_eg['XML Egresos']
+            
+            df_comp_eg = df_comp_eg[[
+                'Empresa', 'Master Egresos', 'XML Egresos', 'Contabilidad Egresos', 
+                'Diferencia (Master vs XML)', 'Diferencia (Contabilidad vs XML)'
+            ]]
+            
+            st.dataframe(
+                df_comp_eg.style.format({
+                    'Master Egresos': '${:,.2f}',
+                    'XML Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}',
+                    'Diferencia (Master vs XML)': '${:,.2f}',                     'Diferencia (Contabilidad vs XML)': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
 
         with tab_xml:
             st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
