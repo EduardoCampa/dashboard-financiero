@@ -256,29 +256,47 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             
             col_cta = df_hoja.columns[0]
             
-            # Búsqueda flexible de Acreedor F y Deudor F (soporta variaciones de ortografía)
             col_acreedor_f = next((c for c in df_hoja.columns if ('acreedor' in c.lower() or 'acredor' in c.lower()) and 'f' in c.lower()), None)
             col_deudor_f = next((c for c in df_hoja.columns if 'deudor' in c.lower() and 'f' in c.lower()), None)
             
-            val_410_11 = 0.0
-            val_420_21_23 = 0.0
+            val_410 = 0.0
+            val_411 = 0.0
+            val_423 = 0.0
+            val_420 = 0.0
+            val_421 = 0.0
             
             for _, row in df_hoja.iterrows():
                 cta = str(row.get(col_cta, '')).strip()
                 if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                     continue
                 
-                if cta.startswith(('410', '411')) and col_acreedor_f:
-                    monto = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
-                    val_410_11 += monto
-                elif cta.startswith(('420', '421', '423')) and col_deudor_f:
-                    monto = pd.to_numeric(row.get(col_deudor_f, 0), errors='coerce') or 0.0
-                    val_420_21_23 += monto
+                # Limpiar cuenta para comparar exactamente el primer nivel
+                cta_limpia = cta.replace(' ', '')
+                
+                if col_acreedor_f:
+                    monto_ac = pd.to_numeric(row.get(col_acreedor_f, 0), errors['coerce']) or 0.0
+                    if cta_limpia.startswith('410-00000-000-0000') or cta_limpia == '410':
+                        val_410 += monto_ac
+                    elif cta_limpia.startswith('411-00000-000-0000') or cta_limpia == '411':
+                        val_411 += monto_ac
+                    elif cta_limpia.startswith('423-00000-000-0000') or cta_limpia == '423':
+                        val_423 += monto_ac
+
+                if col_deudor_f:
+                    monto_de = pd.to_numeric(row.get(col_deudor_f, 0), errors['coerce']) or 0.0
+                    if cta_limpia.startswith('420-00000-000-0000') or cta_limpia == '420':
+                        val_420 += monto_de
+                    elif cta_limpia.startswith('421-00000-000-0000') or cta_limpia == '421':
+                        val_421 += monto_de
+            
+            # Fórmulas exactas solicitadas
+            ingresos_cont = val_410 + val_411 - val_423
+            egresos_cont = val_420 + val_421
             
             resultados.append({
                 'Empresa': empresa_normalizada,
-                'Contabilidad Ingresos': val_410_11,
-                'Contabilidad Egresos': val_420_21_23
+                'Contabilidad Ingresos': ingresos_cont,
+                'Contabilidad Egresos': egresos_cont
             })
     except Exception as e:
         pass
