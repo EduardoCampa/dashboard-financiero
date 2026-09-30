@@ -235,9 +235,9 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     """
     Lee la balanza del mes y año especificados, donde cada pestaña es una empresa.
-    Calcula de forma robusta por prefijo de cuenta:
-      - Ingresos = Cuentas que empiezan con 410 o 411 menos 423
-      - Egresos  = Cuentas que empiezan con 420 o 423
+    Reglas exactas solicitadas:
+      - Ingresos (410, 411) = Columna 'Acredor F'
+      - Egresos  (420, 421, 423) = Columna 'Deudor F'
     """
     mes_str = f"{int(mes):02d}"
     ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
@@ -259,38 +259,30 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             df_hoja.columns = [str(c).strip() for c in df_hoja.columns]
             
-            # Detectar columna de cuenta (usualmente la primera) y columna de saldo final o neto
             col_cta = df_hoja.columns[0]
-            col_val = next((c for c in df_hoja.columns if any(k in c.lower() for k in ['deudor f', 'acredor f', 'saldo', 'neto', 'final'])), df_hoja.columns[-1])
+            # Identificar columnas Acredor F y Deudor F de forma flexible
+            col_acredor_f = next((c for c in df_hoja.columns if 'acredor' in c.lower() and 'f' in c.lower()), None)
+            col_deudor_f = next((c for c in df_hoja.columns if 'deudor' in c.lower() and 'f' in c.lower()), None)
             
-            val_410 = 0.0
-            val_411 = 0.0
-            val_420 = 0.0
-            val_423 = 0.0
+            val_410_11 = 0.0
+            val_420_21_23 = 0.0
             
             for _, row in df_hoja.iterrows():
                 cta = str(row.get(col_cta, '')).strip()
                 if not cta or cta.lower() == 'nan':
                     continue
                 
-                monto = pd.to_numeric(row.get(col_val, 0), errors='coerce') or 0.0
-                
-                if cta.startswith('410'):
-                    val_410 += monto
-                elif cta.startswith('411'):
-                    val_411 += monto
-                elif cta.startswith('420'):
-                    val_420 += monto
-                elif cta.startswith('423'):
-                    val_423 += monto
-            
-            ingresos_cont = val_410 + val_411 - val_423
-            egresos_cont = val_420 + val_423
+                if cta.startswith(('410', '411')) and col_acredor_f:
+                    monto = pd.to_numeric(row.get(col_acredor_f, 0), errors='coerce') or 0.0
+                    val_410_11 += monto
+                elif cta.startswith(('420', '421', '423')) and col_deudor_f:
+                    monto = pd.to_numeric(row.get(col_deudor_f, 0), errors='coerce') or 0.0
+                    val_420_21_23 += monto
             
             resultados.append({
                 'Empresa': empresa_normalizada,
-                'Contabilidad Ingresos': ingresos_cont,
-                'Contabilidad Egresos': egresos_cont
+                'Contabilidad Ingresos': val_410_11,
+                'Contabilidad Egresos': val_420_21_23
             })
     except Exception as e:
         pass
