@@ -191,16 +191,18 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
 
-            if 'CFDIFechaCertificacion' in df.columns:
-                df['Fecha_Cert'] = pd.to_datetime(df['CFDIFechaCertificacion'], errors='coerce')
-                df = df[df['Fecha_Cert'].notnull()].copy()
+            # Usar DateDocument en lugar de CFDIFechaCertificacion
+            fecha_col_name = 'DateDocument' if 'DateDocument' in df.columns else 'CFDIFechaCertificacion'
+            if fecha_col_name in df.columns:
+                df['Fecha_Doc'] = pd.to_datetime(df[fecha_col_name], errors='coerce')
+                df = df[df['Fecha_Doc'].notnull()].copy()
                 if anio_filtro:
-                    df = df[df['Fecha_Cert'].dt.year == int(anio_filtro)]
+                    df = df[df['Fecha_Doc'].dt.year == int(anio_filtro)]
                 if mes_ini and mes_fin:
-                    df = df[(df['Fecha_Cert'].dt.month >= int(mes_ini)) & (df['Fecha_Cert'].dt.month <= int(mes_fin))]
-                df['Fecha_Cert'] = df['Fecha_Cert'].dt.strftime('%Y-%m-%d')
+                    df = df[(df['Fecha_Doc'].dt.month >= int(mes_ini)) & (df['Fecha_Doc'].dt.month <= int(mes_fin))]
+                df['Fecha_Doc'] = df['Fecha_Doc'].dt.strftime('%Y-%m-%d')
             else:
-                df['Fecha_Cert'] = ''
+                df['Fecha_Doc'] = ''
 
             subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
             descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
@@ -215,7 +217,7 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             df_final = pd.DataFrame({
                 'Empresa': empresa_norm,
                 'UUID': df['UUID'],
-                'CFDIFechaCertificacion': df['Fecha_Cert'],
+                'CFDIFechaCertificacion': df['Fecha_Doc'],
                 'Estado_Master': 'VIGENTE',
                 'SubTotal': subtotal_neto
             })
@@ -247,7 +249,7 @@ carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", v
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y unificando empresas..."):
+    with st.spinner("Procesando información y tomando fechas de DateDocument..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
