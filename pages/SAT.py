@@ -275,22 +275,22 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 
                 cta_limpia = cta.replace(' ', '')
                 
-                if '-00000-' in cta_limpia:
-                    if col_acreedor_f:
-                        monto_ac = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
-                        if cta_limpia.startswith('410-'):
-                            val_410 += monto_ac
-                        elif cta_limpia.startswith('411-'):
-                            val_411 += monto_ac
-                        elif cta_limpia.startswith('423-'):
-                            val_423 += monto_ac
+                # Búsqueda flexible por prefijo principal de cuenta sin requerir guiones fijos
+                if col_acreedor_f:
+                    monto_ac = pd.to_numeric(row.get(col_acreedor_f, 0), errors='coerce') or 0.0
+                    if cta_limpia.startswith('410-') or cta_limpia == '410':
+                        val_410 += monto_ac
+                    elif cta_limpia.startswith('411-') or cta_limpia == '411':
+                        val_411 += monto_ac
+                    elif cta_limpia.startswith('423-') or cta_limpia == '423':
+                        val_423 += monto_ac
 
-                    if col_deudor_f:
-                        monto_de = pd.to_numeric(row.get(col_deudor_f, 0), errors='coerce') or 0.0
-                        if cta_limpia.startswith('420-'):
-                            val_420 += monto_de
-                        elif cta_limpia.startswith('421-'):
-                            val_421 += monto_de
+                if col_deudor_f:
+                    monto_de = pd.to_numeric(row.get(col_deudor_f, 0), errors='coerce') or 0.0
+                    if cta_limpia.startswith('420-') or cta_limpia == '420':
+                        val_420 += monto_de
+                    elif cta_limpia.startswith('421-') or cta_limpia == '421':
+                        val_421 += monto_de
             
             ingresos_cont = val_410 + val_411 - val_423
             egresos_cont = val_420 + val_421
