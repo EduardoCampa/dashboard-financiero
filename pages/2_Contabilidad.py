@@ -183,5 +183,4 @@ if st.button("🚀 Cargar, Clasificar y Resumir CFDis"):
                     hide_index=True
                 )
             else:
-                st.warning("No se encontraron egresos vigentes.")else:
-    st.info("Por favor selecciona al menos una empresa para mostrar el reporte.")
+                st.warning("No se encontraron egresos vigentes.")
