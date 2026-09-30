@@ -280,8 +280,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 cta_limpia = cta.replace(' ', '')
                 nom = str(row.iloc[col_nom]) if num_cols > col_nom else ""
                 
-                monto_ac = pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0
-                monto_de = pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0
+                monto_ac = float(pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0)
+                monto_de = float(float(pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0))
                 
                 match_cuenta = None
                 tipo_reg = None
@@ -318,8 +318,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                         'Saldo Acreedor Final': monto_ac
                     })
             
-            ingresos_cont = val_410 + val_411 - val_423
-            egresos_cont = val_420 + val_421
+            ingresos_cont = float(val_410) + float(val_411) - float(val_423)
+            egresos_cont = float(val_420) + float(val_421)
             
             resultados.append({
                 'Empresa': empresa_normalizada,
@@ -329,7 +329,12 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     except Exception as e:
         pass
 
-    return pd.DataFrame(resultados), pd.DataFrame(detalles)
+    df_res_bal = pd.DataFrame(resultados)
+    if not df_res_bal.empty:
+        # Agrupar por empresa normalizada por si hay varias hojas apuntando a la misma empresa corta
+        df_res_bal = df_res_bal.groupby('Empresa', as_index=False)[['Contabilidad Ingresos', 'Contabilidad Egresos']].sum()
+
+    return df_res_bal, pd.DataFrame(detalles)
 
 
 # --- CONTROLES DE FILTRO POR PERIODO ---
