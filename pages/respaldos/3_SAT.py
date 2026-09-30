@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación")
 
-# --- DICCIONARIO OFICIAL DE MAPEO (ORDENADO DE MÁS ESPECÍFICO A GENERAL) ---
+# --- DICCIONARIO OFICIAL DE MAPEO Y UNIFICACIÓN DE EMPRESAS ---
 MAPEO_RAZON_A_EMPRESA = {
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
     "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
@@ -191,16 +191,18 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
 
-            if 'CFDIFechaCertificacion' in df.columns:
-                df['Fecha_Cert'] = pd.to_datetime(df['CFDIFechaCertificacion'], errors='coerce')
-                df = df[df['Fecha_Cert'].notnull()].copy()
+            # Usar DateDocument en lugar de CFDIFechaCertificacion
+            fecha_col_name = 'DateDocument' if 'DateDocument' in df.columns else 'CFDIFechaCertificacion'
+            if fecha_col_name in df.columns:
+                df['Fecha_Doc'] = pd.to_datetime(df[fecha_col_name], errors='coerce')
+                df = df[df['Fecha_Doc'].notnull()].copy()
                 if anio_filtro:
-                    df = df[df['Fecha_Cert'].dt.year == int(anio_filtro)]
+                    df = df[df['Fecha_Doc'].dt.year == int(anio_filtro)]
                 if mes_ini and mes_fin:
-                    df = df[(df['Fecha_Cert'].dt.month >= int(mes_ini)) & (df['Fecha_Cert'].dt.month <= int(mes_fin))]
-                df['Fecha_Cert'] = df['Fecha_Cert'].dt.strftime('%Y-%m-%d')
+                    df = df[(df['Fecha_Doc'].dt.month >= int(mes_ini)) & (df['Fecha_Doc'].dt.month <= int(mes_fin))]
+                df['Fecha_Doc'] = df['Fecha_Doc'].dt.strftime('%Y-%m-%d')
             else:
-                df['Fecha_Cert'] = ''
+                df['Fecha_Doc'] = ''
 
             subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
             descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
@@ -215,7 +217,7 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             df_final = pd.DataFrame({
                 'Empresa': empresa_norm,
                 'UUID': df['UUID'],
-                'CFDIFechaCertificacion': df['Fecha_Cert'],
+                'CFDIFechaCertificacion': df['Fecha_Doc'],
                 'Estado_Master': 'VIGENTE',
                 'SubTotal': subtotal_neto
             })
@@ -231,21 +233,23 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
 
 
 # --- CONTROLES DE FILTRO POR PERIODO ---
+nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
 col_a, col_mini, col_mfin = st.columns([1, 1, 1])
 
 with col_a:
     anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
 with col_mini:
-    mes_inicial = st.selectbox("Mes Inicial:", list(range(1, 13)), index=0, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+    mes_inicial = st.selectbox("Mes Inicial:", list(range(1, 13)), index=0, format_func=lambda x: nombres_meses[x-1])
 with col_mfin:
-    mes_final = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][x-1])
+    mes_final = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: nombres_meses[x-1])
 
 st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y conciliando diferencias..."):
+    with st.spinner("Procesando información y tomando fechas de DateDocument..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
@@ -259,7 +263,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Master vs XML (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### ⚖️ Comparativo Master vs XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
@@ -307,7 +311,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 st.info("No hay datos de egresos para comparar.")
 
         with tab_xml:
-            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             subtab_x_ing, subtab_x_eg = st.tabs(["📈 Ingresos XML", "📉 Egresos XML"])
             
             with subtab_x_ing:
@@ -325,7 +329,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en XML.")
 
         with tab_master:
-            st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             subtab_m_ing, subtab_m_eg = st.tabs(["📈 Ingresos Master", "📉 Egresos Master"])
             
             with subtab_m_ing:
@@ -343,7 +347,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en Master.")
 
         with tab_conc:
-            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {mes_inicial} a {mes_final} del {anio_sel}")
+            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             if not df_ingresos_master.empty and not df_ingresos_sat.empty:
                 df_m_agg = df_ingresos_master[['UUID', 'Empresa', 'SubTotal']].rename(
@@ -360,7 +364,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 
                 df_concil['Diferencia'] = df_concil['SubTotal_Master'] - df_concil['SubTotal_SAT']
                 
-                # Filtrar ESTRICTAMENTE solo aquellos UUIDs que tienen diferencia o no existen en alguna base
                 df_con_dif = df_concil[df_concil['Diferencia'].round(2) != 0.0].copy()
 
                 st.markdown("#### 📊 Resumen de UUIDs con Diferencias / Faltantes")
