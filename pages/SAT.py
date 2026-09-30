@@ -386,7 +386,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
 
         with tab_xml:
             st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
-            subtab_x_ing, subtab_x_eg = st.tabs(["📈 Ingresos XML", "📉 Egresos XML"])
+            subtab_x_ing, subtab_x_eg, subtab_x_res = st.tabs(["📈 Ingresos XML", "📉 Egresos XML", "📊 Resumen por Empresa"])
             
             with subtab_x_ing:
                 if not df_ingresos_sat.empty:
@@ -402,9 +402,31 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 else:
                     st.warning("Sin registros de egresos en XML.")
 
+            with subtab_x_res:
+                st.markdown("#### 📊 Resumen General XML por Empresa")
+                df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
+                
+                res_ing_x = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_ing_x.columns = ['Empresa', 'Total Ingresos']
+                
+                res_eg_x = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_eg_x.columns = ['Empresa', 'Total Egresos']
+
+                df_res_xml = df_base_empresas.copy()
+                df_res_xml = pd.merge(df_res_xml, res_ing_x, on='Empresa', how='left')
+                df_res_xml = pd.merge(df_res_xml, res_eg_x, on='Empresa', how='left').fillna(0.0)
+
+                st.dataframe(
+                    df_res_xml.style.format({
+                        'Total Ingresos': '${:,.2f}',                         'Total Egresos': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
         with tab_master:
             st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
-            subtab_m_ing, subtab_m_eg = st.tabs(["📈 Ingresos Master", "📉 Egresos Master"])
+            subtab_m_ing, subtab_m_eg, subtab_m_res = st.tabs(["📈 Ingresos Master", "📉 Egresos Master", "📊 Resumen por Empresa"])
             
             with subtab_m_ing:
                 if not df_ingresos_master.empty:
@@ -419,6 +441,28 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.metric("Total Egresos Master", f"${df_egresos_master['SubTotal'].sum():,.2f}")
                 else:
                     st.warning("Sin registros de egresos en Master.")
+
+            with subtab_m_res:
+                st.markdown("#### 📊 Resumen General Master por Empresa")
+                df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
+                
+                res_ing_m = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_ing_m.columns = ['Empresa', 'Total Ingresos']
+                
+                res_eg_m = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_eg_m.columns = ['Empresa', 'Total Egresos']
+
+                df_res_mas = df_base_empresas.copy()
+                df_res_mas = pd.merge(df_res_mas, res_ing_m, on='Empresa', how='left')
+                df_res_mas = pd.merge(df_res_mas, res_eg_m, on='Empresa', how='left').fillna(0.0)
+
+                st.dataframe(
+                    df_res_mas.style.format({
+                        'Total Ingresos': '${:,.2f}',                         'Total Egresos': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
         with tab_conc:
             st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
@@ -464,16 +508,35 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación.")
 
         with tab_cont:
-            st.markdown(f"### 📊 Detalle de Cuentas Contables (Mes: {nombres_meses[mes_final-1]} {anio_sel})")
+            st.markdown(f"### 📊 Contabilidad y Balanzas (Mes: {nombres_meses[mes_final-1]} {anio_sel})")
             st.markdown("Fórmula aplicada:\n* **Ingresos:** `410-00000-000-0000` (+) `411-00000-000-0000` (-) `423-00000-000-0000`\n* **Egresos:** `420-00000-000-0000` (+) `421-00000-000-0000`")
             
-            if not df_detalle_cont.empty:
+            subtab_c_det, subtab_c_res = st.tabs(["📋 Detalle de Cuentas", "📊 Resumen por Empresa"])
+
+            with subtab_c_det:
+                if not df_detalle_cont.empty:
+                    st.dataframe(
+                        df_detalle_cont.style.format({
+                            'Saldo Deudor Final': '${:,.2f}',                             'Saldo Acreedor Final': '${:,.2f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.warning("No se encontraron registros contables para las cuentas especificadas en el periodo seleccionado.")
+
+            with subtab_c_res:
+                st.markdown("#### 📊 Resumen Contable por Empresa")
+                df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
+                df_res_c = df_base_empresas.copy()
+                if not df_balanzas.empty:
+                    df_res_c = pd.merge(df_res_c, df_balanzas, on='Empresa', how='left')
+                df_res_c = df_res_c.fillna(0.0)
+
                 st.dataframe(
-                    df_detalle_cont.style.format({
-                        'Saldo Deudor Final': '${:,.2f}',                         'Saldo Acreedor Final': '${:,.2f}'
+                    df_res_c.style.format({
+                        'Contabilidad Ingresos': '${:,.2f}',                         'Contabilidad Egresos': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
                 )
-            else:
-                st.warning("No se encontraron registros contables para las cuentas especificadas en el periodo seleccionado.")
