@@ -1,4 +1,4 @@
-import glob
+import globimport glob
 import os
 import pandas as pd
 import streamlit as st
@@ -13,8 +13,10 @@ st.title("📑 Módulo SAT - Comparativo Master vs XML, Detalle y Conciliación"
 
 # --- DICCIONARIO OFICIAL ESTRICTO DE MAPEO ---
 MAPEO_EMPRESAS_EXACTO = {
-    "CIV": "CIV",
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
+    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
     "CIVLAT": "CIVLAT",
+    "CIV": "CIV",
     "CIVMEX": "CIVMEX",
     "EFCO": "EFCO",
     "FERVIC": "FERVIC",
@@ -42,8 +44,16 @@ def normalizar_empresa(razon_o_empresa):
   val = str(razon_o_empresa).strip().upper()
   if not val or val in ("NAN", "0", "0.0", "0.00000", "NONE"):
     return "OTRAS"
+  
+  # Verificación prioritaria de la razón social larga de CIVLAT antes que CIV
+  if "LATINOAMERICANA" in val or "CIVLAT" in val:
+    return "CIVLAT"
+  if "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL" in val:
+    return "CIV"
+
   if val in MAPEO_EMPRESAS_EXACTO:
     return MAPEO_EMPRESAS_EXACTO[val]
+  
   for k, v in MAPEO_EMPRESAS_EXACTO.items():
     if k in val:
       return v
