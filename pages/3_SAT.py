@@ -191,7 +191,6 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
 
-            # Usar DateDocument en lugar de CFDIFechaCertificacion
             fecha_col_name = 'DateDocument' if 'DateDocument' in df.columns else 'CFDIFechaCertificacion'
             if fecha_col_name in df.columns:
                 df['Fecha_Doc'] = pd.to_datetime(df[fecha_col_name], errors='coerce')
@@ -232,6 +231,72 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
     return df_ingresos_master, df_egresos_master
 
 
+# --- CARGAR BALANZAS DESDE LA RUTA Balanzas/[Año]/[Mes]/Balanza.xlsx ---
+def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
+    """
+    Lee la balanza del mes y año especificados, donde cada pestaña es una empresa.
+    Calcula:
+      - Ingresos = Cuenta 410 + Cuenta 411 - Cuenta 423
+      - Egresos  = Cuenta 420 + Cuenta 423
+    """
+    mes_str = f"{int(mes):02d}"
+    ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
+    
+    if not os.path.exists(ruta_balanza):
+        # Intentar buscar de manera flexible si cambia alguna mayúscula o nombre
+        posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+        if posibles:
+            ruta_balanza = posibles[0]
+        else:
+            return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos'])
+
+    resultados = []
+    try:
+        xls = pd.ExcelFile(ruta_balanza)
+        for hoja in xls.sheet_names:
+            empresa_normalizada = normalizar_empresa(hoja)
+            df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+            df_hoja.columns = [str(c).strip() for c in df_hoja.columns]
+            
+            # Buscar columnas de cuenta y saldo final (Deudor F / Acredor F o Saldo)
+            col_cta = next((c for c in df_hoja.columns if 'cuenta' in c.lower() or 'cta' in c.lower()), None)
+            col_val = next((c for c in df_hoja.columns if 'deudor f' in c.lower() or 'acredor f' in c.lower() or 'saldo' in c.lower() or 'neto' in c.lower()), None)
+            
+            if not col_cta or not col_val:
+                continue
+                
+            val_410 = 0.0
+            val_411 = 0.0
+            val_420 = 0.0
+            val_423 = 0.0
+            
+            for _, row in df_hoja.iterrows():
+                cta = str(row.get(col_cta, '')).strip()
+                monto = pd.to_numeric(row.get(col_val, 0), errors='coerce') or 0.0
+                
+                if cta.startswith('410-00000-000-0000') or cta == '410':
+                    val_410 += monto
+                elif cta.startswith('411-00000-000-0000') or cta == '411':
+                    val_411 += monto
+                elif cta.startswith('420-00000-000-0000') or cta == '420':
+                    val_420 += monto
+                elif cta.startswith('423-00000-000-0000') or cta == '423':
+                    val_423 += monto
+            
+            ingresos_cont = val_410 + val_411 - val_423
+            egresos_cont = val_420 + val_423
+            
+            resultados.append({
+                'Empresa': empresa_normalizada,
+                'Contabilidad Ingresos': ingresos_cont,
+                'Contabilidad Egresos': egresos_cont
+            })
+    except Exception as e:
+        pass
+
+    return pd.DataFrame(resultados)
+
+
 # --- CONTROLES DE FILTRO POR PERIODO ---
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
@@ -247,11 +312,15 @@ with col_mfin:
 st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
+ruta_balanzas_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información y tomando fechas de DateDocument..."):
+    with st.spinner("Procesando información, balanzas por mes y conciliando..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
+        
+        # Cargar balanzas del mes final seleccionado (o consolidado del periodo)
+        df_balanzas = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
 
         st.success("✅ Procesamiento completado con éxito.")
 
@@ -263,7 +332,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖️ Comparativo Master vs XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### ⚖️️ Comparativo Master vs XML vs Contabilidad - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             res_ing_sat = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_sat.columns = ['Empresa', 'XML Ingresos']
@@ -271,14 +340,22 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             res_ing_mast = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_ing_mast.columns = ['Empresa', 'Master Ingresos']
 
-            st.markdown("#### 📈 Comparativo de Ingresos Vigentes (Master vs XML)")
+            st.markdown("#### 📈 Comparativo de Ingresos Vigentes (Master vs XML vs Contabilidad)")
             if not res_ing_sat.empty or not res_ing_mast.empty:
                 df_comp_ing = pd.merge(res_ing_mast, res_ing_sat, on='Empresa', how='outer').fillna(0.0)
+                if not df_balanzas.empty and 'Contabilidad Ingresos' in df_balanzas.columns:
+                    df_comp_ing = pd.merge(df_comp_ing, df_balanzas[['Empresa', 'Contabilidad Ingresos']], on='Empresa', how='left').fillna(0.0)
+                else:
+                    df_comp_ing['Contabilidad Ingresos'] = 0.0
+                    
                 df_comp_ing['Diferencia (Master - XML)'] = df_comp_ing['Master Ingresos'] - df_comp_ing['XML Ingresos']
+                df_comp_ing = df_comp_ing[['Empresa', 'Master Ingresos', 'XML Ingresos', 'Contabilidad Ingresos', 'Diferencia (Master - XML)']]
+                
                 st.dataframe(
                     df_comp_ing.style.format({
                         'Master Ingresos': '${:,.2f}',
                         'XML Ingresos': '${:,.2f}',
+                        'Contabilidad Ingresos': '${:,.2f}',
                         'Diferencia (Master - XML)': '${:,.2f}'
                     }),
                     use_container_width=True,
@@ -294,14 +371,22 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             res_eg_mast = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
             res_eg_mast.columns = ['Empresa', 'Master Egresos']
 
-            st.markdown("#### 📉 Comparativo de Egresos Vigentes / Notas de Crédito (Master vs XML)")
+            st.markdown("#### 📉 Comparativo de Egresos Vigentes / Notas de Crédito (Master vs XML vs Contabilidad)")
             if not res_eg_sat.empty or not res_eg_mast.empty:
                 df_comp_eg = pd.merge(res_eg_mast, res_eg_sat, on='Empresa', how='outer').fillna(0.0)
+                if not df_balanzas.empty and 'Contabilidad Egresos' in df_balanzas.columns:
+                    df_comp_eg = pd.merge(df_comp_eg, df_balanzas[['Empresa', 'Contabilidad Egresos']], on='Empresa', how='left').fillna(0.0)
+                else:
+                    df_comp_eg['Contabilidad Egresos'] = 0.0
+                    
                 df_comp_eg['Diferencia (Master - XML)'] = df_comp_eg['Master Egresos'] - df_comp_eg['XML Egresos']
+                df_comp_eg = df_comp_eg[['Empresa', 'Master Egresos', 'XML Egresos', 'Contabilidad Egresos', 'Diferencia (Master - XML)']]
+                
                 st.dataframe(
                     df_comp_eg.style.format({
                         'Master Egresos': '${:,.2f}',
                         'XML Egresos': '${:,.2f}',
+                        'Contabilidad Egresos': '${:,.2f}',
                         'Diferencia (Master - XML)': '${:,.2f}'
                     }),
                     use_container_width=True,
