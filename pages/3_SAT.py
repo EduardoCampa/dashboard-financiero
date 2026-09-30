@@ -173,6 +173,44 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
 
 
 # --- FUNCIONES DE PROCESAMIENTO CONSOLIDADO MASTER ---
+def cargar_master_completo(ruta_master="Consolidado_Master.xlsx"):
+    """Carga todo el Master sin filtro de fecha estricto para la conciliación por UUID"""
+    if not os.path.exists(ruta_master):
+        return pd.DataFrame(), pd.DataFrame()
+
+    def procesar_hoja_completa(nombre_hoja, es_egreso=False):
+        try:
+            df = pd.read_excel(ruta_master, sheet_name=nombre_hoja)
+            if df.empty or 'UUID' not in df.columns:
+                return pd.DataFrame()
+
+            df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '') & (df['UUID'].astype(str).str.upper() != 'NAN')].copy()
+
+            if 'CFDStatusCancelledName' in df.columns:
+                df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
+
+            subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
+            descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
+            subtotal_neto = subtotal - descuento
+
+            if es_egreso:
+                subtotal_neto = subtotal_neto.abs() * -1
+
+            empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
+            empresa_norm = empresa_raw.apply(normalizar_empresa)
+
+            df_final = pd.DataFrame({
+                'Empresa': empresa_norm,
+                'UUID': df['UUID'],
+                'SubTotal': subtotal_neto
+            })
+            return df_final
+        except Exception:
+            return pd.DataFrame()
+
+    return procesar_hoja_completa("FacturaCliente", False), procesar_hoja_completa("NotaCreditoCliente", True)
+
+
 def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
     if not os.path.exists(ruta_master):
         return pd.DataFrame(), pd.DataFrame()
@@ -250,6 +288,9 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
     with st.spinner("Procesando información y unificando empresas..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
+        
+        # Cargar master completo sin filtro de fecha para conciliación exacta por UUID
+        df_ing_master_full, _ = cargar_master_completo(ruta_master_input)
 
         st.success("✅ Procesamiento completado con éxito.")
 
@@ -347,13 +388,14 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_conc:
             st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            if not df_ingresos_master.empty and not df_ingresos_sat.empty:
-                df_m_agg = df_ingresos_master[['UUID', 'Empresa', 'SubTotal']].rename(
+            if not df_ing_master_full.empty and not df_ingresos_sat.empty:
+                df_m_agg = df_ing_master_full[['UUID', 'Empresa', 'SubTotal']].rename(
                     columns={'SubTotal': 'SubTotal_Master'}
-                )
+                ).groupby('UUID', as_index=False).agg({'Empresa': 'first', 'SubTotal_Master': 'sum'})
+                
                 df_s_agg = df_ingresos_sat[['UUID', 'Empresa', 'SubTotal']].rename(
                     columns={'SubTotal': 'SubTotal_SAT', 'Empresa': 'Empresa_SAT'}
-                )
+                ).groupby('UUID', as_index=False).agg({'Empresa_SAT': 'first', 'SubTotal_SAT': 'sum'})
                 
                 df_concil = pd.merge(df_m_agg, df_s_agg, on='UUID', how='outer')
                 df_concil['SubTotal_Master'] = df_concil['SubTotal_Master'].fillna(0.0)
@@ -367,10 +409,10 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 st.markdown("#### 📊 Resumen de UUIDs con Diferencias / Faltantes")
                 col_d1, col_d2 = st.columns(2)
                 col_d1.metric("Total UUIDs Analizados", len(df_concil))
-                col_d2.metric("UUIDs con Diferencia / Faltantes", len(df_con_dif))
+                col_d2.metric("UUIDs con Diferencia Estricta", len(df_con_dif))
 
                 st.markdown("---")
-                st.markdown("#### 📋 Detalle Exclusivo de UUIDs con Diferencias o Faltantes en una Base")
+                st.markdown("#### 📋 Detalle Exclusivo de UUIDs con Diferencias Reales en Monto")
                 if not df_con_dif.empty:
                     st.dataframe(
                         df_con_dif[[
@@ -384,6 +426,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                         hide_index=True
                     )
                 else:
-                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs vigentes cruzados.")
+                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs cruzados.")
             else:
                 st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación.")
