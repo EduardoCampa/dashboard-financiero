@@ -24,6 +24,7 @@ MAPEO_OFICIAL = {
     "FGS": "FGS",
     "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
     "FERVIC": "FERVIC",
+    "FERVIC S.A.": "FERVIC",
     "GRUPO FERVIC": "FERVIC",
     "FPSB": "FPSB",
     "GRUPO FPSB": "FPSB",
@@ -341,6 +342,9 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
 
     df_res_bal = pd.DataFrame(resultados)
     if not df_res_bal.empty:
+        # Aseguramos que los valores sean numéricos y agrupamos correctamente por Empresa
+        df_res_bal['Contabilidad Ingresos'] = pd.to_numeric(df_res_bal['Contabilidad Ingresos'], errors='coerce').fillna(0.0)
+        df_res_bal['Contabilidad Egresos'] = pd.to_numeric(df_res_bal['Contabilidad Egresos'], errors='coerce').fillna(0.0)
         df_res_bal = df_res_bal.groupby('Empresa', as_index=False)[['Contabilidad Ingresos', 'Contabilidad Egresos']].sum()
 
     return df_res_bal, pd.DataFrame(detalles)
@@ -387,7 +391,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_xml:
             st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            # --- TABLA RESUMEN POR EMPRESA ---
             st.markdown("#### 📊 Resumen General de Ingresos y Egresos por Empresa (XML)")
             df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
             
@@ -430,7 +433,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_master:
             st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            # --- TABLA RESUMEN POR EMPRESA ---
             st.markdown("#### 📊 Resumen de Ingresos y Egresos por Empresa (Master)")
             df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
             
@@ -517,7 +519,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.markdown(f"### 📊 Contabilidad y Balanzas (Mes: {nombres_meses[mes_final-1]} {anio_sel})")
             st.markdown("Fórmula aplicada:\n* **Ingresos:** `410-00000-000-0000` (+) `411-00000-000-0000` (-) `423-00000-000-0000`\n* **Egresos:** `420-00000-000-0000` (+) `421-00000-000-0000`")
             
-            # --- TABLA RESUMEN POR EMPRESA ---
             st.markdown("#### 📊 Resumen Contable por Empresa")
             df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
             df_res_c = df_base_empresas.copy()
