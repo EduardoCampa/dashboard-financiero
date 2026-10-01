@@ -145,26 +145,33 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     output.seek(0)
     return output
 
-# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS ---
+# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS (ESTILOS NARANJA CORPORATIVO) ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
     ws.title = "Reporte de Pagos"
     ws.views.sheetView[0].showGridLines = True
 
+    # Paleta de colores en tonos Naranjas/Terracota corporativos
     font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
-    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-    font_empresa = Font(name="Calibri", size=12, bold=True, color="1F497D")
-    fill_empresa = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    fill_titulo = PatternFill(start_color="C65911", end_color="C65911", fill_type="solid")  # Naranja oscuro principal
+    
+    font_empresa = Font(name="Calibri", size=12, bold=True, color="833C0C")
+    fill_empresa = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")  # Naranja muy claro / melocotón
+    
     font_prov = Font(name="Calibri", size=11, bold=True, color="333333")
     fill_prov = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    font_moneda = Font(name="Calibri", size=10, bold=True, color="1F497D")
-    fill_moneda = PatternFill(start_color="E9EDF4", end_color="E9EDF4", fill_type="solid")
+    
+    font_moneda = Font(name="Calibri", size=10, bold=True, color="833C0C")
+    fill_moneda = PatternFill(start_color="FDE9D9", end_color="FDE9D9", fill_type="solid")  # Naranja pastel suave
+    
     font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    fill_header = PatternFill(start_color="D66011", end_color="D66011", fill_type="solid")  # Encabezados de tabla en naranja vivo
+    
     font_normal = Font(name="Calibri", size=10, color="000000")
+    
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
-    fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
+    fill_total = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")  # Total general en naranja claro destacado
 
     borde_delgado = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
