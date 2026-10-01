@@ -9,60 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativos y Conciliación")
-
-# --- DICCIONARIO OFICIAL ESTRICTO Y CERRADO (TUS 15 EMPRESAS) ---
-MAPEO_OFICIAL = {
-    "CIV": "CIV",
-    "CIVLAT": "CIVLAT",
-    "CIVLA": "CIVLAT",
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA": "CIVLAT",
-    "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL": "CIV",
-    "CIVMEX": "CIVMEX",
-    "EFCO": "EFCO",
-    "ELEMENTOS FABRICADOS Y CONSTRUCCIONES": "EFCO",
-    "FGS": "FGS",
-    "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO": "FGS",
-    "FERVIC": "FERVIC",
-    "FERVIC S.A.": "FERVIC",
-    "GRUPO FERVIC": "FERVIC",
-    "FPSB": "FPSB",
-    "GRUPO FPSB": "FPSB",
-    "PESAZA": "PESAZA",
-    "GRUPO PESAZA": "PESAZA",
-    "GPO SERVYRE": "GPO SERVYRE",
-    "GRUPOSERVYRE": "GPO SERVYRE",
-    "SERVYRE": "SERVYRE",
-    "INMOBILIARIA": "INMOBILIARIA",
-    "INMOBILIARIA PSZ": "INMOBILIARIA",
-    "LABORATORIO": "LABORATORIO",
-    "LABORATORIO MAJONINMAR": "LABORATORIO",
-    "LATIN": "LATIN",
-    "LATIN AMERICAN ITS": "LATIN",
-    "LAITS": "LATIN",
-    "LIMPIESPIN": "LIMPIESPIN",
-    "SERVYCARGO": "SERVYCARGO"
-}
-
-LISTA_EMPRESAS_VALIDAS = [
-    "CIV", "CIVLAT", "CIVMEX", "EFCO", "FERVIC", "FGS", "FPSB", 
-    "GPO SERVYRE", "INMOBILIARIA", "LABORATORIO", "LATIN", 
-    "LIMPIESPIN", "PESAZA", "SERVYCARGO", "SERVYRE"
-]
-
-def normalizar_empresa(razon_o_empresa):
-    val = str(razon_o_empresa).strip().upper()
-    if not val or val in ('NAN', '0', '0.0', '0.00000', 'NONE'):
-        return None
-    
-    if val in MAPEO_OFICIAL:
-        return MAPEO_OFICIAL[val]
-    
-    for clave in sorted(MAPEO_OFICIAL.keys(), key=len, reverse=True):
-        if clave in val:
-            return MAPEO_OFICIAL[clave]
-            
-    return None
+st.title("📑 Módulo SAT - Comparativos y Conciliación (Lectura Directa)")
 
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
@@ -131,21 +78,17 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                         tipo_doc = str(row.get(col, '')).strip()
                         break
 
+                # Lectura directa del nombre del emisor
                 razon_emisor = ""
                 for col in df_sat.columns:
                     if 'razon' in col.lower() and 'emisor' in col.lower():
                         val_razon = str(row.get(col, '')).strip()
                         if val_razon and val_razon.upper() != 'NAN':
-                            razon_emisor = val_razon
+                            razon_emisor = val_razon.upper()
                             break
-
-                empresa_normalizada = normalizar_empresa(razon_emisor)
-                if not empresa_normalizada:
-                    base_nom = os.path.basename(archivo).upper()
-                    empresa_normalizada = normalizar_empresa(base_nom)
                 
-                if not empresa_normalizada:
-                    continue
+                if not razon_emisor:
+                    razon_emisor = "SIN RAZÓN EMISOR"
 
                 subtotal = 0.0
                 descuento = 0.0
@@ -161,8 +104,7 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                 subtotal_neto = subtotal - descuento
 
                 registro = {
-                    'Empresa': empresa_normalizada,
-                    'Razon emisor': razon_emisor if razon_emisor else "SIN RAZÓN EMISOR",
+                    'Empresa': razon_emisor,
                     'UUID': uuid,
                     'Fecha emision': fecha_emision_str,
                     'Estado_SAT': estado,
@@ -218,9 +160,9 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if es_egreso:
                 subtotal_neto = subtotal_neto.abs() * -1
 
+            # Lectura directa de EmpresaOrigen
             empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
-            df['Empresa'] = empresa_raw.apply(normalizar_empresa)
-            df = df[df['Empresa'].notnull()].copy()
+            df['Empresa'] = empresa_raw.astype(str).str.strip().str.upper()
 
             df_final = pd.DataFrame({
                 'Empresa': df['Empresa'],
@@ -259,9 +201,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             if hoja.lower() in ['hoja1', 'resumen']:
                 continue
             
-            empresa_normalizada = normalizar_empresa(hoja)
-            if not empresa_normalizada:
-                continue
+            # Lectura directa del nombre de la pestaña del Excel de balanza
+            nombre_pestana = hoja.strip().upper()
 
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             if df_hoja.empty:
@@ -308,8 +249,8 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
 
                 if match_cuenta:
                     detalles.append({
-                        'Empresa': empresa_normalizada,
-                        'Hoja Balanza': hoja,
+                        'Empresa': nombre_pestana,
+                        'Hoja Balanza': nombre_pestana,
                         'Tipo': tipo_reg,
                         'Cuenta': match_cuenta,
                         'Nombre Cuenta': nom,
@@ -323,15 +264,12 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     if df_det.empty:
         return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
 
-    # Cálculo robusto y flexible por empresa
+    # Cálculo directo agrupado por el nombre exacto de la pestaña
     res_list = []
-    for empresa in LISTA_EMPRESAS_VALIDAS:
+    empresas_unicas = df_det['Empresa'].unique()
+    for empresa in empresas_unicas:
         df_emp = df_det[df_det['Empresa'] == empresa]
-        if df_emp.empty:
-            res_list.append({'Empresa': empresa, 'Contabilidad Ingresos': 0.0, 'Contabilidad Egresos': 0.0})
-            continue
         
-        # Sumas por cuenta de forma independiente
         v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
         v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
         v_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]['Saldo Acreedor Final'].sum()
@@ -392,26 +330,24 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_xml:
             st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            st.markdown("#### 📊 Resumen General de Ingresos y Egresos por Empresa (XML)")
-            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
-            
-            res_ing_x = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
-            res_ing_x.columns = ['Empresa', 'Ingresos XML']
-            
-            res_eg_x = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
-            res_eg_x.columns = ['Empresa', 'Egresos XML']
+            st.markdown("#### 📊 Resumen de Ingresos y Egresos por Emisor (XML)")
+            if not df_ingresos_sat.empty or not df_egresos_sat.empty:
+                res_ing_x = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_ing_x.columns = ['Empresa', 'Ingresos XML']
+                
+                res_eg_x = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_eg_x.columns = ['Empresa', 'Egresos XML']
 
-            df_res_xml = df_base_empresas.copy()
-            df_res_xml = pd.merge(df_res_xml, res_ing_x, on='Empresa', how='left')
-            df_res_xml = pd.merge(df_res_xml, res_eg_x, on='Empresa', how='left').fillna(0.0)
-
-            st.dataframe(
-                df_res_xml.style.format({
-                    'Ingresos XML': '${:,.2f}',                     'Egresos XML': '${:,.2f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
+                df_res_xml = pd.merge(res_ing_x, res_eg_x, on='Empresa', how='outer').fillna(0.0)
+                st.dataframe(
+                    df_res_xml.style.format({
+                        'Ingresos XML': '${:,.2f}',                         'Egresos XML': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Sin datos para resumir.")
 
             st.markdown("---")
             st.markdown("#### 📋 Detalle Completo de XMLs")
@@ -434,26 +370,24 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_master:
             st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            st.markdown("#### 📊 Resumen de Ingresos y Egresos por Empresa (Master)")
-            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
-            
-            res_ing_m = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
-            res_ing_m.columns = ['Empresa', 'Ingresos Master']
-            
-            res_eg_m = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
-            res_eg_m.columns = ['Empresa', 'Egresos Master']
+            st.markdown("#### 📊 Resumen de Ingresos y Egresos por Empresa Origen (Master)")
+            if not df_ingresos_master.empty or not df_egresos_master.empty:
+                res_ing_m = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_ing_m.columns = ['Empresa', 'Ingresos Master']
+                
+                res_eg_m = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+                res_eg_m.columns = ['Empresa', 'Egresos Master']
 
-            df_res_mas = df_base_empresas.copy()
-            df_res_mas = pd.merge(df_res_mas, res_ing_m, on='Empresa', how='left')
-            df_res_mas = pd.merge(df_res_mas, res_eg_m, on='Empresa', how='left').fillna(0.0)
-
-            st.dataframe(
-                df_res_mas.style.format({
-                    'Ingresos Master': '${:,.2f}',                     'Egresos Master': '${:,.2f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
+                df_res_mas = pd.merge(res_ing_m, res_eg_m, on='Empresa', how='outer').fillna(0.0)
+                st.dataframe(
+                    df_res_mas.style.format({
+                        'Ingresos Master': '${:,.2f}',                         'Egresos Master': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Sin datos para resumir.")
 
             st.markdown("---")
             st.markdown("#### 📋 Detalle Completo Master")
@@ -520,20 +454,17 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.markdown(f"### 📊 Contabilidad y Balanzas (Mes: {nombres_meses[mes_final-1]} {anio_sel})")
             st.markdown("Fórmula aplicada:\n* **Ingresos:** `410-00000-000-0000` (+) `411-00000-000-0000` (-) `423-00000-000-0000`\n* **Egresos:** `420-00000-000-0000` (+) `421-00000-000-0000`")
             
-            st.markdown("#### 📊 Resumen Contable por Empresa")
-            df_base_empresas = pd.DataFrame({'Empresa': LISTA_EMPRESAS_VALIDAS})
-            df_res_c = df_base_empresas.copy()
+            st.markdown("#### 📊 Resumen Contable por Pestaña de Balanza")
             if not df_balanzas.empty:
-                df_res_c = pd.merge(df_res_c, df_balanzas, on='Empresa', how='left')
-            df_res_c = df_res_c.fillna(0.0)
-
-            st.dataframe(
-                df_res_c.style.format({
-                    'Contabilidad Ingresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
+                st.dataframe(
+                    df_balanzas.style.format({
+                        'Contabilidad Ingresos': '${:,.2f}',                         'Contabilidad Egresos': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Sin datos contables para resumir.")
 
             st.markdown("---")
             st.markdown("#### 📋 Detalle Completo de Cuentas Contables")
