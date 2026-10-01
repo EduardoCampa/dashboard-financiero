@@ -78,7 +78,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                         tipo_doc = str(row.get(col, '')).strip()
                         break
 
-                # Lectura directa del nombre del emisor
                 razon_emisor = ""
                 for col in df_sat.columns:
                     if 'razon' in col.lower() and 'emisor' in col.lower():
@@ -160,7 +159,6 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             if es_egreso:
                 subtotal_neto = subtotal_neto.abs() * -1
 
-            # Lectura directa de EmpresaOrigen
             empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
             df['Empresa'] = empresa_raw.astype(str).str.strip().str.upper()
 
@@ -201,7 +199,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             if hoja.lower() in ['hoja1', 'resumen']:
                 continue
             
-            # Lectura directa del nombre de la pestaña del Excel de balanza
             nombre_pestana = hoja.strip().upper()
 
             df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
@@ -264,7 +261,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     if df_det.empty:
         return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
 
-    # Cálculo directo agrupado por el nombre exacto de la pestaña
     res_list = []
     empresas_unicas = df_det['Empresa'].unique()
     for empresa in empresas_unicas:
@@ -272,11 +268,17 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         
         v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
         v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
-        v_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]['Saldo Acreedor Final'].sum()
+        
+        # Para la 423 (ingresos -), sumamos tanto si viene en acreedor como en deudor
+        df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
+        v_423_ac = df_423['Saldo Acreedor Final'].sum()
+        v_423_de = df_423['Saldo Deudor Final'].sum()
+        v_423 = v_423_ac if v_423_ac > 0 else v_423_de
         
         v_420 = df_emp[df_emp['Cuenta'].str.startswith('420-00000-000-0000')]['Saldo Deudor Final'].sum()
         v_421 = df_emp[df_emp['Cuenta'].str.startswith('421-00000-000-0000')]['Saldo Deudor Final'].sum()
         
+        # Operación correcta: 410 + 411 - 423
         ingresos_cont = float(v_410) + float(v_411) - float(v_423)
         egresos_cont = -1 * (float(v_420) + float(v_421))
         
