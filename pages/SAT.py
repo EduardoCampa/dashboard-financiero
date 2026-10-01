@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativos y Conciliación (Lectura Directa)")
+st.title("📑 Módulo SAT - Comparativos y Conciliación")
 
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
@@ -269,7 +269,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
         v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
         
-        # Para la 423 (ingresos -), sumamos tanto si viene en acreedor como en deudor
         df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
         v_423_ac = df_423['Saldo Acreedor Final'].sum()
         v_423_de = df_423['Saldo Deudor Final'].sum()
@@ -278,7 +277,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         v_420 = df_emp[df_emp['Cuenta'].str.startswith('420-00000-000-0000')]['Saldo Deudor Final'].sum()
         v_421 = df_emp[df_emp['Cuenta'].str.startswith('421-00000-000-0000')]['Saldo Deudor Final'].sum()
         
-        # Operación correcta: 410 + 411 - 423
         ingresos_cont = float(v_410) + float(v_411) - float(v_423)
         egresos_cont = -1 * (float(v_420) + float(v_421))
         
@@ -291,7 +289,7 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
     return pd.DataFrame(res_list), df_det
 
 
-# --- CONTROLES DE FILTRO POR PERIODO ---
+# --- CONTROLES DE FILTRO POR PERIODOS ---
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 col_a, col_mini, col_mfin = st.columns([1, 1, 1])
@@ -326,8 +324,91 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         ])
 
         with tab_comp:
-            st.markdown(f"### ⚖ Comparativos Generales - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
-            st.info("Pestaña de comparativos limpia.")
+            st.markdown(f"### ⚖ Tablas de Resumen General - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            
+            # Tabla de equivalencias exacta según tu imagen
+            mapeo_tabla = [
+                {"XML": "CIVMEX", "MASTER": "CIVMEX", "CONTABILIDAD": "CIVMEX"},
+                {"XML": "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL", "MASTER": "CIV", "CONTABILIDAD": "CIV"},
+                {"XML": "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL LATINOAMERICANA", "MASTER": "CIVLA", "CONTABILIDAD": "CIVLAT"},
+                {"XML": "ELEMENTOS FABRICADOS Y CONSTRUCCIONES", "MASTER": "EFCO", "CONTABILIDAD": "EFCO"},
+                {"XML": "FGS SISTEMAS INTEGRALES DE MANTENIMIENTO", "MASTER": "FGS", "CONTABILIDAD": "FGS"},
+                {"XML": "GRUPO FERVIC", "MASTER": "FERVIC", "CONTABILIDAD": "FERVIC"},
+                {"XML": "GRUPO FPSB", "MASTER": "GRUPO FPSB", "CONTABILIDAD": "FPSB"},
+                {"XML": "GRUPO PESAZA", "MASTER": "PESAZA", "CONTABILIDAD": "PESAZA"},
+                {"XML": "GRUPO SERVYRE", "MASTER": "GRUPOSERVYRE", "CONTABILIDAD": "GPO SERVYRE"},
+                {"XML": "INMOBILIARIA PSZ", "MASTER": "INMOBILIARIA", "CONTABILIDAD": "INMOBILIARIA"},
+                {"XML": "LABORATORIO MAJONINMAR", "MASTER": "LABORATORIO", "CONTABILIDAD": "LABORATORIO"},
+                {"XML": "LATIN AMERICAN ITS", "MASTER": "LAITS", "CONTABILIDAD": "LATIN"},
+                {"XML": "LIMPIESPIN", "MASTER": "LIMPIESPIN", "CONTABILIDAD": "LIMPIESPIN"},
+                {"XML": "SERVYCARGO", "MASTER": "SERVYCARGO", "CONTABILIDAD": "SERVYCARGO"},
+                {"XML": "SERVYRE", "MASTER": "SERVYRE", "CONTABILIDAD": "SERVYRE"}
+            ]
+            df_map = pd.DataFrame(mapeo_tabla)
+
+            # Agregados XML
+            agg_xml_ing = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+            agg_xml_ing.columns = ['XML', 'XML_Ingresos']
+            agg_xml_eg = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+            agg_xml_eg.columns = ['XML', 'XML_Egresos']
+
+            # Agregados Master
+            agg_mas_ing = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+            agg_mas_ing.columns = ['MASTER', 'Master_Ingresos']
+            agg_mas_eg = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
+            agg_mas_eg.columns = ['MASTER', 'Master_Egresos']
+
+            # Agregados Contabilidad
+            if not df_balanzas.empty:
+                df_bal_ren = df_balanzas.rename(columns={'Empresa': 'CONTABILIDAD', 'Contabilidad Ingresos': 'Cont_Ingresos', 'Contabilidad Egresos': 'Cont_Egresos'})
+            else:
+                df_bal_ren = pd.DataFrame(columns=['CONTABILIDAD', 'Cont_Ingresos', 'Cont_Egresos'])
+
+            # Unir al mapa base
+            df_res = pd.merge(df_map, agg_xml_ing, on='XML', how='left')
+            df_res = pd.merge(df_res, agg_xml_eg, on='XML', how='left')
+            df_res = pd.merge(df_res, agg_mas_ing, on='MASTER', how='left')
+            df_res = pd.merge(df_res, agg_mas_eg, on='MASTER', how='left')
+            df_res = pd.merge(df_res, df_bal_ren, on='CONTABILIDAD', how='left')
+            df_res = df_res.fillna(0.0)
+
+            # --- TABLA 1: INGRESOS ---
+            st.markdown("#### 📈 1. Tabla de Resumen - Ingresos")
+            df_ingresos_final = pd.DataFrame({
+                'Empresa (XML / Master / Contab)': df_res['XML'] + " / " + df_res['MASTER'] + " / " + df_res['CONTABILIDAD'],
+                'XML Ingresos': df_res['XML_Ingresos'],
+                'Master Ingresos': df_res['Master_Ingresos'],
+                'Contabilidad Ingresos': df_res['Cont_Ingresos']
+            })
+            
+            st.dataframe(
+                df_ingresos_final.style.format({
+                    'XML Ingresos': '${:,.2f}',
+                    'Master Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("---")
+
+            # --- TABLA 2: EGRESOS ---
+            st.markdown("#### 📉 2. Tabla de Resumen - Egresos")
+            df_egresos_final = pd.DataFrame({
+                'Empresa (XML / Master / Contab)': df_res['XML'] + " / " + df_res['MASTER'] + " / " + df_res['CONTABILIDAD'],
+                'XML Egresos': df_res['XML_Egresos'],
+                'Master Egresos': df_res['Master_Egresos'],
+                'Contabilidad Egresos': df_res['Cont_Egresos']
+            })
+            
+            st.dataframe(
+                df_egresos_final.style.format({
+                    'XML Egresos': '${:,.2f}',
+                    'Master Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
 
         with tab_xml:
             st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
