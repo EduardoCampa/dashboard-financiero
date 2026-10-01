@@ -252,7 +252,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         else:
             return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
 
-    resultados = []
     detalles = []
     try:
         xls = pd.ExcelFile(ruta_balanza)
@@ -277,12 +276,6 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
             col_deudor_f = num_cols - 2
             col_acreedor_f = num_cols - 1
             
-            val_410 = 0.0
-            val_411 = 0.0
-            val_423 = 0.0
-            val_420 = 0.0
-            val_421 = 0.0
-            
             for _, row in df_hoja.iterrows():
                 cta = str(row.iloc[col_cta]).strip()
                 if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
@@ -298,23 +291,18 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                 tipo_reg = None
                 
                 if cta_limpia.startswith('410-00000-000-0000'):
-                    val_410 += monto_ac
                     match_cuenta = '410-00000-000-0000'
                     tipo_reg = 'INGRESOS (+)'
                 elif cta_limpia.startswith('411-00000-000-0000'):
-                    val_411 += monto_ac
                     match_cuenta = '411-00000-000-0000'
                     tipo_reg = 'INGRESOS (+)'
                 elif cta_limpia.startswith('423-00000-000-0000'):
-                    val_423 += monto_ac
                     match_cuenta = '423-00000-000-0000'
                     tipo_reg = 'INGRESOS (-)'
                 elif cta_limpia.startswith('420-00000-000-0000'):
-                    val_420 += monto_de
                     match_cuenta = '420-00000-000-0000'
                     tipo_reg = 'EGRESOS (+)'
                 elif cta_limpia.startswith('421-00000-000-0000'):
-                    val_421 += monto_de
                     match_cuenta = '421-00000-000-0000'
                     tipo_reg = 'EGRESOS (+)'
 
@@ -328,26 +316,39 @@ def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
                         'Saldo Deudor Final': monto_de,
                         'Saldo Acreedor Final': monto_ac
                     })
-            
-            ingresos_cont = float(val_410) + float(val_411) - float(val_423)
-            egresos_cont = -1 * (float(val_420) + float(val_421))
-            
-            resultados.append({
-                'Empresa': empresa_normalizada,
-                'Contabilidad Ingresos': ingresos_cont,
-                'Contabilidad Egresos': egresos_cont
-            })
     except Exception as e:
         pass
 
-    df_res_bal = pd.DataFrame(resultados)
-    if not df_res_bal.empty:
-        # Aseguramos que los valores sean numéricos y agrupamos correctamente por Empresa
-        df_res_bal['Contabilidad Ingresos'] = pd.to_numeric(df_res_bal['Contabilidad Ingresos'], errors='coerce').fillna(0.0)
-        df_res_bal['Contabilidad Egresos'] = pd.to_numeric(df_res_bal['Contabilidad Egresos'], errors='coerce').fillna(0.0)
-        df_res_bal = df_res_bal.groupby('Empresa', as_index=False)[['Contabilidad Ingresos', 'Contabilidad Egresos']].sum()
+    df_det = pd.DataFrame(detalles)
+    if df_det.empty:
+        return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
 
-    return df_res_bal, pd.DataFrame(detalles)
+    # Cálculo robusto y flexible por empresa
+    res_list = []
+    for empresa in LISTA_EMPRESAS_VALIDAS:
+        df_emp = df_det[df_det['Empresa'] == empresa]
+        if df_emp.empty:
+            res_list.append({'Empresa': empresa, 'Contabilidad Ingresos': 0.0, 'Contabilidad Egresos': 0.0})
+            continue
+        
+        # Sumas por cuenta de forma independiente
+        v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
+        v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
+        v_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]['Saldo Acreedor Final'].sum()
+        
+        v_420 = df_emp[df_emp['Cuenta'].str.startswith('420-00000-000-0000')]['Saldo Deudor Final'].sum()
+        v_421 = df_emp[df_emp['Cuenta'].str.startswith('421-00000-000-0000')]['Saldo Deudor Final'].sum()
+        
+        ingresos_cont = float(v_410) + float(v_411) - float(v_423)
+        egresos_cont = -1 * (float(v_420) + float(v_421))
+        
+        res_list.append({
+            'Empresa': empresa,
+            'Contabilidad Ingresos': ingresos_cont,
+            'Contabilidad Egresos': egresos_cont
+        })
+
+    return pd.DataFrame(res_list), df_det
 
 
 # --- CONTROLES DE FILTRO POR PERIODO ---
