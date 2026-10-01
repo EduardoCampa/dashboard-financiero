@@ -1,5 +1,6 @@
 import glob
 import os
+import io
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📑 Módulo SAT - Comparativos y Conciliación")
+st.title("📑 Módulo SAT - Comparativos, Conciliación y Reporte Ejecutivo")
 
 
 # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
@@ -326,7 +327,6 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
         with tab_comp:
             st.markdown(f"### ⚖ Tablas de Resumen General - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
-            # Tabla de equivalencias exacta según tu imagen
             mapeo_tabla = [
                 {"XML": "CIVMEX", "MASTER": "CIVMEX", "CONTABILIDAD": "CIVMEX"},
                 {"XML": "COMERCIALIZADORA DE INFRAESTRUCTURA VIAL", "MASTER": "CIV", "CONTABILIDAD": "CIV"},
@@ -378,13 +378,16 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 'Empresa (XML / Master / Contab)': df_res['XML'] + " / " + df_res['MASTER'] + " / " + df_res['CONTABILIDAD'],
                 'XML Ingresos': df_res['XML_Ingresos'],
                 'Master Ingresos': df_res['Master_Ingresos'],
-                'Contabilidad Ingresos': df_res['Cont_Ingresos']
+                'Contabilidad Ingresos': df_res['Cont_Ingresos'],
+                'Dif. (XML vs Master)': df_res['XML_Ingresos'] - df_res['Master_Ingresos'],
+                'Dif. (XML vs Contab)': df_res['XML_Ingresos'] - df_res['Cont_Ingresos']
             })
             
             st.dataframe(
                 df_ingresos_final.style.format({
                     'XML Ingresos': '${:,.2f}',
-                    'Master Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}'
+                    'Master Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}',
+                    'Dif. (XML vs Master)': '${:,.2f}',                     'Dif. (XML vs Contab)': '${:,.2f}'
                 }),
                 use_container_width=True,
                 hide_index=True
@@ -398,16 +401,35 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 'Empresa (XML / Master / Contab)': df_res['XML'] + " / " + df_res['MASTER'] + " / " + df_res['CONTABILIDAD'],
                 'XML Egresos': df_res['XML_Egresos'],
                 'Master Egresos': df_res['Master_Egresos'],
-                'Contabilidad Egresos': df_res['Cont_Egresos']
+                'Contabilidad Egresos': df_res['Cont_Egresos'],
+                'Dif. (XML vs Master)': df_res['XML_Egresos'] - df_res['Master_Egresos'],
+                'Dif. (XML vs Contab)': df_res['XML_Egresos'] - df_res['Cont_Egresos']
             })
             
             st.dataframe(
                 df_egresos_final.style.format({
                     'XML Egresos': '${:,.2f}',
-                    'Master Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}'
+                    'Master Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}',
+                    'Dif. (XML vs Master)': '${:,.2f}',                     'Dif. (XML vs Contab)': '${:,.2f}'
                 }),
                 use_container_width=True,
                 hide_index=True
+            )
+
+            st.markdown("---")
+
+            # --- BOTÓN DE EXPORTACIÓN A EXCEL ---
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_ingresos_final.to_excel(writer, sheet_name='Resumen Ingresos', index=False)
+                df_egresos_final.to_excel(writer, sheet_name='Resumen Egresos', index=False)
+            excel_data = output.getvalue()
+
+            st.download_button(
+                label="📥 Descargar Reporte Ejecutivo en Excel",
+                data=excel_data,
+                file_name=f"Reporte_Ejecutivo_SAT_{nombres_meses[mes_final-1]}_{anio_sel}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
         with tab_xml:
