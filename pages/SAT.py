@@ -720,105 +720,107 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EQUIVALENTE A TU FÓRMULA DE EXCEL) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (SUMA DE COLUMNA E / EXCLUYE 0000 / INCLUYE DEPTOS 001 Y 056) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Mapeo de etiqueta por subcuenta de 4to nivel
+        # Mapeo unificado de etiquetas según subcuenta de 4to nivel (excluye 0000)
         mapeo_conceptos = {
-            '0001': '-001-0001 Sueldo',
-            '0002': '-001-0002 Despensa',
-            '0004': '-001-0004 Compensación',
-            '0005': '-001-0005 Premio Asistencia',
-            '0006': '-001-0006 Premio Puntualidad',
-            '0008': '-001-0008 Gratificación Extraordinaria',
-            '0009': '-001-0009 Vacaciones',
-            '0010': '-001-0010 Prima Vacacional',
-            '0011': '-001-0011 Aguinaldo'
+            '0001': '0001 Sueldo',
+            '0002': '0002 Despensa',
+            '0004': '0004 Compensación',
+            '0005': '0005 Premio Asistencia',
+            '0006': '0006 Premio Puntualidad',
+            '0008': '0008 Gratificación Extraordinaria',
+            '0009': '0009 Vacaciones',
+            '0010': '0010 Prima Vacacional',
+            '0011': '0011 Aguinaldo'
         }
 
-        # Leer Balanza del mes final seleccionado
-        mes_str = f"{int(mes_fin):02d}"
-        posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
-                   glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
-                   glob.glob(os.path.join(ruta_base, "*.xlsx"))
-        
-        posibles = list(set(posibles))
-        if not posibles:
-            return pd.DataFrame()
+        # Iterar a través de cada mes del rango de periodos seleccionados para acumular la Columna E (Cargos del Mes)
+        for m in range(int(mes_ini), int(mes_fin) + 1):
+            mes_str = f"{m:02d}"
+            posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
+                       glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
+                       glob.glob(os.path.join(ruta_base, "*.xlsx"))
+            
+            posibles = list(set(posibles))
+            if not posibles:
+                continue
 
-        for ruta_balanza in posibles:
-            try:
-                nombre_archivo = os.path.basename(ruta_balanza).upper()
-                xls = pd.ExcelFile(ruta_balanza)
+            for ruta_balanza in posibles:
+                try:
+                    nombre_archivo = os.path.basename(ruta_balanza).upper()
+                    xls = pd.ExcelFile(ruta_balanza)
 
-                for hoja in xls.sheet_names:
-                    hoja_upper = hoja.strip().upper()
+                    for hoja in xls.sheet_names:
+                        hoja_upper = hoja.strip().upper()
 
-                    # Mapeo de nombre de empresa
-                    if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
-                        nombre_empresa = hoja_upper
-                    elif 'EFCO' in nombre_archivo:
-                        nombre_empresa = 'EFCO'
-                    elif 'CIVLAT' in nombre_archivo:
-                        nombre_empresa = 'CIVLAT'
-                    elif 'FERVIC' in nombre_archivo:
-                        nombre_empresa = 'FERVIC'
-                    elif 'SERVYRE' in nombre_archivo:
-                        nombre_empresa = 'SERVYRE'
-                    else:
-                        nombre_empresa = hoja_upper
+                        # Mapeo de empresa
+                        if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
+                            nombre_empresa = hoja_upper
+                        elif 'EFCO' in nombre_archivo:
+                            nombre_empresa = 'EFCO'
+                        elif 'CIVLAT' in nombre_archivo:
+                            nombre_empresa = 'CIVLAT'
+                        elif 'FERVIC' in nombre_archivo:
+                            nombre_empresa = 'FERVIC'
+                        elif 'SERVYRE' in nombre_archivo:
+                            nombre_empresa = 'SERVYRE'
+                        else:
+                            nombre_empresa = hoja_upper
 
-                    df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-                    if df_hoja.empty or df_hoja.shape[1] < 3:
-                        continue
-
-                    # Localizar la columna de Saldo Deudor Final
-                    idx_deudor_final = df_hoja.shape[1] - 2
-                    for idx_c, col_name in enumerate(df_hoja.columns):
-                        c_str = str(col_name).strip().upper()
-                        if 'DEUDOR F' in c_str or 'SALDO FINAL DEUDOR' in c_str:
-                            idx_deudor_final = idx_c
-                            break
-
-                    for _, row in df_hoja.iterrows():
-                        cta = str(row.iloc[0]).strip()
-                        if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+                        df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+                        if df_hoja.empty or df_hoja.shape[1] < 3:
                             continue
 
-                        cta_limpia = cta.replace(' ', '')
-                        nom_cuenta = str(row.iloc[1]).strip().upper() if df_hoja.shape[1] > 1 else ""
+                        # Localizar la columna E (Cargos / Movimientos del Mes)
+                        idx_cargos_e = 4  # Índice 4 por defecto (Columna E)
+                        for idx_c, col_name in enumerate(df_hoja.columns):
+                            c_str = str(col_name).strip().upper()
+                            if 'CARGO' in c_str or 'DEBITO' in c_str:
+                                idx_cargos_e = idx_c
+                                break
 
-                        # EXPRESIÓN REGULAR QUE TRADUCE TU FÓRMULA DE EXCEL:
-                        # (510|530|550|560|620|630|640|650)-\d{5}-(001|056)-(\d{4})
-                        match = re.match(r'^(510|530|550|560|620|630|640|650)-(\d{5})-(001|056)-(\d{4})$', cta_limpia)
+                        for _, row in df_hoja.iterrows():
+                            cta = str(row.iloc[0]).strip()
+                            if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+                                continue
 
-                        if match:
-                            grupo_base, num_obra, dept, subcta = match.groups()
+                            cta_limpia = cta.replace(' ', '')
+                            nom_cuenta = str(row.iloc[1]).strip().upper() if df_hoja.shape[1] > 1 else ""
 
-                            label_concepto = None
-                            if subcta in mapeo_conceptos:
-                                label_concepto = mapeo_conceptos[subcta]
-                            else:
-                                label_concepto = f"-001-{subcta} {nom_cuenta.title()}".strip()
+                            # EXPRESIÓN REGULAR: GRUPOS 510, 530, 550, 560, 620, 630, 640, 650
+                            # DEPARTAMENTO: 001 o 056
+                            # SUBCUENTA: 4 DÍGITOS EXCLUYENDO EXPLICITAMENTE LA '0000'
+                            match = re.match(r'^(510|530|550|560|620|630|640|650)-(\d{5})-(001|056)-(?!0000)(\d{4})$', cta_limpia)
 
-                            val_deudor = row.iloc[idx_deudor_final] if df_hoja.shape[1] > idx_deudor_final else 0.0
-                            monto = float(pd.to_numeric(str(val_deudor).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                            if match:
+                                grupo_base, num_obra, dept, subcta = match.groups()
 
-                            if monto > 0.0:
-                                registros_contables.append({
-                                    'Concepto / Cuenta': label_concepto,
-                                    'Empresa': nombre_empresa,
-                                    'Monto': monto
-                                })
-            except Exception:
-                continue
+                                # Construir nombre normalizado de la subcuenta sin duplicaciones
+                                if subcta in mapeo_conceptos:
+                                    label_concepto = f"-{dept}-{mapeo_conceptos[subcta]}"
+                                else:
+                                    label_concepto = f"-{dept}-{subcta} {nom_cuenta.title()}".strip()
+
+                                val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
+                                monto = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+
+                                if monto > 0.0:
+                                    registros_contables.append({
+                                        'Concepto / Cuenta': label_concepto,
+                                        'Empresa': nombre_empresa,
+                                        'Monto': monto
+                                    })
+                except Exception:
+                    continue
 
         df_cont = pd.DataFrame(registros_contables)
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Generar matriz consolidada sumando todas las cuentas matheadas por tu fórmula
+        # Consolidar sumando los Cargos (Columna E) de todos los meses seleccionados
         pivot_cont = pd.pivot_table(
             df_cont,
             index='Concepto / Cuenta',
@@ -856,7 +858,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina aplicando tu regla exacta
+            # Cargar Contabilidad Nómina (Suma de Columna E, excluye 0000 e incluye -001- y -056-)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -897,7 +899,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Fórmula de Filtro Exacta) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Cargos Acumulados - Columna E) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     empresas_cols = [col for col in df_nomina_cont.columns if col != 'Concepto / Cuenta']
                     format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
@@ -920,4 +922,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas que coincidan con la estructura solicitada en las balanzas del periodo.")
+                    st.warning("No se encontraron cuentas que coincidan con los criterios en las balanzas del periodo.")
