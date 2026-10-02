@@ -720,9 +720,22 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXTRACCIÓN DE SUBNIVEL X-X-001-XXXX O XXX-XXXX) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO DE TERCER NIVEL -001- Y -056- A CUARTO NIVEL) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
+
+        # Diccionario oficial de mapeo del 4to nivel a su concepto de nómina
+        mapeo_cuarto_nivel = {
+            '0001': 'Sueldo',
+            '0002': 'Despensa',
+            '0004': 'Compensacion',
+            '0005': 'Premio Asistencia',
+            '0006': 'Premio Puntualidad',
+            '0008': 'Gratificacion Extraordinaria',
+            '0009': 'Vacaciones',
+            '0010': 'Prima Vacacional',
+            '0011': 'Aguinaldo'
+        }
 
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
@@ -757,27 +770,34 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                         cta_limpia = cta.replace(' ', '')
                         
-                        # Excluir explícitamente cuentas de activo (101-, 102-, 103-, etc.)
+                        # Excluir cuentas de activo (101-, 102-, 103-, etc.)
                         if cta_limpia.startswith(('101', '102', '103', '104', '105', '110')):
                             continue
 
-                        subnivel_match = None
+                        # Buscar en el tercer nivel que sea '-001-' o '-056-'
+                        if '-001-' in cta_limpia or '-056-' in cta_limpia:
+                            partes_cta = cta_limpia.split('-')
+                            
+                            # Identificar la clave del 4to nivel (ej. 0001, 0002, 0011, etc.)
+                            clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
+                            
+                            # Mapear el nombre según la tabla del catálogo o tomar el nombre de la cuenta
+                            nom_cuenta = str(row.iloc[col_nom]).strip() if df_hoja.shape[1] > col_nom else ""
+                            
+                            if clave_4to in mapeo_cuarto_nivel:
+                                concepto_label = f"001-{clave_4to}/{mapeo_cuarto_nivel[clave_4to]}"
+                            elif nom_cuenta and nom_cuenta.lower() != 'nan':
+                                concepto_label = nom_cuenta.upper()
+                            else:
+                                concepto_label = cta_limpia
 
-                        # 1. Extraer subnivel con formato exacto tipo 001-0001, 001-0009, 029-0000, etc.
-                        match_4to = re.search(r'(\d{3}-\d{4})$', cta_limpia)
-                        if match_4to and ('-001-' in cta_limpia or cta_limpia.endswith(('-0001', '-0002', '-0004', '-0006', '-0009', '-0010', '-0011', '-0000'))):
-                            subnivel_match = match_4to.group(1)
-                            if '-001-' in cta_limpia and not subnivel_match.startswith('001-'):
-                                subnivel_match = f"001-{subnivel_match.split('-')[-1]}"
-
-                        if subnivel_match:
                             cargos = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
 
                             if cargos != 0.0:
                                 registros_contables.append({
                                     'Empresa': nombre_empresa,
                                     'Mes_Pago': f"{anio_filtro}-{mes_str}",
-                                    'Concepto_Subnivel': subnivel_match,
+                                    'Concepto_Subnivel': concepto_label,
                                     'Monto': cargos
                                 })
             except Exception:
@@ -787,7 +807,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote consolidada por Empresa, Mes_Pago y Subnivel Contable (ej. 001-0001)
+        # Matriz pivote consolidada por Empresa, Mes_Pago y Concepto
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -825,7 +845,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Consolidado por Subnivel Contable)
+            # Cargar Contabilidad Nómina (-001- y -056- mapeado a concepto)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -864,9 +884,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CONSOLIDADO POR SUBNIVEL CONTABLE)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (-001- Y -056-)
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios por Subnivel ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001- y -056-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
                     format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
@@ -889,4 +909,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas con subniveles de nómina en las balanzas del periodo seleccionado.")
+                    st.warning("No se encontraron cuentas con subniveles -001- o -056- en las balanzas del periodo seleccionado.")
