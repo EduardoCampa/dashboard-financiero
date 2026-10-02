@@ -720,11 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (FILTRO EXCLUSIVO 500-699 CON -001- EN 3ER NIVEL) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (ROBUSTO CON DETECCIÓN DE EFCO Y MULTI-PESTAÑAS) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Recorrer todos los meses del rango seleccionado
+        # Recorrer todos los meses del rango
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
             
@@ -732,34 +732,53 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                        glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
                        glob.glob(os.path.join(ruta_base, "*.xlsx"))
             
+            posibles = list(set(posibles))
             if not posibles:
                 continue
 
-            for ruta_balanza in list(set(posibles)):
+            for ruta_balanza in posibles:
                 try:
+                    nombre_archivo = os.path.basename(ruta_balanza).upper()
+                    
                     xls = pd.ExcelFile(ruta_balanza)
                     for hoja in xls.sheet_names:
-                        if hoja.lower() in ['hoja1', 'resumen']:
-                            continue
+                        hoja_upper = hoja.strip().upper()
+                        
+                        # Determinar nombre de la empresa prioritario
+                        if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
+                            nombre_empresa = hoja_upper
+                        elif 'EFCO' in nombre_archivo:
+                            nombre_empresa = 'EFCO'
+                        elif 'CIVLAT' in nombre_archivo:
+                            nombre_empresa = 'CIVLAT'
+                        elif 'FERVIC' in nombre_archivo:
+                            nombre_empresa = 'FERVIC'
+                        elif 'SERVYRE' in nombre_archivo:
+                            nombre_empresa = 'SERVYRE'
+                        else:
+                            nombre_empresa = hoja_upper
 
-                        nombre_empresa = hoja.strip().upper()
                         df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-                        if df_hoja.empty or df_hoja.shape[1] < 5:
+                        if df_hoja.empty or df_hoja.shape[1] < 3:
                             continue
 
-                        col_cta = 0
-                        col_nom = 1
-                        col_cargos_e = 4  # Columna E de Cargos del Mes
+                        # Detección dinámica de columna de Cargos (Movimientos)
+                        idx_cargos = 4  # Columna E por defecto
+                        for idx_c, col_name in enumerate(df_hoja.columns):
+                            c_str = str(col_name).strip().upper()
+                            if 'CARGO' in c_str or 'DEBITO' in c_str:
+                                idx_cargos = idx_c
+                                break
 
                         for _, row in df_hoja.iterrows():
-                            cta = str(row.iloc[col_cta]).strip()
+                            cta = str(row.iloc[0]).strip()
                             if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                                 continue
 
                             cta_limpia = cta.replace(' ', '')
-                            nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
+                            nom_cuenta = str(row.iloc[1]).strip().upper() if df_hoja.shape[1] > 1 else ""
 
-                            # EXCLUIR FILAS ACUMULADORAS TOTALES
+                            # Excluir cuentas totales o acumuladoras principales
                             if '-99999-' in cta_limpia or '-00000-' in cta_limpia or \
                                cta_limpia.endswith('-99999') or cta_limpia.endswith('-00000') or \
                                'TOTAL' in nom_cuenta or 'SUMA' in nom_cuenta:
@@ -767,14 +786,14 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                             partes_cta = cta_limpia.split('-')
 
-                            # REGLA 1: CUENTAS DEL RANGO 500 A 699
+                            # Regla 1: Rango de Costos y Gastos (500 a 699)
                             if not partes_cta[0].isdigit():
                                 continue
                             num_base = int(partes_cta[0])
                             if num_base < 500 or num_base > 699:
                                 continue
 
-                            # REGLA 2: DEBE TENER AL MENOS 3 SEGMENTOS Y EL TERCERO DEBE SER EXACTAMENTE '001'
+                            # Regla 2: Tercer nivel exactamente -001-
                             if len(partes_cta) < 3:
                                 continue
 
@@ -782,11 +801,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             if dept_3er_nivel != '001':
                                 continue
 
-                            # FORMATO DE SALIDA: "-001-XXXX Nombre Cuenta"
                             subcta_4to = partes_cta[3].strip() if len(partes_cta) >= 4 else ""
                             label_concepto = f"-001-{subcta_4to} {nom_cuenta.title()}".strip()
 
-                            cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
+                            cargos_val = row.iloc[idx_cargos] if df_hoja.shape[1] > idx_cargos else 0.0
+                            cargos_mes = float(pd.to_numeric(str(cargos_val).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
                             if cargos_mes > 0.0:
                                 registros_contables.append({
@@ -801,7 +820,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote: Filas = Cuentas, Columnas = Empresas
+        # Generar matriz pivote: Cuentas en filas, Empresas en columnas
         pivot_cont = pd.pivot_table(
             df_cont,
             index='Concepto / Cuenta',
@@ -839,7 +858,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Filtrado estricto Rango 500-699 y 3er Nivel -001-)
+            # Cargar Contabilidad Nómina
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -878,7 +897,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (MATRIZ POR CONCEPTO DE CUENTA)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
                 st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Rango 500-699 con -001-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
