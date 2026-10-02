@@ -720,9 +720,22 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (RESUMEN POR SUBCUENTA + DETALLE COMPLETO) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (RESUMEN FIJO CON DEPTOS 001, 056 Y 029 ASIMILADOS) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
+
+        # Diccionario maestro con los nombres exactos para la tabla resumen
+        mapeo_conceptos_fijos = {
+            '0001': '-001-0001 Sueldo',
+            '0002': '-001-0002 Despensa',
+            '0004': '-001-0004 Compensación',
+            '0005': '-001-0005 Premio Asistencia',
+            '0006': '-001-0006 Premio Puntualidad',
+            '0008': '-001-0008 Gratificación Extraordinaria',
+            '0009': '-001-0009 Vacaciones',
+            '0010': '-001-0010 Prima Vacacional',
+            '0011': '-001-0011 Aguinaldo'
+        }
 
         # Recorrer mes a mes dentro del rango para acumular la Columna E (Cargos del Mes)
         for m in range(int(mes_ini), int(mes_fin) + 1):
@@ -783,14 +796,22 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             if match:
                                 grupo, obra, dept, subcta = match.groups()
 
-                                # REGLA DE FILTRADO:
-                                # 1. Deptos -001- y -056-: Excluir subcuenta '0000'
-                                # 2. Depto -029-: Únicamente subcuenta '0000'
                                 es_valida = False
+                                label_resumen = ""
+
+                                # REGLA DE AGRUPACIÓN EN EL RESUMEN:
+                                # 1. Deptos -001- y -056-: Cuentas distintas de 0000
                                 if dept in ['001', '056'] and subcta != '0000':
                                     es_valida = True
+                                    if subcta in mapeo_conceptos_fijos:
+                                        label_resumen = mapeo_conceptos_fijos[subcta]
+                                    else:
+                                        label_resumen = f"-{dept}-{subcta} {nom_cuenta}".strip()
+
+                                # 2. Depto -029-: Únicamente subcuenta '0000' (Asimilados)
                                 elif dept == '029' and subcta == '0000':
                                     es_valida = True
+                                    label_resumen = "-029-0000 Asimilados"
 
                                 if es_valida:
                                     val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
@@ -799,7 +820,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                     if monto_cargo > 0.0:
                                         registros_contables.append({
                                             'Cuenta Completa': f"{cta_limpia} {nom_cuenta}".strip(),
-                                            'Subcuenta Resumen': f"-{dept}-{subcta} {nom_cuenta}".strip(),
+                                            'Subcuenta Resumen': label_resumen,
                                             'Empresa': nombre_empresa,
                                             'Monto': monto_cargo
                                         })
@@ -810,7 +831,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame(), pd.DataFrame()
 
-        # 1. TABLA RESUMEN POR EMPRESA Y ÚLTIMOS 4 DÍGITOS (SUBCUENTA)
+        # 1. TABLA RESUMEN CON CONCEPTOS FIJOS Y ASIMILADOS
         pivot_resumen = pd.pivot_table(
             df_cont,
             index='Subcuenta Resumen',
@@ -820,7 +841,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             fill_value=0.0
         ).reset_index().rename(columns={'Subcuenta Resumen': 'Concepto / Subcuenta'})
 
-        # 2. TABLA CON DETALLE COMPLETO DE CUENTAS POR OBRA
+        # 2. TABLA DETALLADA INFERIOR CON TODAS LAS CUENTAS POR OBRA
         pivot_detalle = pd.pivot_table(
             df_cont,
             index='Cuenta Completa',
@@ -901,7 +922,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             with subtab_nom_cont:
                 if not df_nomina_resumen.empty:
                     # 1. TABLA RESUMEN SUPERIOR
-                    st.markdown(f"#### 📊 1. Resumen Contable de Nómina por Empresa y Subcuenta ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    st.markdown(f"#### 📊 1. Resumen Contable de Nómina por Empresa y Concepto ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                     empresas_cols_res = [col for col in df_nomina_resumen.columns if col != 'Concepto / Subcuenta']
                     format_dict_res = {col: '${:,.2f}' for col in empresas_cols_res}
 
