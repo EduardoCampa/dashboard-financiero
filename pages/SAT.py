@@ -720,7 +720,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (CUENTA COMPLETA, DEPTOS 001, 029, 056, SIN 0000) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (LÓGICA EXACTA DE DEPARTAMENTOS) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
@@ -777,26 +777,33 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             cta_limpia = cta.replace(' ', '')
                             nom_cuenta = str(row.iloc[1]).strip().title() if df_hoja.shape[1] > 1 else ""
 
-                            # PATRÓN DE VALIDACIÓN DE CUENTA:
-                            # 1. Grupo principal: 500 a 699 (\d{3})
-                            # 2. Obra / Subnivel 2
-                            # 3. Departamento Nivel 3: 001, 029 o 056
-                            # 4. Nivel 4 (Subcuenta): Excluye explícitamente el 0000 (?!0000)
-                            match = re.match(r'^(5\d\d|6\d\d)-(\d+)-(001|029|056)-(?!0000)(\d{4})$', cta_limpia)
+                            # MATCH GENERAL DE ESTRUCTURA: GRUPO (500-699) - OBRA - DEPT (001, 029, 056) - SUBCUENTA
+                            match = re.match(r'^(5\d\d|6\d\d)-(\d+)-(001|029|056)-(\d{4})$', cta_limpia)
 
                             if match:
-                                # Conservar el código completo de la cuenta tal como en la balanza
-                                label_cuenta = f"{cta_limpia} {nom_cuenta}".strip()
+                                grupo, obra, dept, subcta = match.groups()
 
-                                val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
-                                monto_cargo = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                                # REGLA DE FILTRADO POR NIVELES:
+                                # 1. Para deptos -001- y -056-: EXCLUIR subcuenta '0000'
+                                # 2. Para depto -029-: INCLUIR ÚNICAMENTE subcuenta '0000'
+                                es_valida = False
+                                if dept in ['001', '056'] and subcta != '0000':
+                                    es_valida = True
+                                elif dept == '029' and subcta == '0000':
+                                    es_valida = True
 
-                                if monto_cargo > 0.0:
-                                    registros_contables.append({
-                                        'Cuenta Contable': label_cuenta,
-                                        'Empresa': nombre_empresa,
-                                        'Monto': monto_cargo
-                                    })
+                                if es_valida:
+                                    label_cuenta = f"{cta_limpia} {nom_cuenta}".strip()
+
+                                    val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
+                                    monto_cargo = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+
+                                    if monto_cargo > 0.0:
+                                        registros_contables.append({
+                                            'Cuenta Contable': label_cuenta,
+                                            'Empresa': nombre_empresa,
+                                            'Monto': monto_cargo
+                                        })
                 except Exception:
                     continue
 
@@ -804,7 +811,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Crear la tabla pivote con Cuentas completas en filas y Empresas en columnas
+        # Crear tabla pivote con Cuentas completas en filas y Empresas en columnas
         pivot_cont = pd.pivot_table(
             df_cont,
             index='Cuenta Contable',
@@ -842,7 +849,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina mostrando cuentas completas
+            # Cargar Contabilidad Nómina aplicando las reglas por departamento
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -883,7 +890,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Cuentas (Grupo 500 a 699, Deptos -001-, -029- y -056-, sin -0000) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Cuentas (Grupo 500-699: Deptos -001-/-056- sin -0000-, y Depto -029- solo -0000-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     empresas_cols = [col for col in df_nomina_cont.columns if col != 'Cuenta Contable']
                     format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
@@ -906,4 +913,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas del grupo 500 al 699 con nivel 3 (-001- / -029- / -056-) en las balanzas del periodo seleccionado.")
+                    st.warning("No se encontraron cuentas que coincidan con las reglas definidas en las balanzas del periodo seleccionado.")
