@@ -22,6 +22,38 @@ def formato_mx(val):
     except (ValueError, TypeError):
         return str(val)
 
+# --- MAPEO Y NORMALIZACIÓN DE EMPRESA ORIGEN ---
+MAPA_EMPRESAS = {
+    '2510': 'CIVLAT',
+    '7342': 'SERVYRE',
+    2510: 'CIVLAT',
+    7342: 'SERVYRE'
+}
+
+def normalizar_empresa(df):
+    if df is None or df.empty:
+        return df
+    
+    # 1. Si existe EmpresaOrigen pero viene en blanco o id
+    if 'EmpresaOrigen' not in df.columns:
+        if 'OwnedBusinessEntityID' in df.columns:
+            df['EmpresaOrigen'] = df['OwnedBusinessEntityID'].map(MAPA_EMPRESAS).fillna(df['OwnedBusinessEntityID'].astype(str))
+        else:
+            df['EmpresaOrigen'] = 'SIN EMPRESA'
+    else:
+        # Si la columna existe, mapeamos los IDs o rellenamos valores numéricos
+        df['EmpresaOrigen_Temp'] = df['EmpresaOrigen'].map(MAPA_EMPRESAS)
+        df['EmpresaOrigen'] = df['EmpresaOrigen_Temp'].fillna(df['EmpresaOrigen']).astype(str)
+        if 'EmpresaOrigen_Temp' in df.columns:
+            df.drop(columns=['EmpresaOrigen_Temp'], inplace=True)
+            
+    if 'OwnedBusinessEntityID' in df.columns:
+        # Rellenar nulos de EmpresaOrigen usando OwnedBusinessEntityID
+        emp_mapped = df['OwnedBusinessEntityID'].map(MAPA_EMPRESAS)
+        df['EmpresaOrigen'] = df['EmpresaOrigen'].replace(['nan', 'None', ''], pd.NA).fillna(emp_mapped).fillna('SIN EMPRESA')
+
+    return df
+
 # --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS (DELETED == 1) ---
 def filtrar_no_eliminados(df):
     if df is None or df.empty:
@@ -145,31 +177,24 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     output.seek(0)
     return output
 
-# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS (ESTILOS NARANJA CORPORATIVO) ---
+# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
     ws.title = "Reporte de Pagos"
     ws.views.sheetView[0].showGridLines = True
 
-    # Paleta de colores en tonos Naranjas/Terracota corporativos
     font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
     fill_titulo = PatternFill(start_color="C65911", end_color="C65911", fill_type="solid")
-    
     font_empresa = Font(name="Calibri", size=12, bold=True, color="833C0C")
     fill_empresa = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-    
     font_prov = Font(name="Calibri", size=11, bold=True, color="333333")
     fill_prov = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    
     font_moneda = Font(name="Calibri", size=10, bold=True, color="833C0C")
     fill_moneda = PatternFill(start_color="FDE9D9", end_color="FDE9D9", fill_type="solid")
-    
     font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     fill_header = PatternFill(start_color="D66011", end_color="D66011", fill_type="solid")
-    
     font_normal = Font(name="Calibri", size=10, color="000000")
-    
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
     fill_total = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
 
@@ -294,6 +319,7 @@ def cargar_datos_finanzas(path):
 
         df_fac = pd.read_excel(path, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
         df_fac = filtrar_no_eliminados(df_fac)
+        df_fac = normalizar_empresa(df_fac)
         if df_fac is not None and not df_fac.empty:
             if 'ModuleName' in df_fac.columns:
                 df_fac['TIPO DOC'] = df_fac['ModuleName'].astype(str).apply(
@@ -304,6 +330,7 @@ def cargar_datos_finanzas(path):
 
         df_nc = pd.read_excel(path, sheet_name='NotaCreditoCliente') if 'NotaCreditoCliente' in sheets else pd.DataFrame()
         df_nc = filtrar_no_eliminados(df_nc)
+        df_nc = normalizar_empresa(df_nc)
         if df_nc is not None and not df_nc.empty:
             df_nc['TIPO DOC'] = 'NC'
 
@@ -311,21 +338,26 @@ def cargar_datos_finanzas(path):
 
         df_edo = pd.read_excel(path, sheet_name='EdoCuenta') if 'EdoCuenta' in sheets else pd.DataFrame()
         df_edo = filtrar_no_eliminados(df_edo)
+        df_edo = normalizar_empresa(df_edo)
         if df_edo is not None and not df_edo.empty and 'Amount' in df_edo.columns:
             df_edo['Amount'] = pd.to_numeric(df_edo['Amount'], errors='coerce').fillna(0)
             df_edo = df_edo[df_edo['Amount'] != 0].copy()
 
         df_tes = pd.read_excel(path, sheet_name='SolicitudPago') if 'SolicitudPago' in sheets else pd.DataFrame()
         df_tes = filtrar_no_eliminados(df_tes)
+        df_tes = normalizar_empresa(df_tes)
 
         df_ord = pd.read_excel(path, sheet_name='OrdenCompra') if 'OrdenCompra' in sheets else pd.DataFrame()
         df_ord = filtrar_no_eliminados(df_ord)
+        df_ord = normalizar_empresa(df_ord)
 
         df_fc = pd.read_excel(path, sheet_name='FacturaCompra') if 'FacturaCompra' in sheets else None
         df_fc = filtrar_no_eliminados(df_fc)
+        df_fc = normalizar_empresa(df_fc)
 
         df_gas = pd.read_excel(path, sheet_name='Gastos') if 'Gastos' in sheets else None
         df_gas = filtrar_no_eliminados(df_gas)
+        df_gas = normalizar_empresa(df_gas)
 
         return df_facturacion, df_edo, df_tes, df_ord, df_fc, df_gas
     except Exception as e:
@@ -421,7 +453,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
                 sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
 
-            # Generar 1 renglón por cada factura/documento vinculado
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
@@ -442,7 +473,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
-    # 2. ÓRDENES DE COMPRA (OC) - DESGLOSE POR RENGLÓN
+    # 2. ÓRDENES DE COMPRA (OC)
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
@@ -474,7 +505,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
                 sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
 
-            # Generar 1 renglón por cada factura vinculada
             num_sub = len(sub_items)
             for item in sub_items:
                 r_copy = row.to_dict()
@@ -519,7 +549,6 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
 
     df_calc = df_entrada.copy()
 
-    # Fila de Totales
     row_total = {}
     for col in cols_orden:
         if col in cols_num:
@@ -532,7 +561,6 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     df_tot_row = pd.DataFrame([row_total])
     df_con_totales = pd.concat([df_calc, df_tot_row], ignore_index=True)
 
-    # Formato visual
     df_view = df_con_totales.copy()
     for col_m in cols_num:
         if col_m in df_view.columns:
@@ -737,7 +765,6 @@ elif submodulo == "📦 Órdenes de Compra y SP":
 
             st.markdown("---")
 
-            # DIVIDIR EN CUADROS POR CURRENCY (MONEDA)
             monedas_oc = sorted(df_oc_f['Currency'].dropna().unique()) if 'Currency' in df_oc_f.columns else ['Peso mexicano']
             if not monedas_oc:
                 monedas_oc = ['Peso mexicano']
@@ -792,7 +819,6 @@ elif submodulo == "📦 Órdenes de Compra y SP":
 
             st.markdown("---")
 
-            # DIVIDIR EN CUADROS POR CURRENCY (MONEDA)
             monedas_sp = sorted(df_sp_f['Currency'].dropna().unique()) if 'Currency' in df_sp_f.columns else ['Peso mexicano']
             if not monedas_sp:
                 monedas_sp = ['Peso mexicano']
@@ -828,6 +854,25 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
         if col_prov_name and col_folio_name:
             st.markdown("#### ⚙️ Filtros de Selección Independientes")
+            
+            # Checkbox para filtrar los no encontrados en FCoG
+            no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key="rep_no_fcog_chk")
+
+            if no_fcog_chk:
+                if 'En_FCoG' in df_rep_total.columns:
+                    df_rep_total = df_rep_total[df_rep_total['En_FCoG'] == False]
+                col_monto_eval = 'Total'
+                label_monto = "Total"
+                st.info("Mostrando consolidado de Solicitud de Pago y Orden de Compra NO encontradas en FCoG (Mostrando Total en lugar de Saldo Pendiente).")
+            else:
+                if 'Saldo_Pendiente' in df_rep_total.columns:
+                    df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
+                col_monto_eval = 'Saldo_Pendiente'
+                label_monto = "Saldo Pendiente"
+
+            # Columna limpia para búsqueda de Folios (remueve SP, OC y ceros)
+            df_rep_total['DocFolio_Clean'] = df_rep_total[col_folio_name].astype(str).str.replace(r'^(SP|OC|sp|oc)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
+
             c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
             with c_rf1:
                 lista_empresas = sorted(df_rep_total[col_emp_name].dropna().unique()) if col_emp_name else []
@@ -846,25 +891,15 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 if prov_seleccionados:
                     df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
             with c_rf4:
+                # Opciones de folios mostradas en su formato original
                 lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
                 folios_seleccionados = st.multiselect("Filtrar por Folio(s):", lista_folios, default=[], key="rep_folio_f")
                 if folios_seleccionados:
-                    df_rep_total = df_rep_total[df_rep_total[col_folio_name].isin(folios_seleccionados)]
-
-            # Checkbox para filtrar los no encontrados en FCoG
-            no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key="rep_no_fcog_chk")
-
-            if no_fcog_chk:
-                if 'En_FCoG' in df_rep_total.columns:
-                    df_rep_total = df_rep_total[df_rep_total['En_FCoG'] == False]
-                col_monto_eval = 'Total'
-                label_monto = "Total"
-                st.info("Mostrando consolidado de Solicitud de Pago y Orden de Compra NO encontradas en FCoG (Mostrando Total en lugar de Saldo Pendiente).")
-            else:
-                if 'Saldo_Pendiente' in df_rep_total.columns:
-                    df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
-                col_monto_eval = 'Saldo_Pendiente'
-                label_monto = "Saldo Pendiente"
+                    folios_clean_sel = [str(f).replace('SP', '').replace('OC', '').replace('sp', '').replace('oc', '').strip() for f in folios_seleccionados]
+                    df_rep_total = df_rep_total[
+                        (df_rep_total[col_folio_name].isin(folios_seleccionados)) | 
+                        (df_rep_total['DocFolio_Clean'].isin(folios_clean_sel))
+                    ]
 
             st.markdown("---")
 
@@ -898,7 +933,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 empresas_agrupadas = df_rep_total[col_emp_name].dropna().unique() if col_emp_name else ['General']
                 empresa_para_excel = empresas_agrupadas[0] if len(empresas_agrupadas) == 1 else "Consolidado"
 
-                # Preparamos copia para descarga de Excel manteniendo la columna correspondiente
                 df_excel = df_rep_total.copy()
                 if no_fcog_chk:
                     df_excel['Saldo_Pendiente'] = df_excel['Total']
