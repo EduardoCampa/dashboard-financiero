@@ -616,7 +616,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # --- 1. PROCESAMIENTO SAT NÓMINAS (A PARTIR DE 001/001) ---
+    # --- 1. PROCESAMIENTO SAT NÓMINAS ---
     def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(carpeta_nomina):
             return pd.DataFrame()
@@ -720,7 +720,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXTRACCIÓN DE SALDO ACUMULADO DEL MES FINAL) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (SUMA DE MOVIMIENTO MES A MES SOLO AFECTABLES) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
@@ -736,59 +736,62 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             '0011': '001-0011/Aguinaldo'
         }
 
-        # Leer directamente la balanza del MES FINAL del filtro (ej. Agosto) para extraer el acumulado total
-        mes_str = f"{int(mes_fin):02d}"
-        ruta_balanza = os.path.join(ruta_base, str(anio_filtro), mes_str, "Balanza.xlsx")
-        
-        if not os.path.exists(ruta_balanza):
-            posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
-            if posibles:
-                ruta_balanza = posibles[0]
-            else:
-                return pd.DataFrame()
+        # Iterar exactamente en cada mes del rango solicitado para acumular sus Cargos (Columna E)
+        for m in range(int(mes_ini), int(mes_fin) + 1):
+            mes_str = f"{m:02d}"
+            
+            # Buscar el archivo de Balanza del mes correspondiente
+            posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
+                       glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+            
+            if not posibles:
+                continue
 
-        try:
-            xls = pd.ExcelFile(ruta_balanza)
-            for hoja in xls.sheet_names:
-                if hoja.lower() in ['hoja1', 'resumen']:
-                    continue
+            ruta_balanza = posibles[0]
 
-                nombre_empresa = hoja.strip().upper()
-                df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-                if df_hoja.empty or df_hoja.shape[1] < 4:
-                    continue
-
-                num_cols = df_hoja.shape[1]
-                col_cta = 0
-                col_nom = 1
-                col_deudor_f = num_cols - 2  # Columna Deudor Final (Saldo acumulado del año)
-
-                for _, row in df_hoja.iterrows():
-                    cta = str(row.iloc[col_cta]).strip()
-                    if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+            try:
+                xls = pd.ExcelFile(ruta_balanza)
+                for hoja in xls.sheet_names:
+                    if hoja.lower() in ['hoja1', 'resumen']:
                         continue
 
-                    cta_limpia = cta.replace(' ', '')
-                    partes_cta = cta_limpia.split('-')
-
-                    # 1. EXCLUIR CUENTAS ACUMULADORAS TOTALES (99999 O 00000 EN EL 2DO SEGMENTO)
-                    if len(partes_cta) >= 2 and partes_cta[1] in ['99999', '00000']:
-                        continue
-                    
-                    # 2. FILTRAR GRUPO DE CUENTAS DE COSTOS Y GASTOS (500 a 699)
-                    if not partes_cta[0].isdigit():
-                        continue
-                    num_base = int(partes_cta[0])
-                    if num_base < 500 or num_base > 699:
+                    nombre_empresa = hoja.strip().upper()
+                    df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+                    if df_hoja.empty or df_hoja.shape[1] < 5:
                         continue
 
-                    # 3. VERIFICAR QUE CONTENGA LOS SUFIJOS DE DEPARTAMENTO DE NÓMINA (-001- O -056-)
-                    if '-001-' in cta_limpia or '-056-' in cta_limpia:
-                        clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
+                    col_cta = 0
+                    col_nom = 1
+                    col_cargos_e = 4  # Columna E: Cargos del Mes
+
+                    for _, row in df_hoja.iterrows():
+                        cta = str(row.iloc[col_cta]).strip()
+                        if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+                            continue
+
+                        cta_limpia = cta.replace(' ', '')
                         nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
+                        # --- FILTRO 1: DESCARTAR RIGUROSAMENTE FILAS ACUMULADORAS O DE TOTAL ---
+                        if any(x in cta_limpia for x in ['-99999-', '-00000-']) or \
+                           cta_limpia.endswith('-99999') or cta_limpia.endswith('-00000') or \
+                           'TOTAL' in nom_cuenta or 'SUMA' in nom_cuenta:
+                            continue
+
+                        partes_cta = cta_limpia.split('-')
+
+                        # --- FILTRO 2: RANGO DE COSTOS Y GASTOS (500 A 699) ---
+                        if not partes_cta[0].isdigit():
+                            continue
+                        num_base = int(partes_cta[0])
+                        if num_base < 500 or num_base > 699:
+                            continue
+
+                        clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
+
                         concepto_label = None
-                        
+
+                        # --- FILTRO 3: IDENTIFICAR POR CLAVE OFICIAL O NOMBRE DEL CONCEPTO ---
                         if clave_4to in mapeo_cuarto_nivel:
                             concepto_label = mapeo_cuarto_nivel[clave_4to]
                         elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
@@ -801,7 +804,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             concepto_label = '001-0005/Premio Asistencia'
                         elif 'PUNTUALIDAD' in nom_cuenta:
                             concepto_label = '001-0006/Premio Puntualidad'
-                        elif 'VACACION' in nom_cuenta:
+                        elif 'VACACION' in nom_cuenta and 'PRIMA' not in nom_cuenta:
                             concepto_label = '001-0009/Vacaciones'
                         elif 'PRIMA VACAC' in nom_cuenta:
                             concepto_label = '001-0010/Prima Vacacional'
@@ -809,24 +812,23 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             concepto_label = '001-0011/Aguinaldo'
 
                         if concepto_label:
-                            # SE TOMA EL SALDO DEUDOR FINAL DEL PERIODO (COLUMNA G / DEUDOR F)
-                            saldo_acumulado = float(pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0)
+                            cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
 
-                            if saldo_acumulado != 0.0:
+                            if cargos_mes > 0.0:
                                 registros_contables.append({
                                     'Empresa': nombre_empresa,
-                                    'Mes_Pago': f"{anio_filtro}-{mes_str}",
+                                    'Mes_Pago': f"{anio_filtro}-{mes_fin:02d}", # Etiqueta periodo
                                     'Concepto_Subnivel': concepto_label,
-                                    'Monto': saldo_acumulado
+                                    'Monto': cargos_mes
                                 })
-        except Exception:
-            pass
+            except Exception:
+                continue
 
         df_cont = pd.DataFrame(registros_contables)
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote unificada acumulando las subcuentas afectables por empresa
+        # Consolidar sumando los movimientos mensuales recopilados de todo el rango seleccionado
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -864,7 +866,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Extrayendo el Saldo Deudor Final Acumulado)
+            # Cargar Contabilidad Nómina (Acumulado exacto de movimientos mensuales)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
