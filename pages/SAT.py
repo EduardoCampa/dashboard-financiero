@@ -1,6 +1,7 @@
 import glob
 import os
 import io
+import re
 import pandas as pd
 import streamlit as st
 
@@ -719,11 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO POR Dpto 001 + CLAVE 4TO NIVEL + SALDO DEUDOR FINAL) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EQUIVALENTE A TU FÓRMULA DE EXCEL) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Catálogo estandarizado de conceptos según 4to nivel
+        # Mapeo de etiqueta por subcuenta de 4to nivel
         mapeo_conceptos = {
             '0001': '-001-0001 Sueldo',
             '0002': '-001-0002 Despensa',
@@ -736,7 +737,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             '0011': '-001-0011 Aguinaldo'
         }
 
-        # Leer la Balanza de corte del mes final
+        # Leer Balanza del mes final seleccionado
         mes_str = f"{int(mes_fin):02d}"
         posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
                    glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
@@ -754,7 +755,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 for hoja in xls.sheet_names:
                     hoja_upper = hoja.strip().upper()
 
-                    # Asignación correcta de empresa
+                    # Mapeo de nombre de empresa
                     if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
                         nombre_empresa = hoja_upper
                     elif 'EFCO' in nombre_archivo:
@@ -772,8 +773,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     if df_hoja.empty or df_hoja.shape[1] < 3:
                         continue
 
-                    # Identificar la columna de Saldo Deudor Final (Columna G / Deudor F)
-                    idx_deudor_final = df_hoja.shape[1] - 2  # Penúltima columna por defecto
+                    # Localizar la columna de Saldo Deudor Final
+                    idx_deudor_final = df_hoja.shape[1] - 2
                     for idx_c, col_name in enumerate(df_hoja.columns):
                         c_str = str(col_name).strip().upper()
                         if 'DEUDOR F' in c_str or 'SALDO FINAL DEUDOR' in c_str:
@@ -788,48 +789,19 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         cta_limpia = cta.replace(' ', '')
                         nom_cuenta = str(row.iloc[1]).strip().upper() if df_hoja.shape[1] > 1 else ""
 
-                        # EXCLUIR ACUMULADORAS PRINCIPALES Y CUENTAS TOTALIZADORAS (evita duplicar)
-                        if '99999' in cta_limpia or '00000' in cta_limpia or \
-                           'TOTAL' in nom_cuenta or 'SUMA' in nom_cuenta:
-                            continue
+                        # EXPRESIÓN REGULAR QUE TRADUCE TU FÓRMULA DE EXCEL:
+                        # (510|530|550|560|620|630|640|650)-\d{5}-(001|056)-(\d{4})
+                        match = re.match(r'^(510|530|550|560|620|630|640|650)-(\d{5})-(001|056)-(\d{4})$', cta_limpia)
 
-                        partes_cta = cta_limpia.split('-')
+                        if match:
+                            grupo_base, num_obra, dept, subcta = match.groups()
 
-                        # Regla 1: Cuentas de Costos y Gastos (500 a 699)
-                        if not partes_cta[0].isdigit():
-                            continue
-                        num_base = int(partes_cta[0])
-                        if num_base < 500 or num_base > 699:
-                            continue
+                            label_concepto = None
+                            if subcta in mapeo_conceptos:
+                                label_concepto = mapeo_conceptos[subcta]
+                            else:
+                                label_concepto = f"-001-{subcta} {nom_cuenta.title()}".strip()
 
-                        # Regla 2: Tercer nivel departamento exactamente -001-
-                        if len(partes_cta) < 3 or partes_cta[2].strip() != '001':
-                            continue
-
-                        # Regla 3: Identificar por clave de 4to nivel (0001 a 0011) o por texto
-                        clave_4to = partes_cta[3].strip() if len(partes_cta) >= 4 else ""
-
-                        label_concepto = None
-                        if clave_4to in mapeo_conceptos:
-                            label_concepto = mapeo_conceptos[clave_4to]
-                        elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
-                            label_concepto = '-001-0001 Sueldo'
-                        elif 'DESPENSA' in nom_cuenta:
-                            label_concepto = '-001-0002 Despensa'
-                        elif 'COMPENSAC' in nom_cuenta:
-                            label_concepto = '-001-0004 Compensación'
-                        elif 'ASISTENCIA' in nom_cuenta:
-                            label_concepto = '-001-0005 Premio Asistencia'
-                        elif 'PUNTUALIDAD' in nom_cuenta:
-                            label_concepto = '-001-0006 Premio Puntualidad'
-                        elif 'VACACION' in nom_cuenta and 'PRIMA' not in nom_cuenta:
-                            label_concepto = '-001-0009 Vacaciones'
-                        elif 'PRIMA VACAC' in nom_cuenta:
-                            label_concepto = '-001-0010 Prima Vacacional'
-                        elif 'AGUINALDO' in nom_cuenta:
-                            label_concepto = '-001-0011 Aguinaldo'
-
-                        if label_concepto:
                             val_deudor = row.iloc[idx_deudor_final] if df_hoja.shape[1] > idx_deudor_final else 0.0
                             monto = float(pd.to_numeric(str(val_deudor).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
@@ -846,7 +818,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Consolidar sumando los saldos de todas las obras/departamentos en una sola celda
+        # Generar matriz consolidada sumando todas las cuentas matheadas por tu fórmula
         pivot_cont = pd.pivot_table(
             df_cont,
             index='Concepto / Cuenta',
@@ -884,7 +856,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina acumulada de subcuentas afectables
+            # Cargar Contabilidad Nómina aplicando tu regla exacta
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -925,7 +897,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (-001-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Fórmula de Filtro Exacta) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     empresas_cols = [col for col in df_nomina_cont.columns if col != 'Concepto / Cuenta']
                     format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
@@ -948,4 +920,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas del grupo 500 a 699 con subnivel -001- en las balanzas del periodo seleccionado.")
+                    st.warning("No se encontraron cuentas que coincidan con la estructura solicitada en las balanzas del periodo.")
