@@ -720,7 +720,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (LÓGICA EXACTA DE DEPARTAMENTOS) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (RESUMEN POR SUBCUENTA + DETALLE COMPLETO) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
@@ -777,15 +777,15 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             cta_limpia = cta.replace(' ', '')
                             nom_cuenta = str(row.iloc[1]).strip().title() if df_hoja.shape[1] > 1 else ""
 
-                            # MATCH GENERAL DE ESTRUCTURA: GRUPO (500-699) - OBRA - DEPT (001, 029, 056) - SUBCUENTA
+                            # MATCH ESTRUCTURA: GRUPO - OBRA - DEPT (001, 029, 056) - SUBCUENTA
                             match = re.match(r'^(5\d\d|6\d\d)-(\d+)-(001|029|056)-(\d{4})$', cta_limpia)
 
                             if match:
                                 grupo, obra, dept, subcta = match.groups()
 
-                                # REGLA DE FILTRADO POR NIVELES:
-                                # 1. Para deptos -001- y -056-: EXCLUIR subcuenta '0000'
-                                # 2. Para depto -029-: INCLUIR ÚNICAMENTE subcuenta '0000'
+                                # REGLA DE FILTRADO:
+                                # 1. Deptos -001- y -056-: Excluir subcuenta '0000'
+                                # 2. Depto -029-: Únicamente subcuenta '0000'
                                 es_valida = False
                                 if dept in ['001', '056'] and subcta != '0000':
                                     es_valida = True
@@ -793,14 +793,13 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                     es_valida = True
 
                                 if es_valida:
-                                    label_cuenta = f"{cta_limpia} {nom_cuenta}".strip()
-
                                     val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
                                     monto_cargo = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
                                     if monto_cargo > 0.0:
                                         registros_contables.append({
-                                            'Cuenta Contable': label_cuenta,
+                                            'Cuenta Completa': f"{cta_limpia} {nom_cuenta}".strip(),
+                                            'Subcuenta Resumen': f"-{dept}-{subcta} {nom_cuenta}".strip(),
                                             'Empresa': nombre_empresa,
                                             'Monto': monto_cargo
                                         })
@@ -809,19 +808,29 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
         df_cont = pd.DataFrame(registros_contables)
         if df_cont.empty:
-            return pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame()
 
-        # Crear tabla pivote con Cuentas completas en filas y Empresas en columnas
-        pivot_cont = pd.pivot_table(
+        # 1. TABLA RESUMEN POR EMPRESA Y ÚLTIMOS 4 DÍGITOS (SUBCUENTA)
+        pivot_resumen = pd.pivot_table(
             df_cont,
-            index='Cuenta Contable',
+            index='Subcuenta Resumen',
             columns='Empresa',
             values='Monto',
             aggfunc='sum',
             fill_value=0.0
-        ).reset_index()
+        ).reset_index().rename(columns={'Subcuenta Resumen': 'Concepto / Subcuenta'})
 
-        return pivot_cont
+        # 2. TABLA CON DETALLE COMPLETO DE CUENTAS POR OBRA
+        pivot_detalle = pd.pivot_table(
+            df_cont,
+            index='Cuenta Completa',
+            columns='Empresa',
+            values='Monto',
+            aggfunc='sum',
+            fill_value=0.0
+        ).reset_index().rename(columns={'Cuenta Completa': 'Cuenta Contable'})
+
+        return pivot_resumen, pivot_detalle
 
 
     # --- CONTROLES DE FILTRO ---
@@ -849,8 +858,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina aplicando las reglas por departamento
-            df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
+            # Cargar Contabilidad Nómina (Regresa Resumen y Detalle)
+            df_nomina_resumen, df_nomina_detalle = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
                 mes_ini=mes_inicial_nom,
@@ -890,20 +899,36 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Cuentas (Grupo 500-699: Deptos -001-/-056- sin -0000-, y Depto -029- solo -0000-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
-                if not df_nomina_cont.empty:
-                    empresas_cols = [col for col in df_nomina_cont.columns if col != 'Cuenta Contable']
-                    format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
+                if not df_nomina_resumen.empty:
+                    # 1. TABLA RESUMEN SUPERIOR
+                    st.markdown(f"#### 📊 1. Resumen Contable de Nómina por Empresa y Subcuenta ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_res = [col for col in df_nomina_resumen.columns if col != 'Concepto / Subcuenta']
+                    format_dict_res = {col: '${:,.2f}' for col in empresas_cols_res}
 
                     st.dataframe(
-                        df_nomina_cont.style.format(format_dict_c),
+                        df_nomina_resumen.style.format(format_dict_res),
                         use_container_width=True,
                         hide_index=True
                     )
 
+                    st.markdown("---")
+
+                    # 2. TABLA DETALLADA INFERIOR POR CUENTA COMPLETA
+                    st.markdown(f"#### 📋 2. Detalle Completo de Cuentas por Obra ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_det = [col for col in df_nomina_detalle.columns if col != 'Cuenta Contable']
+                    format_dict_det = {col: '${:,.2f}' for col in empresas_cols_det}
+
+                    st.dataframe(
+                        df_nomina_detalle.style.format(format_dict_det),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # EXPORTACIÓN A EXCEL DE AMBAS TABLAS
                     output_cont_nom = io.BytesIO()
                     with pd.ExcelWriter(output_cont_nom, engine='openpyxl') as writer:
-                        df_nomina_cont.to_excel(writer, sheet_name='Contabilidad Nómina', index=False)
+                        df_nomina_resumen.to_excel(writer, sheet_name='Resumen Nómina', index=False)
+                        df_nomina_detalle.to_excel(writer, sheet_name='Detalle Cuentas', index=False)
                     excel_data_cont_nom = output_cont_nom.getvalue()
 
                     st.download_button(
