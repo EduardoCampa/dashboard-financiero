@@ -21,7 +21,7 @@ nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
 
 
 # ==========================================
-# 1. SUBMÓDULO: AMARRE INGRESOS
+# 1. SUBMÓDULO: AMARRE INGRESOS (INTACTO)
 # ==========================================
 if submodulo_sat == "📊 Amarre Ingresos":
 
@@ -613,6 +613,88 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
+    # --- FUNCION PARA PROCESAR XML / EXCEL DE NOMINA Y GENERAR MATRIZ DE CONCEPTOS ---
+    def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
+        if not os.path.exists(carpeta_nomina):
+            return pd.DataFrame()
+
+        archivos = (
+            glob.glob(os.path.join(carpeta_nomina, "**", "*.xlsx"), recursive=True) + 
+            glob.glob(os.path.join(carpeta_nomina, "*.xlsx"))
+        )
+        archivos = list(set(archivos))
+        registros = []
+
+        for arch in archivos:
+            try:
+                xls = pd.ExcelFile(arch)
+                for sheet in xls.sheet_names:
+                    df = pd.read_excel(xls, sheet_name=sheet)
+                    if df.empty:
+                        continue
+                    df.columns = [str(c).strip() for c in df.columns]
+
+                    col_rfc = next((c for c in df.columns if 'rfc' in c.lower() and 'emisor' in c.lower()), None)
+                    if not col_rfc:
+                        col_rfc = next((c for c in df.columns if 'rfc' in c.lower() or 'emisor' in c.lower()), None)
+
+                    col_fecha = next((c for c in df.columns if 'fecha' in c.lower() and ('pago' in c.lower() or 'emision' in c.lower())), None)
+                    if not col_fecha:
+                        col_fecha = next((c for c in df.columns if 'fecha' in c.lower()), None)
+
+                    col_concepto = next((c for c in df.columns if any(k in c.lower() for k in ['concepto', 'clave', 'percepcion', 'deduccion', 'otro pago'])), None)
+                    col_monto = next((c for c in df.columns if any(m in c.lower() for m in ['monto', 'importe', 'total', 'subtotal'])), None)
+
+                    if not (col_rfc and col_fecha and col_monto):
+                        continue
+
+                    for _, row in df.iterrows():
+                        rfc_val = str(row.get(col_rfc, '')).strip().upper()
+                        if not rfc_val or rfc_val == 'NAN':
+                            continue
+
+                        val_f = row.get(col_fecha, '')
+                        dt_f = pd.to_datetime(val_f, errors='coerce')
+                        if pd.isnull(dt_f):
+                            continue
+
+                        if anio_filtro and dt_f.year != int(anio_filtro):
+                            continue
+                        if mes_ini and mes_fin and (dt_f.month < int(mes_ini) or dt_f.month > int(mes_fin)):
+                            continue
+
+                        mes_str = dt_f.strftime('%Y-%m')
+                        cpto_val = str(row.get(col_concepto, 'CONCEPTO GENERAL')).strip() if col_concepto else 'CONCEPTO GENERAL'
+
+                        raw_m = str(row.get(col_monto, 0)).replace('$', '').replace(',', '').strip()
+                        monto_val = float(raw_m) if raw_m and raw_m.lower() != 'nan' else 0.0
+
+                        registros.append({
+                            'Empresa / RFC': rfc_val,
+                            'Mes_Pago': mes_str,
+                            'Concepto': cpto_val,
+                            'Monto': monto_val
+                        })
+            except Exception:
+                continue
+
+        df_nom = pd.DataFrame(registros)
+        if df_nom.empty:
+            return pd.DataFrame()
+
+        # Generar pivote dinámico exacto como en el reporte de la imagen
+        pivot_nom = pd.pivot_table(
+            df_nom,
+            index=['Empresa / RFC', 'Mes_Pago'],
+            columns='Concepto',
+            values='Monto',
+            aggfunc='sum',
+            fill_value=0.0
+        ).reset_index()
+
+        return pivot_nom
+
+
     # Controles de Filtros para Nómina
     col_a_nom, col_mini_nom, col_mfin_nom = st.columns([1, 1, 1])
 
@@ -627,13 +709,47 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     carpeta_nomina_input = st.text_input("Carpeta Raíz de Nómina (XMLs):", value="Nomina", key="nom_dir")
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
 
-    # Subpestañas del Submódulo de Nómina
-    subtab_nom_sat, subtab_nom_cont = st.tabs(["📑 SAT", "📊 Contabilidad"])
+    if st.button("🚀 Ejecutar Amarre Nóminas"):
+        with st.spinner("Procesando archivos de la carpeta Nómina y consolidando conceptos..."):
+            df_nomina_sat = cargar_y_procesar_nomina_sat(
+                carpeta_nomina=carpeta_nomina_input,
+                anio_filtro=anio_sel_nom,
+                mes_ini=mes_inicial_nom,
+                mes_fin=mes_final_nom
+            )
 
-    with subtab_nom_sat:
-        st.markdown("#### 📋 Consolidado de Nómina SAT por RFC, Mes y Conceptos")
-        st.info("Espacio preparado para la tabla consolidada por RFC y conceptos de Nómina.")
+            st.success("✅ Procesamiento de Amarre de Nóminas completado.")
 
-    with subtab_nom_cont:
-        st.markdown("#### 📊 Contabilidad de Nómina")
-        st.info("Espacio preparado para el detalle contable de Nómina.")
+            # Subpestañas del Submódulo de Nómina
+            subtab_nom_sat, subtab_nom_cont = st.tabs(["📑 SAT", "📊 Contabilidad"])
+
+            with subtab_nom_sat:
+                st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                if not df_nomina_sat.empty:
+                    num_cols = [col for col in df_nomina_sat.columns if col not in ['Empresa / RFC', 'Mes_Pago']]
+                    format_dict = {col: '${:,.2f}' for col in num_cols}
+                    
+                    st.dataframe(
+                        df_nomina_sat.style.format(format_dict),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # Exportar Consolidado de Nómina a Excel
+                    output_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_nom, engine='openpyxl') as writer:
+                        df_nomina_sat.to_excel(writer, sheet_name='Consolidado Nómina SAT', index=False)
+                    excel_data_nom = output_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Nómina SAT en Excel",
+                        data=excel_data_nom,
+                        file_name=f"Consolidado_Nomina_SAT_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron registros de nómina en la carpeta especificada para el periodo seleccionado.")
+
+            with subtab_nom_cont:
+                st.markdown("#### 📊 Contabilidad de Nómina")
+                st.info("Espacio preparado para la integración con las balanzas/cuentas contables de Nómina.")
