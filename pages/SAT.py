@@ -720,21 +720,21 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXCLUYENDO CUENTAS AGROPADORAS -99999-) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO AUTOMÁTICO DE NOMBRES Y CLAVES) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Catálogo maestro oficial de 4to nivel unificado
+        # Catálogo maestro oficial
         mapeo_cuarto_nivel = {
-            '0001': 'Sueldo',
-            '0002': 'Despensa',
-            '0004': 'Compensacion',
-            '0005': 'Premio Asistencia',
-            '0006': 'Premio Puntualidad',
-            '0008': 'Gratificacion Extraordinaria',
-            '0009': 'Vacaciones',
-            '0010': 'Prima Vacacional',
-            '0011': 'Aguinaldo'
+            '0001': '001-0001/Sueldo',
+            '0002': '001-0002/Despensa',
+            '0004': '001-0004/Compensacion',
+            '0005': '001-0005/Premio Asistencia',
+            '0006': '001-0006/Premio Puntualidad',
+            '0008': '001-0008/Gratificacion Extraordinaria',
+            '0009': '001-0009/Vacaciones',
+            '0010': '001-0010/Prima Vacacional',
+            '0011': '001-0011/Aguinaldo'
         }
 
         for m in range(int(mes_ini), int(mes_fin) + 1):
@@ -761,7 +761,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     col_cta = 0
                     col_nom = 1
-                    col_cargos_e = 4  # Columna E (Cargos del Mes)
+                    col_cargos_e = 4  # Columna Cargos de la Balanza
 
                     for _, row in df_hoja.iterrows():
                         cta = str(row.iloc[col_cta]).strip()
@@ -769,12 +769,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             continue
 
                         cta_limpia = cta.replace(' ', '')
-
-                        # --- OMITIR FILAS DE CUENTAS AGROPADORAS DE TOTAL (-99999-) ---
-                        if '-99999-' in cta_limpia:
-                            continue
                         
-                        # FILTRO 1: Cuentas del rango 500 a 699 (Gastos / Costos)
+                        # FILTRO: Solo cuentas de egresos/gastos/costos (500 a 699)
                         primer_segmento = cta_limpia.split('-')[0]
                         if not primer_segmento.isdigit():
                             continue
@@ -783,32 +779,44 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         if num_cuenta_base < 500 or num_cuenta_base > 699:
                             continue
 
-                        # FILTRO 2: Cuentas de 3er nivel con -001- o -056-
+                        # Detectar subcuentas de nómina
                         if '-001-' in cta_limpia or '-056-' in cta_limpia:
                             partes_cta = cta_limpia.split('-')
                             clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
                             nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
-                            # LECTURA DE CARGOS DEL MES: Columna E
-                            cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
+                            # Determinar el concepto por clave o descripción
+                            concepto_label = None
+                            
+                            if clave_4to in mapeo_cuarto_nivel:
+                                concepto_label = mapeo_cuarto_nivel[clave_4to]
+                            elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
+                                concepto_label = '001-0001/Sueldo'
+                            elif 'DESPENSA' in nom_cuenta:
+                                concepto_label = '001-0002/Despensa'
+                            elif 'COMPENSAC' in nom_cuenta:
+                                concepto_label = '001-0004/Compensacion'
+                            elif 'ASISTENCIA' in nom_cuenta:
+                                concepto_label = '001-0005/Premio Asistencia'
+                            elif 'PUNTUALIDAD' in nom_cuenta:
+                                concepto_label = '001-0006/Premio Puntualidad'
+                            elif 'VACACION' in nom_cuenta:
+                                concepto_label = '001-0009/Vacaciones'
+                            elif 'PRIMA VACAC' in nom_cuenta:
+                                concepto_label = '001-0010/Prima Vacacional'
+                            elif 'AGUINALDO' in nom_cuenta:
+                                concepto_label = '001-0011/Aguinaldo'
 
-                            if cargos_mes != 0.0:
-                                # UNIFICACIÓN ESTRICTA A SUELDO GENERAL
-                                if clave_4to == '0001' or 'SUELDO' in nom_cuenta or 'SUELDOS' in nom_cuenta:
-                                    concepto_label = "001-0001/Sueldo"
-                                elif clave_4to in mapeo_cuarto_nivel:
-                                    concepto_label = f"001-{clave_4to}/{mapeo_cuarto_nivel[clave_4to]}"
-                                elif nom_cuenta and nom_cuenta != 'NAN':
-                                    concepto_label = nom_cuenta
-                                else:
-                                    concepto_label = cta_limpia
+                            if concepto_label:
+                                cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
 
-                                registros_contables.append({
-                                    'Empresa': nombre_empresa,
-                                    'Mes_Pago': f"{anio_filtro}-{mes_str}",
-                                    'Concepto_Subnivel': concepto_label,
-                                    'Monto': cargos_mes
-                                })
+                                if cargos_mes != 0.0:
+                                    registros_contables.append({
+                                        'Empresa': nombre_empresa,
+                                        'Mes_Pago': f"{anio_filtro}-{mes_str}",
+                                        'Concepto_Subnivel': concepto_label,
+                                        'Monto': cargos_mes
+                                    })
             except Exception:
                 continue
 
@@ -854,7 +862,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Filtro omitiendo 99999 y leyendo Cargos Columna E)
+            # Cargar Contabilidad Nómina
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -893,9 +901,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (DETALLE UNIFICADO SIN DOBLE CONTABILIZACIÓN)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001- y -056- Unificados a Sueldo) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
                     format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
@@ -918,4 +926,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas del grupo 500 a 699 con subniveles -001- o -056- en las balanzas del periodo seleccionado.")
+                    st.warning("No se encontraron cuentas del grupo 500 a 699 con subniveles de nómina en las balanzas del periodo seleccionado.")
