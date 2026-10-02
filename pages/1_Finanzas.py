@@ -22,35 +22,40 @@ def formato_mx(val):
     except (ValueError, TypeError):
         return str(val)
 
-# --- MAPEO Y NORMALIZACIÓN DE EMPRESA ORIGEN ---
+# --- MAPEO Y NORMALIZACIÓN GLOBAL DE EMPRESA ORIGEN ---
 MAPA_EMPRESAS = {
     '2510': 'CIVLAT',
+    '2512': 'CIVLAT',
     '7342': 'SERVYRE',
-    2510: 'CIVLAT',
-    7342: 'SERVYRE'
+    '2510.0': 'CIVLAT',
+    '2512.0': 'CIVLAT',
+    '7342.0': 'SERVYRE'
 }
 
 def normalizar_empresa(df):
     if df is None or df.empty:
         return df
-    
-    # 1. Si existe EmpresaOrigen pero viene en blanco o id
-    if 'EmpresaOrigen' not in df.columns:
-        if 'OwnedBusinessEntityID' in df.columns:
-            df['EmpresaOrigen'] = df['OwnedBusinessEntityID'].map(MAPA_EMPRESAS).fillna(df['OwnedBusinessEntityID'].astype(str))
-        else:
-            df['EmpresaOrigen'] = 'SIN EMPRESA'
-    else:
-        # Si la columna existe, mapeamos los IDs o rellenamos valores numéricos
-        df['EmpresaOrigen_Temp'] = df['EmpresaOrigen'].map(MAPA_EMPRESAS)
-        df['EmpresaOrigen'] = df['EmpresaOrigen_Temp'].fillna(df['EmpresaOrigen']).astype(str)
-        if 'EmpresaOrigen_Temp' in df.columns:
-            df.drop(columns=['EmpresaOrigen_Temp'], inplace=True)
-            
+
+    # Normalizar OwnedBusinessEntityID a string de entero limpio (ej. "2512")
     if 'OwnedBusinessEntityID' in df.columns:
-        # Rellenar nulos de EmpresaOrigen usando OwnedBusinessEntityID
-        emp_mapped = df['OwnedBusinessEntityID'].map(MAPA_EMPRESAS)
-        df['EmpresaOrigen'] = df['EmpresaOrigen'].replace(['nan', 'None', ''], pd.NA).fillna(emp_mapped).fillna('SIN EMPRESA')
+        id_clean = pd.to_numeric(df['OwnedBusinessEntityID'], errors='coerce').fillna(0).astype(int).astype(str)
+        emp_mapped = id_clean.map(MAPA_EMPRESAS)
+    else:
+        emp_mapped = pd.Series(index=df.index, dtype=str)
+
+    if 'EmpresaOrigen' not in df.columns:
+        df['EmpresaOrigen'] = emp_mapped.fillna('OTRA EMPRESA')
+    else:
+        # Si ya existe EmpresaOrigen, rellenamos valores numéricos o vacíos con el mapeo de ID
+        df['EmpresaOrigen_Str'] = df['EmpresaOrigen'].astype(str).str.strip()
+        # Intentar mapear por si viene en formato ID numérico en la columna EmpresaOrigen
+        emp_desde_col = df['EmpresaOrigen_Str'].map(MAPA_EMPRESAS)
+        
+        df['EmpresaOrigen'] = emp_desde_col.fillna(emp_mapped).fillna(df['EmpresaOrigen_Str'])
+        df['EmpresaOrigen'] = df['EmpresaOrigen'].replace(['nan', 'None', '', '0', '0.0', 'nan.0'], 'OTRA EMPRESA')
+        
+        if 'EmpresaOrigen_Str' in df.columns:
+            df.drop(columns=['EmpresaOrigen_Str'], inplace=True)
 
     return df
 
@@ -854,8 +859,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
         if col_prov_name and col_folio_name:
             st.markdown("#### ⚙️ Filtros de Selección Independientes")
-            
-            # Checkbox para filtrar los no encontrados en FCoG
+
             no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key="rep_no_fcog_chk")
 
             if no_fcog_chk:
@@ -870,8 +874,9 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 col_monto_eval = 'Saldo_Pendiente'
                 label_monto = "Saldo Pendiente"
 
-            # Columna limpia para búsqueda de Folios (remueve SP, OC y ceros)
-            df_rep_total['DocFolio_Clean'] = df_rep_total[col_folio_name].astype(str).str.replace(r'^(SP|OC|sp|oc)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
+            # Columna limpia estandarizada para búsqueda de folios
+            df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
+            df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
 
             c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
             with c_rf1:
@@ -891,14 +896,15 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 if prov_seleccionados:
                     df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
             with c_rf4:
-                # Opciones de folios mostradas en su formato original
                 lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
                 folios_seleccionados = st.multiselect("Filtrar por Folio(s):", lista_folios, default=[], key="rep_folio_f")
                 if folios_seleccionados:
-                    folios_clean_sel = [str(f).replace('SP', '').replace('OC', '').replace('sp', '').replace('oc', '').strip() for f in folios_seleccionados]
+                    folios_upper = [str(f).strip().upper() for f in folios_seleccionados]
+                    folios_clean = [f.replace('SP', '').replace('OC', '').strip() for f in folios_upper]
+                    
                     df_rep_total = df_rep_total[
-                        (df_rep_total[col_folio_name].isin(folios_seleccionados)) | 
-                        (df_rep_total['DocFolio_Clean'].isin(folios_clean_sel))
+                        (df_rep_total['DocFolio_Upper'].isin(folios_upper)) | 
+                        (df_rep_total['DocFolio_Clean'].isin(folios_clean))
                     ]
 
             st.markdown("---")
