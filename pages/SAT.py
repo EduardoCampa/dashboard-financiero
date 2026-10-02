@@ -332,7 +332,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "⚖️ 1.- Comparativos", 
+                "秤️ 1.- Comparativos", 
                 "📑 2.- Ingresos y Egresos de los XML", 
                 "📁 3.- Ingresos y Egresos Master",
                 "🔍 4.- Conciliacion por UUID",
@@ -720,11 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO AUTOMÁTICO DE NOMBRES Y CLAVES) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (REGLA AFECTABLE EXCLUSIVA SIN ACUMULADORAS) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Catálogo maestro oficial
+        # Catálogo maestro oficial de 4to nivel unificado
         mapeo_cuarto_nivel = {
             '0001': '001-0001/Sueldo',
             '0002': '001-0002/Despensa',
@@ -761,7 +761,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     col_cta = 0
                     col_nom = 1
-                    col_cargos_e = 4  # Columna Cargos de la Balanza
+                    col_cargos_e = 4  # Columna E de Cargos del Mes
 
                     for _, row in df_hoja.iterrows():
                         cta = str(row.iloc[col_cta]).strip()
@@ -769,27 +769,35 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             continue
 
                         cta_limpia = cta.replace(' ', '')
-                        
-                        # FILTRO: Solo cuentas de egresos/gastos/costos (500 a 699)
-                        primer_segmento = cta_limpia.split('-')[0]
-                        if not primer_segmento.isdigit():
+                        partes_cta = cta_limpia.split('-')
+
+                        # REGLA 1: EXCLUIR CUENTAS ACUMULADORAS Y TOTALES (99999 O 00000 EN 2DO NIVEL)
+                        if len(partes_cta) >= 2 and partes_cta[1] in ['99999', '00000']:
                             continue
                         
-                        num_cuenta_base = int(primer_segmento)
-                        if num_cuenta_base < 500 or num_cuenta_base > 699:
+                        # REGLA 2: RANGO DE COSTOS Y GASTOS (500 a 699)
+                        if not partes_cta[0].isdigit():
+                            continue
+                        num_base = int(partes_cta[0])
+                        if num_base < 500 or num_base > 699:
                             continue
 
-                        # Detectar subcuentas de nómina
-                        if '-001-' in cta_limpia or '-056-' in cta_limpia:
-                            partes_cta = cta_limpia.split('-')
-                            clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
+                        # REGLA 3: DEBE TENER AL MENOS 4 NIVELES PARA SER AFECTABLE (XXX-XXXXX-XXX-XXXX)
+                        if len(partes_cta) < 4:
+                            continue
+
+                        nivel_3 = partes_cta[2].strip()  # Ej: 001 o 056
+                        nivel_4 = partes_cta[3].strip()  # Ej: 0001, 0002, 0011
+
+                        # Filtrar solo departamentos de nóminas (-001- o -056-)
+                        if nivel_3 in ['001', '056']:
                             nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
-                            # Determinar el concepto por clave o descripción
                             concepto_label = None
                             
-                            if clave_4to in mapeo_cuarto_nivel:
-                                concepto_label = mapeo_cuarto_nivel[clave_4to]
+                            # Mapear por clave de 4to nivel o por texto de cuenta
+                            if nivel_4 in mapeo_cuarto_nivel:
+                                concepto_label = mapeo_cuarto_nivel[nivel_4]
                             elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
                                 concepto_label = '001-0001/Sueldo'
                             elif 'DESPENSA' in nom_cuenta:
