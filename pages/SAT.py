@@ -616,7 +616,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # MAPEO EXACTO DE EQUIVALENCIAS SEGÚN TU TABLA DE IMAGEN
+    # MAPEO EXACTO DE EQUIVALENCIAS
     MAPEO_EQUIVALENCIAS = [
         {"Concepto SAT": "001/001/Sueldo", "Cuenta Contable": "-001-0001 Sueldo"},
         {"Concepto SAT": "001/019/Vacaciones a tiempo", "Cuenta Contable": "-001-0009 Vacaciones"},
@@ -630,6 +630,14 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         {"Concepto SAT": "046/002/Asimilados a Salarios", "Cuenta Contable": "-029-0000 Asimilados"},
         {"Concepto SAT": "049/034/Premio Asistencia", "Cuenta Contable": "-001-0005 Premio Asistencia"}
     ]
+
+    # MAPEO DE RFCS A EMPRESAS DE CONTABILIDAD
+    MAPEO_RFC_EMPRESA = {
+        'CIV141222JD5': 'CIVLAT',
+        'EFC840210UI4': 'EFCO',
+        'GFE811209FZ2': 'FERVIC',
+        'SER970728JN8': 'SERVYRE'
+    }
 
     # --- 1. PROCESAMIENTO SAT NÓMINAS ---
     def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
@@ -661,9 +669,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         col_rfc = next((c for c in df.columns if 'rfc' in c.lower()), None)
 
                     if col_rfc:
-                        df['Empresa_RFC_Clean'] = df[col_rfc].astype(str).str.strip().str.upper()
+                        rfc_val = df[col_rfc].astype(str).str.strip().str.upper()
+                        df['Empresa_RFC_Clean'] = rfc_val.map(lambda r: MAPEO_RFC_EMPRESA.get(r, r))
                     elif rfc_archivo:
-                        df['Empresa_RFC_Clean'] = rfc_archivo
+                        df['Empresa_RFC_Clean'] = MAPEO_RFC_EMPRESA.get(rfc_archivo, rfc_archivo)
                     else:
                         df['Empresa_RFC_Clean'] = "EMPRESA NÓMINA"
 
@@ -894,96 +903,99 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             st.success("✅ Procesamiento de Amarre de Nóminas completado.")
 
-            # NUEVAS PESTAÑAS
             subtab_nom_comp, subtab_nom_sat, subtab_nom_cont = st.tabs([
                 "⚖️ Resumen Comparativo", 
                 "📑 SAT", 
                 "📊 Contabilidad"
             ])
 
-            # PESTAÑA 1: RESUMEN COMPARATIVO POR EMPRESA
+            # PESTAÑA 1: RESUMEN COMPARATIVO CON PESTAÑAS POR EMPRESA
             with subtab_nom_comp:
                 st.markdown(f"### ⚖️ Amarre Comparativo SAT vs Contabilidad ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 
-                # Obtener listado de empresas detectadas
+                # Obtener la lista unificada de empresas
                 empresas_sat = df_nomina_sat['Empresa / RFC'].unique() if not df_nomina_sat.empty else []
                 empresas_cont = [c for c in df_nomina_resumen.columns if c != 'Concepto / Subcuenta'] if not df_nomina_resumen.empty else []
                 
                 todas_empresas = sorted(list(set(empresas_sat).union(set(empresas_cont))))
 
                 if todas_empresas:
-                    empresa_seleccionada = st.selectbox("Seleccione Empresa para Comparar:", todas_empresas)
+                    # Crear dinámicamente pestañas por cada empresa
+                    tabs_empresas = st.tabs([f"🏢 {emp}" for emp in todas_empresas])
 
-                    # Filtrar SAT para la empresa
-                    if not df_nomina_sat.empty and empresa_seleccionada in df_nomina_sat['Empresa / RFC'].values:
-                        df_sat_emp = df_nomina_sat[df_nomina_sat['Empresa / RFC'] == empresa_seleccionada]
-                        # Sumar montos por columna de concepto SAT
-                        cols_conceptos_sat = [c for c in df_sat_emp.columns if c not in ['Empresa / RFC', 'Mes_Pago']]
-                        sumas_sat = df_sat_emp[cols_conceptos_sat].sum()
-                    else:
-                        sumas_sat = pd.Series(dtype=float)
+                    for idx, emp_nombre in enumerate(todas_empresas):
+                        with tabs_empresas[idx]:
+                            st.markdown(f"#### 🏢 Resumen de Amarre para: `{emp_nombre}`")
 
-                    # Obtener datos de Contabilidad para la empresa
-                    if not df_nomina_resumen.empty and empresa_seleccionada in df_nomina_resumen.columns:
-                        df_cont_emp = df_nomina_resumen[['Concepto / Subcuenta', empresa_seleccionada]].rename(
-                            columns={empresa_seleccionada: 'Contabilidad'}
-                        )
-                    else:
-                        df_cont_emp = pd.DataFrame(columns=['Concepto / Subcuenta', 'Contabilidad'])
+                            # Sumas SAT
+                            if not df_nomina_sat.empty and emp_nombre in df_nomina_sat['Empresa / RFC'].values:
+                                df_sat_emp = df_nomina_sat[df_nomina_sat['Empresa / RFC'] == emp_nombre]
+                                cols_conceptos_sat = [c for c in df_sat_emp.columns if c not in ['Empresa / RFC', 'Mes_Pago']]
+                                sumas_sat = df_sat_emp[cols_conceptos_sat].sum()
+                            else:
+                                sumas_sat = pd.Series(dtype=float)
 
-                    # Construir tabla comparativa cruzada usando el Mapeo de la imagen
-                    filas_comparativas = []
+                            # Datos Contabilidad
+                            if not df_nomina_resumen.empty and emp_nombre in df_nomina_resumen.columns:
+                                df_cont_emp = df_nomina_resumen[['Concepto / Subcuenta', emp_nombre]].rename(
+                                    columns={emp_nombre: 'Contabilidad'}
+                                )
+                            else:
+                                df_cont_emp = pd.DataFrame(columns=['Concepto / Subcuenta', 'Contabilidad'])
 
-                    for eq in MAPEO_EQUIVALENCIAS:
-                        c_sat_nombre = eq['Concepto SAT']
-                        c_cont_nombre = eq['Cuenta Contable']
+                            # Construcción de la tabla cruzada
+                            filas_comparativas = []
 
-                        # Buscar monto en SAT
-                        monto_sat = 0.0
-                        if not sumas_sat.empty:
-                            col_match = next((col for col in sumas_sat.index if c_sat_nombre.lower() in col.lower() or col.lower().startswith(c_sat_nombre[:7].lower())), None)
-                            if col_match:
-                                monto_sat = float(sumas_sat[col_match])
+                            for eq in MAPEO_EQUIVALENCIAS:
+                                c_sat_nombre = eq['Concepto SAT']
+                                c_cont_nombre = eq['Cuenta Contable']
 
-                        # Buscar monto en Contabilidad
-                        monto_cont = 0.0
-                        if not df_cont_emp.empty:
-                            row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].str.startswith(c_cont_nombre[:9])]
-                            if not row_c.empty:
-                                monto_cont = float(row_c['Contabilidad'].sum())
+                                # Cifra SAT
+                                monto_sat = 0.0
+                                if not sumas_sat.empty:
+                                    col_match = next((col for col in sumas_sat.index if c_sat_nombre.lower() in col.lower() or col.lower().startswith(c_sat_nombre[:7].lower())), None)
+                                    if col_match:
+                                        monto_sat = float(sumas_sat[col_match])
 
-                        filas_comparativas.append({
-                            'Concepto SAT': c_sat_nombre,
-                            'Monto SAT': monto_sat,
-                            'Cuenta Contable': c_cont_nombre,
-                            'Monto Contabilidad': monto_cont,
-                            'Diferencia (SAT - Contab)': monto_sat - monto_cont
-                        })
+                                # Cifra Contabilidad
+                                monto_cont = 0.0
+                                if not df_cont_emp.empty:
+                                    row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].str.startswith(c_cont_nombre[:9])]
+                                    if not row_c.empty:
+                                        monto_cont = float(row_c['Contabilidad'].sum())
 
-                    df_comp_final = pd.DataFrame(filas_comparativas)
+                                filas_comparativas.append({
+                                    'Concepto SAT': c_sat_nombre,
+                                    'Monto SAT': monto_sat,
+                                    'Cuenta Contable': c_cont_nombre,
+                                    'Monto Contabilidad': monto_cont,
+                                    'Diferencia (SAT - Contab)': monto_sat - monto_cont
+                                })
 
-                    st.dataframe(
-                        df_comp_final.style.format({
-                            'Monto SAT': '${:,.2f}',
-                            'Monto Contabilidad': '${:,.2f}',
-                            'Diferencia (SAT - Contab)': '${:,.2f}'
-                        }),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                            df_comp_final = pd.DataFrame(filas_comparativas)
 
-                    # Exportar Comparativo
-                    output_comp = io.BytesIO()
-                    with pd.ExcelWriter(output_comp, engine='openpyxl') as writer:
-                        df_comp_final.to_excel(writer, sheet_name='Amarre Comparativo', index=False)
-                    excel_data_comp = output_comp.getvalue()
+                            st.dataframe(
+                                df_comp_final.style.format({
+                                    'Monto SAT': '${:,.2f}',
+                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
 
-                    st.download_button(
-                        label=f"📥 Descargar Amarre Comparativo de {empresa_seleccionada} en Excel",
-                        data=excel_data_comp,
-                        file_name=f"Amarre_{empresa_seleccionada}_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                            # Descarga Excel individual
+                            output_comp = io.BytesIO()
+                            with pd.ExcelWriter(output_comp, engine='openpyxl') as writer:
+                                df_comp_final.to_excel(writer, sheet_name=f'Amarre {emp_nombre}', index=False)
+                            excel_data_comp = output_comp.getvalue()
+
+                            st.download_button(
+                                label=f"📥 Descargar Amarre Comparativo de {emp_nombre} en Excel",
+                                data=excel_data_comp,
+                                file_name=f"Amarre_{emp_nombre}_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"btn_dl_{emp_nombre}"
+                            )
 
                 else:
                     st.info("No se encontraron empresas con datos para comparar.")
@@ -991,7 +1003,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # PESTAÑA 2: SAT NÓMINA
             with subtab_nom_sat:
-                st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC / Empresa, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_sat.empty:
                     num_cols = [col for col in df_nomina_sat.columns if col not in ['Empresa / RFC', 'Mes_Pago']]
                     format_dict = {col: '${:,.2f}' for col in num_cols}
