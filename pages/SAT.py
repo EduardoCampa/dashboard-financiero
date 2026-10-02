@@ -720,11 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (FILTRO ESTRICTO: CUENTAS 500 A 699 EN 3ER NIVEL -001- Y -056-) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO OBLIGATORIO DE -001- Y -056- A CLAVE PRINCIPAL 001-XXXX) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Diccionario oficial de mapeo del 4to nivel a su concepto de nómina
+        # Catálogo maestro de 4to nivel unificado
         mapeo_cuarto_nivel = {
             '0001': 'Sueldo',
             '0002': 'Despensa',
@@ -770,7 +770,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                         cta_limpia = cta.replace(' ', '')
                         
-                        # --- FILTRO 1: SOLO CUENTAS DE GASTOS Y COSTOS (500 A 699) ---
+                        # FILTRO: Solo cuentas contables del rango 500 a 699 (Egresos / Costos / Gastos)
                         primer_segmento = cta_limpia.split('-')[0]
                         if not primer_segmento.isdigit():
                             continue
@@ -779,21 +779,19 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         if num_cuenta_base < 500 or num_cuenta_base > 699:
                             continue
 
-                        # --- FILTRO 2: BUSCAR EN TERCER NIVEL (-001- O -056-) ---
+                        # FILTRO: Cuentas de 3er nivel que sean '-001-' o '-056-'
                         if '-001-' in cta_limpia or '-056-' in cta_limpia:
                             partes_cta = cta_limpia.split('-')
                             
-                            # Identificar la clave del 4to nivel (ej. 0001, 0002, 0011)
+                            # Obtener el código de 4to nivel
                             clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
                             
-                            nom_cuenta = str(row.iloc[col_nom]).strip() if df_hoja.shape[1] > col_nom else ""
-                            
+                            # Mapear siempre a la columna general '001-XXXX/Concepto' sin importar si era -056- o -001-
                             if clave_4to in mapeo_cuarto_nivel:
                                 concepto_label = f"001-{clave_4to}/{mapeo_cuarto_nivel[clave_4to]}"
-                            elif nom_cuenta and nom_cuenta.lower() != 'nan':
-                                concepto_label = nom_cuenta.upper()
                             else:
-                                concepto_label = cta_limpia
+                                nom_cuenta = str(row.iloc[col_nom]).strip() if df_hoja.shape[1] > col_nom else ""
+                                concepto_label = nom_cuenta.upper() if nom_cuenta and nom_cuenta.lower() != 'nan' else cta_limpia
 
                             cargos = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
 
@@ -811,7 +809,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote consolidada por Empresa, Mes_Pago y Concepto (Cuentas 500-699)
+        # Matriz pivote unificada por Empresa, Mes_Pago y Concepto
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -849,7 +847,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Filtro 500 a 699, subniveles -001- y -056-)
+            # Cargar Contabilidad Nómina (Unificado -001- y -056- a conceptos principales)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -888,9 +886,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CUENTAS 500-699, -001- Y -056-)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CONSOLIDADO UNIFICADO)
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (Cuentas 500 a 699, subniveles -001- y -056-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001- y -056- Unificados) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
                     format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
