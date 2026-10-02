@@ -720,7 +720,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MAPEO ESTRICTO DE NOMBRES Y CLAVES) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXTRACCIÓN EXCLUSIVA DE CARGOS DEL MES DE COLUMNA E) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
@@ -761,7 +761,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     col_cta = 0
                     col_nom = 1
-                    col_cargos_e = 4  # Columna E (Cargos del Mes)
+                    col_cargos_e = 4  # Columna E de la balanza Excel (Cargos del Mes)
 
                     for _, row in df_hoja.iterrows():
                         cta = str(row.iloc[col_cta]).strip()
@@ -785,24 +785,25 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
                             nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
-                            # REGLA DE UNIFICACIÓN: Si la clave es 0001 O si la descripción menciona SUELDO/SUELDOS
-                            if clave_4to == '0001' or 'SUELDO' in nom_cuenta or 'SUELDOS' in nom_cuenta:
-                                concepto_label = "001-0001/Sueldo"
-                            elif clave_4to in mapeo_cuarto_nivel:
-                                concepto_label = f"001-{clave_4to}/{mapeo_cuarto_nivel[clave_4to]}"
-                            elif nom_cuenta and nom_cuenta != 'NAN':
-                                concepto_label = nom_cuenta
-                            else:
-                                concepto_label = cta_limpia
+                            # LECTURA ÚNICA DE MOVIMIENTO DEL MES: Columna E (Cargos)
+                            cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
 
-                            cargos = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
+                            if cargos_mes != 0.0:
+                                # UNIFICACIÓN ESTRICTA A LA COLUMNA GENERAL DE SUELDO
+                                if clave_4to == '0001' or 'SUELDO' in nom_cuenta or 'SUELDOS' in nom_cuenta:
+                                    concepto_label = "001-0001/Sueldo"
+                                elif clave_4to in mapeo_cuarto_nivel:
+                                    concepto_label = f"001-{clave_4to}/{mapeo_cuarto_nivel[clave_4to]}"
+                                elif nom_cuenta and nom_cuenta != 'NAN':
+                                    concepto_label = nom_cuenta
+                                else:
+                                    concepto_label = cta_limpia
 
-                            if cargos != 0.0:
                                 registros_contables.append({
                                     'Empresa': nombre_empresa,
                                     'Mes_Pago': f"{anio_filtro}-{mes_str}",
                                     'Concepto_Subnivel': concepto_label,
-                                    'Monto': cargos
+                                    'Monto': cargos_mes
                                 })
             except Exception:
                 continue
@@ -811,7 +812,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote unificada por Empresa, Mes_Pago y Concepto
+        # Matriz pivote unificada acumulando únicamente los movimientos del mes (Cargos Columna E)
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -849,7 +850,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Unificado -001- y -056- estrictamente a Sueldo)
+            # Cargar Contabilidad Nómina (Lectura exclusiva de Cargos del mes Columna E)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -888,7 +889,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CONSOLIDADO TOTALMENTE UNIFICADO)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (MOVIMIENTO CARGOS DEL MES COLUMNA E)
             with subtab_nom_cont:
                 st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001- y -056- Unificados a Sueldo) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
