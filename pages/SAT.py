@@ -332,7 +332,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "⚖️ 1.- Comparativos", 
+                "⚖️️ 1.- Comparativos", 
                 "📑 2.- Ingresos y Egresos de los XML", 
                 "📁 3.- Ingresos y Egresos Master",
                 "🔍 4.- Conciliacion por UUID",
@@ -720,24 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (SUMA DE COLUMNA E / EXCLUYE 0000 / INCLUYE DEPTOS 001 Y 056) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (REESCRITO DE CERO Y LIMPIO) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Mapeo unificado de etiquetas según subcuenta de 4to nivel (excluye 0000)
-        mapeo_conceptos = {
-            '0001': '0001 Sueldo',
-            '0002': '0002 Despensa',
-            '0004': '0004 Compensación',
-            '0005': '0005 Premio Asistencia',
-            '0006': '0006 Premio Puntualidad',
-            '0008': '0008 Gratificación Extraordinaria',
-            '0009': '0009 Vacaciones',
-            '0010': '0010 Prima Vacacional',
-            '0011': '0011 Aguinaldo'
-        }
-
-        # Iterar a través de cada mes del rango de periodos seleccionados para acumular la Columna E (Cargos del Mes)
+        # Recorrer mes a mes dentro del rango seleccionado para sumar los Cargos del mes (Columna E)
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
             posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
@@ -756,7 +743,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     for hoja in xls.sheet_names:
                         hoja_upper = hoja.strip().upper()
 
-                        # Mapeo de empresa
+                        # Identificación de la empresa
                         if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
                             nombre_empresa = hoja_upper
                         elif 'EFCO' in nombre_archivo:
@@ -774,8 +761,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         if df_hoja.empty or df_hoja.shape[1] < 3:
                             continue
 
-                        # Localizar la columna E (Cargos / Movimientos del Mes)
-                        idx_cargos_e = 4  # Índice 4 por defecto (Columna E)
+                        # Localizar Columna E: Cargos del Mes (Índice 4 por defecto)
+                        idx_cargos_e = 4
                         for idx_c, col_name in enumerate(df_hoja.columns):
                             c_str = str(col_name).strip().upper()
                             if 'CARGO' in c_str or 'DEBITO' in c_str:
@@ -788,30 +775,28 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                 continue
 
                             cta_limpia = cta.replace(' ', '')
-                            nom_cuenta = str(row.iloc[1]).strip().upper() if df_hoja.shape[1] > 1 else ""
+                            nom_cuenta = str(row.iloc[1]).strip().title() if df_hoja.shape[1] > 1 else ""
 
-                            # EXPRESIÓN REGULAR: GRUPOS 510, 530, 550, 560, 620, 630, 640, 650
-                            # DEPARTAMENTO: 001 o 056
-                            # SUBCUENTA: 4 DÍGITOS EXCLUYENDO EXPLICITAMENTE LA '0000'
-                            match = re.match(r'^(510|530|550|560|620|630|640|650)-(\d{5})-(001|056)-(?!0000)(\d{4})$', cta_limpia)
+                            # PATRÓN DE VALIDACIÓN DE CUENTA:
+                            # 1. Grupo principal: 500 a 699 (\d{3})
+                            # 2. Nivel 3 (Departamento): 001 o 056
+                            # 3. Nivel 4 (Subcuenta): Excluye explícitamente el 0000 (?!0000)
+                            match = re.match(r'^(5\d\d|6\d\d)-(\d+)-(001|056)-(?!0000)(\d{4})$', cta_limpia)
 
                             if match:
-                                grupo_base, num_obra, dept, subcta = match.groups()
+                                grupo, obra_depto, dept, subcta = match.groups()
 
-                                # Construir nombre normalizado de la subcuenta sin duplicaciones
-                                if subcta in mapeo_conceptos:
-                                    label_concepto = f"-{dept}-{mapeo_conceptos[subcta]}"
-                                else:
-                                    label_concepto = f"-{dept}-{subcta} {nom_cuenta.title()}".strip()
+                                # Etiqueta unificada para consolidar todas las obras por su subcuenta
+                                label_cuenta = f"-{dept}-{subcta} {nom_cuenta}".strip()
 
                                 val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
-                                monto = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                                monto_cargo = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
-                                if monto > 0.0:
+                                if monto_cargo > 0.0:
                                     registros_contables.append({
-                                        'Concepto / Cuenta': label_concepto,
+                                        'Cuenta Contable': label_cuenta,
                                         'Empresa': nombre_empresa,
-                                        'Monto': monto
+                                        'Monto': monto_cargo
                                     })
                 except Exception:
                     continue
@@ -820,10 +805,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Consolidar sumando los Cargos (Columna E) de todos los meses seleccionados
+        # Crear la tabla pivote con Cuentas en filas y Empresas en columnas
         pivot_cont = pd.pivot_table(
             df_cont,
-            index='Concepto / Cuenta',
+            index='Cuenta Contable',
             columns='Empresa',
             values='Monto',
             aggfunc='sum',
@@ -858,7 +843,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Suma de Columna E, excluye 0000 e incluye -001- y -056-)
+            # Cargar Contabilidad Nómina desde cero
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -899,9 +884,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Cargos Acumulados - Columna E) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Cuentas (500 a 600, Deptos -001- y -056-, sin -0000) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
-                    empresas_cols = [col for col in df_nomina_cont.columns if col != 'Concepto / Cuenta']
+                    empresas_cols = [col for col in df_nomina_cont.columns if col != 'Cuenta Contable']
                     format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
 
                     st.dataframe(
@@ -922,4 +907,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas que coincidan con los criterios en las balanzas del periodo.")
+                    st.warning("No se encontraron cuentas del grupo 500 al 699 con nivel 3 (-001- / -056-) en las balanzas del periodo seleccionado.")
