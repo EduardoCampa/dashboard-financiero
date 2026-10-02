@@ -584,7 +584,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_balanzas.empty:
                     st.dataframe(
                         df_balanzas.style.format({
-                            'Contabilidad Ingresos': '${:,.2f}',                              'Contabilidad Egresos': '${:,.2f}'
+                            'Contabilidad Ingresos': '${:,.2f}', 
+                            'Contabilidad Egresos': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -597,7 +598,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_detalle_cont.empty:
                     st.dataframe(
                         df_detalle_cont.style.format({
-                            'Saldo Deudor Final': '${:,.2f}',                              'Saldo Acreedor Final': '${:,.2f}'
+                            'Saldo Deudor Final': '${:,.2f}', 
+                            'Saldo Acreedor Final': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -613,7 +615,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # --- FUNCIONALIDAD PARA EXTRAER CONCEPTOS A PARTIR DE 001/001 O CLAVES DE NÓMINA ---
+    # --- 1. PROCESAMIENTO SAT NÓMINAS (A PARTIR DE 001/001) ---
     def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(carpeta_nomina):
             return pd.DataFrame()
@@ -638,7 +640,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     df.columns = [str(c).strip() for c in df.columns]
 
-                    # 1. Identificar RFC Emisor
                     col_rfc = next((c for c in df.columns if 'rfc' in c.lower() and 'emisor' in c.lower()), None)
                     if not col_rfc:
                         col_rfc = next((c for c in df.columns if 'rfc' in c.lower()), None)
@@ -650,7 +651,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     else:
                         df['Empresa_RFC_Clean'] = "EMPRESA NÓMINA"
 
-                    # 2. Identificar Fecha para Agrupar por Mes
                     col_fecha = next((c for c in df.columns if 'fecha' in c.lower() and ('pago' in c.lower() or 'emision' in c.lower() or 'certific' in c.lower())), None)
                     if not col_fecha:
                         col_fecha = next((c for c in df.columns if 'fecha' in c.lower()), None)
@@ -661,7 +661,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     df['Fecha_Dt'] = pd.to_datetime(df[col_fecha], errors='coerce')
                     df = df[df['Fecha_Dt'].notnull()].copy()
 
-                    # Aplicar filtros de Periodo
                     if anio_filtro:
                         df = df[df['Fecha_Dt'].dt.year == int(anio_filtro)]
                     if mes_ini and mes_fin:
@@ -672,24 +671,20 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     df['Mes_Pago'] = df['Fecha_Dt'].dt.strftime('%Y-%m')
 
-                    # 3. Filtrar columnas de conceptos A PARTIR DE '001/001' o con formato de clave tipo '00X/' / 'Total'
                     cols_conceptos = []
                     inicio_conceptos = False
 
                     for c in df.columns:
                         c_trim = c.strip()
-                        # Si encontramos 001/001/Sueldo activamos el flag de inicio
                         if '001/001' in c_trim or c_trim.startswith('001/001'):
                             inicio_conceptos = True
 
                         if inicio_conceptos:
-                            # Convertir y limpiar valores numéricos de la columna
                             val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
                             if val_num.notnull().any() and val_num.abs().sum() > 0:
                                 df[c] = val_num.fillna(0.0)
                                 cols_conceptos.append(c)
 
-                    # Si no encontró '001/001' explícito, busca cualquier columna con formato de clave de nómina (ej. 001/, 002/, Total)
                     if not cols_conceptos:
                         for c in df.columns:
                             c_trim = c.strip()
@@ -702,7 +697,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     if not cols_conceptos:
                         continue
 
-                    # Agrupar por RFC y Mes sumando solo los conceptos seleccionados
                     df_agg = df.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_conceptos].sum().reset_index()
                     dfs_procesados.append(df_agg)
 
@@ -712,21 +706,89 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if not dfs_procesados:
             return pd.DataFrame()
 
-        # Unir todos los DataFrames procesados
         df_consolidado = pd.concat(dfs_procesados, ignore_index=True)
-        
-        # Agrupar nuevamente por si hay más de una hoja o archivo para la misma empresa y mes
         cols_totales = [c for c in df_consolidado.columns if c not in ['Empresa_RFC_Clean', 'Mes_Pago']]
         df_final = df_consolidado.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_totales].sum().reset_index()
 
         df_final = df_final.rename(columns={'Empresa_RFC_Clean': 'Empresa / RFC'})
         
-        # Opcional: Eliminar columnas que estén totalmente en $0.00
         for c in cols_totales:
             if df_final[c].abs().sum() == 0:
                 df_final.drop(columns=[c], inplace=True)
 
         return df_final
+
+
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (CUENTAS DE SUELDOS Y SUBNIVEL -001-****) ---
+    def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
+        registros_contables = []
+
+        for m in range(int(mes_ini), int(mes_fin) + 1):
+            mes_str = f"{m:02d}"
+            ruta_balanza = os.path.join(ruta_base, str(anio_filtro), mes_str, "Balanza.xlsx")
+            
+            if not os.path.exists(ruta_balanza):
+                posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+                if posibles:
+                    ruta_balanza = posibles[0]
+                else:
+                    continue
+
+            try:
+                xls = pd.ExcelFile(ruta_balanza)
+                for hoja in xls.sheet_names:
+                    if hoja.lower() in ['hoja1', 'resumen']:
+                        continue
+
+                    nombre_empresa = hoja.strip().upper()
+                    df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+                    if df_hoja.empty or df_hoja.shape[1] < 4:
+                        continue
+
+                    col_cta = 0
+                    col_nom = 1
+                    col_deudor_f = df_hoja.shape[1] - 2
+
+                    for _, row in df_hoja.iterrows():
+                        cta = str(row.iloc[col_cta]).strip()
+                        if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+                            continue
+
+                        cta_limpia = cta.replace(' ', '')
+                        
+                        # Filtrar cuentas de costos/gastos que contengan el subnivel '-001-' (Sueldos y salarios)
+                        if '-001-' in cta_limpia:
+                            nom_cuenta = str(row.iloc[col_nom]).strip() if df_hoja.shape[1] > col_nom else ""
+                            monto_deudor = float(pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0)
+
+                            if monto_deudor != 0.0:
+                                # Etiqueta de la columna con Código y Nombre de Cuenta
+                                concepto_label = f"{cta_limpia} - {nom_cuenta}" if nom_cuenta else cta_limpia
+                                
+                                registros_contables.append({
+                                    'Empresa': nombre_empresa,
+                                    'Mes_Pago': f"{anio_filtro}-{mes_str}",
+                                    'Concepto_Contable': concepto_label,
+                                    'Monto': monto_deudor
+                                })
+            except Exception:
+                continue
+
+        df_cont = pd.DataFrame(registros_contables)
+        if df_cont.empty:
+            return pd.DataFrame()
+
+        # Generar matriz dinámica consolidada por Empresa, Mes y Subnivel de Sueldos
+        pivot_cont = pd.pivot_table(
+            df_cont,
+            index=['Empresa', 'Mes_Pago'],
+            columns='Concepto_Contable',
+            values='Monto',
+            aggfunc='sum',
+            fill_value=0.0
+        ).reset_index()
+
+        return pivot_cont
 
 
     # --- CONTROLES DE FILTRO ---
@@ -744,9 +806,19 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
 
     if st.button("🚀 Ejecutar Amarre Nóminas"):
-        with st.spinner("Procesando archivos de la carpeta Nómina y consolidando conceptos desde 001/001..."):
+        with st.spinner("Procesando archivos del SAT y Balanzas Contables para Nómina..."):
+            
+            # Cargar SAT Nómina
             df_nomina_sat = cargar_y_procesar_nomina_sat(
                 carpeta_nomina=carpeta_nomina_input,
+                anio_filtro=anio_sel_nom,
+                mes_ini=mes_inicial_nom,
+                mes_fin=mes_final_nom
+            )
+
+            # Cargar Contabilidad Nómina (Subnivel -001-)
+            df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
+                ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
                 mes_ini=mes_inicial_nom,
                 mes_fin=mes_final_nom
@@ -756,6 +828,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             subtab_nom_sat, subtab_nom_cont = st.tabs(["📑 SAT", "📊 Contabilidad"])
 
+            # SUBPESTAÑA 1: SAT NÓMINA
             with subtab_nom_sat:
                 st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_sat.empty:
@@ -782,6 +855,29 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (-001-)
             with subtab_nom_cont:
-                st.markdown("#### 📊 Contabilidad de Nómina")
-                st.info("Espacio preparado para la integración con las balanzas/cuentas contables de Nómina.")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001-****) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                if not df_nomina_cont.empty:
+                    num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
+                    format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
+
+                    st.dataframe(
+                        df_nomina_cont.style.format(format_dict_c),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    output_cont_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_cont_nom, engine='openpyxl') as writer:
+                        df_nomina_cont.to_excel(writer, sheet_name='Contabilidad Nómina', index=False)
+                    excel_data_cont_nom = output_cont_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Contable de Nómina en Excel",
+                        data=excel_data_cont_nom,
+                        file_name=f"Consolidado_Contable_Nomina_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron cuentas con subnivel -001- (Sueldos y Salarios) en las balanzas del periodo seleccionado.")
