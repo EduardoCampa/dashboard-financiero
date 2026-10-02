@@ -51,7 +51,6 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             estado = val_est
                             break
                 
-                # --- CAMBIO AQUÍ: Se admiten estados VIGENTE y con ERROR ---
                 if 'VIGENTE' not in estado and 'ERROR' not in estado:
                     continue
 
@@ -123,6 +122,95 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
     return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
 
 
+# --- FUNCIONES DE PROCESAMIENTO NÓMINA SAT ---
+def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
+    if not os.path.exists(carpeta_nomina):
+        return pd.DataFrame()
+
+    archivos_excel = (
+        glob.glob(os.path.join(carpeta_nomina, "**", "*.xlsx"), recursive=True) + 
+        glob.glob(os.path.join(carpeta_nomina, "*.xlsx"))
+    )
+    archivos_excel = list(set(archivos_excel))
+
+    registros_nomina = []
+
+    for archivo in archivos_excel:
+        try:
+            xls = pd.ExcelFile(archivo)
+            for sheet in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet)
+                if df.empty:
+                    continue
+
+                df.columns = [str(c).strip() for c in df.columns]
+
+                # Identificar RFC Emisor / Empresa
+                col_rfc = next((c for c in df.columns if 'rfc' in c.lower() and 'emisor' in c.lower()), None)
+                if not col_rfc:
+                    col_rfc = next((c for c in df.columns if 'rfc' in c.lower() or 'emisor' in c.lower()), None)
+
+                # Identificar Fecha
+                col_fecha = next((c for c in df.columns if 'fecha' in c.lower() and ('pago' in c.lower() or 'emision' in c.lower())), None)
+                if not col_fecha:
+                    col_fecha = next((c for c in df.columns if 'fecha' in c.lower()), None)
+
+                # Identificar Concepto / Clave de Nómina
+                col_concepto = next((c for c in df.columns if 'concepto' in c.lower() or 'clave' in c.lower() or 'percepcion' in c.lower() or 'deduccion' in c.lower()), None)
+
+                # Identificar Importe / Monto
+                col_monto = next((c for c in df.columns if any(m in c.lower() for m in ['monto', 'importe', 'total', 'subtotal'])), None)
+
+                if not (col_rfc and col_fecha and col_monto):
+                    continue
+
+                for _, row in df.iterrows():
+                    rfc_val = str(row.get(col_rfc, '')).strip().upper()
+                    if not rfc_val or rfc_val == 'NAN':
+                        continue
+
+                    val_fecha = row.get(col_fecha, '')
+                    dt_fecha = pd.to_datetime(val_fecha, errors='coerce')
+                    if pd.isnull(dt_fecha):
+                        continue
+
+                    if anio_filtro and dt_fecha.year != int(anio_filtro):
+                        continue
+                    if mes_ini and mes_fin and (dt_fecha.month < int(mes_ini) or dt_fecha.month > int(mes_fin)):
+                        continue
+
+                    mes_str = dt_fecha.strftime('%Y-%m')
+                    concepto_val = str(row.get(col_concepto, 'CONCEPTO GENERAL')).strip() if col_concepto else 'CONCEPTO GENERAL'
+
+                    raw_monto = str(row.get(col_monto, 0)).replace('$', '').replace(',', '').strip()
+                    monto_val = float(raw_monto) if raw_monto and raw_monto.lower() != 'nan' else 0.0
+
+                    registros_nomina.append({
+                        'RFC_Emisor': rfc_val,
+                        'Mes_Pago': mes_str,
+                        'Concepto': concepto_val,
+                        'Monto': monto_val
+                    })
+        except Exception as e:
+            continue
+
+    df_nom = pd.DataFrame(registros_nomina)
+    if df_nom.empty:
+        return pd.DataFrame()
+
+    # Agrupar y pivotear por RFC_Emisor, Mes_Pago y Conceptos
+    pivot_nomina = pd.pivot_table(
+        df_nom,
+        index=['RFC_Emisor', 'Mes_Pago'],
+        columns='Concepto',
+        values='Monto',
+        aggfunc='sum',
+        fill_value=0.0
+    ).reset_index()
+
+    return pivot_nomina
+
+
 # --- FUNCIONES DE PROCESAMIENTO CONSOLIDADO MASTER ---
 def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
     if not os.path.exists(ruta_master):
@@ -139,7 +227,6 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             else:
                 return pd.DataFrame()
 
-            # --- Opcional: Se puede ajustar o flexibilizar si en Master también hay estatus de ERROR ---
             if 'CFDStatusCancelledName' in df.columns:
                 df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper().str.contains('VIGENTE|ERROR', na=False)].copy()
 
@@ -310,22 +397,26 @@ st.markdown("---")
 carpeta_input = st.text_input("Carpeta o ubicación de los archivos del SAT:", value="XML")
 ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
 ruta_balanzas_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas")
+ruta_nomina_input = st.text_input("Carpeta Raíz de Nómina:", value="Nomina")
 
 if st.button("🚀 Ejecutar Procesamiento Completo"):
-    with st.spinner("Procesando información, balanzas por mes y conciliando..."):
+    with st.spinner("Procesando información, balanzas por mes, nómina y conciliando..."):
         df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
         df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
-        
         df_balanzas, df_detalle_cont = cargar_balanzas_por_mes(anio=anio_sel, mes=mes_final, ruta_base=ruta_balanzas_input)
+        
+        # Cargar Nómina SAT
+        df_nomina_sat = cargar_y_procesar_nomina_sat(ruta_nomina_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
 
         st.success("✅ Procesamiento completado con éxito.")
 
-        tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
+        tab_comp, tab_xml, tab_master, tab_conc, tab_cont, tab_nom = st.tabs([
             "⚖️ 1.- Comparativos", 
             "📑 2.- Ingresos y Egresos de los XML", 
             "📁 3.- Ingresos y Egresos Master",
             "🔍 4.- Conciliacion por UUID",
-            "📊 5.- Contabilidad"
+            "📊 5.- Contabilidad",
+            "👥 6.- Nómina"
         ])
 
         with tab_comp:
@@ -495,7 +586,8 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 df_res_mas = pd.merge(res_ing_m, res_eg_m, on='Empresa', how='outer').fillna(0.0)
                 st.dataframe(
                     df_res_mas.style.format({
-                        'Ingresos Master': '${:,.2f}',                          'Egresos Master': '${:,.2f}'
+                        'Ingresos Master': '${:,.2f}', 
+                        'Egresos Master': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
@@ -554,7 +646,8 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                             'UUID', 'Empresa', 'Estado_SAT', 'SubTotal_Master', 'SubTotal_SAT', 'Diferencia'
                         ]].style.format({
                             'SubTotal_Master': '${:,.2f}',
-                            'SubTotal_SAT': '${:,.2f}',                              'Diferencia': '${:,.2f}'
+                            'SubTotal_SAT': '${:,.2f}', 
+                            'Diferencia': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -592,3 +685,25 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 )
             else:
                 st.warning("No se encontraron registros contables para las cuentas especificadas en el periodo seleccionado.")
+
+        with tab_nom:
+            st.markdown(f"### 👥 Amarre de Nómina (XMLs SAT vs Contabilidad) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            subtab_nom_sat, subtab_nom_cont = st.tabs(["📑 SAT", "📊 Contabilidad"])
+
+            with subtab_nom_sat:
+                st.markdown("#### 📋 Consolidado de Nómina SAT por RFC y Conceptos")
+                if not df_nomina_sat.empty:
+                    # Formato de columnas numéricas a moneda
+                    num_cols = [col for col in df_nomina_sat.columns if col not in ['RFC_Emisor', 'Mes_Pago']]
+                    format_dict = {col: '${:,.2f}' for col in num_cols}
+
+                    st.dataframe(
+                        df_nomina_sat.style.format(format_dict),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.warning("No se encontraron registros de nómina XML en la carpeta especificada.")
+
+            with subtab_nom_cont:
+                st.info("Pestaña de Contabilidad de Nómina lista para ser configurada.")

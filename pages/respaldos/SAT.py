@@ -51,7 +51,8 @@ def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, me
                             estado = val_est
                             break
                 
-                if 'VIGENTE' not in estado:
+                # --- CAMBIO AQUÍ: Se admiten estados VIGENTE y con ERROR ---
+                if 'VIGENTE' not in estado and 'ERROR' not in estado:
                     continue
 
                 fecha_emision_str = ""
@@ -138,8 +139,9 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             else:
                 return pd.DataFrame()
 
+            # --- Opcional: Se puede ajustar o flexibilizar si en Master también hay estatus de ERROR ---
             if 'CFDStatusCancelledName' in df.columns:
-                df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper() == 'VIGENTE'].copy()
+                df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper().str.contains('VIGENTE|ERROR', na=False)].copy()
 
             fecha_col_name = 'DateDocument' if 'DateDocument' in df.columns else 'CFDIFechaCertificacion'
             if fecha_col_name in df.columns:
@@ -163,11 +165,13 @@ def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=
             empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
             df['Empresa'] = empresa_raw.astype(str).str.strip().str.upper()
 
+            estado_master = df['CFDStatusCancelledName'] if 'CFDStatusCancelledName' in df.columns else 'VIGENTE'
+
             df_final = pd.DataFrame({
                 'Empresa': df['Empresa'],
                 'UUID': df['UUID'],
                 'CFDIFechaCertificacion': df['Fecha_Doc'],
-                'Estado_Master': 'VIGENTE',
+                'Estado_Master': estado_master,
                 'SubTotal': subtotal_neto
             })
 
@@ -386,8 +390,10 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.dataframe(
                 df_ingresos_final.style.format({
                     'XML Ingresos': '${:,.2f}',
-                    'Master Ingresos': '${:,.2f}',                     'Contabilidad Ingresos': '${:,.2f}',
-                    'Dif. (XML vs Master)': '${:,.2f}',                     'Dif. (XML vs Contab)': '${:,.2f}'
+                    'Master Ingresos': '${:,.2f}', 
+                    'Contabilidad Ingresos': '${:,.2f}',
+                    'Dif. (XML vs Master)': '${:,.2f}', 
+                    'Dif. (XML vs Contab)': '${:,.2f}'
                 }),
                 use_container_width=True,
                 hide_index=True
@@ -409,8 +415,10 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             st.dataframe(
                 df_egresos_final.style.format({
                     'XML Egresos': '${:,.2f}',
-                    'Master Egresos': '${:,.2f}',                     'Contabilidad Egresos': '${:,.2f}',
-                    'Dif. (XML vs Master)': '${:,.2f}',                     'Dif. (XML vs Contab)': '${:,.2f}'
+                    'Master Egresos': '${:,.2f}', 
+                    'Contabilidad Egresos': '${:,.2f}',
+                    'Dif. (XML vs Master)': '${:,.2f}', 
+                    'Dif. (XML vs Contab)': '${:,.2f}'
                 }),
                 use_container_width=True,
                 hide_index=True
@@ -433,7 +441,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             )
 
         with tab_xml:
-            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes y Error) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             st.markdown("#### 📊 Resumen de Ingresos y Egresos por Emisor (XML)")
             if not df_ingresos_sat.empty or not df_egresos_sat.empty:
@@ -446,7 +454,8 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 df_res_xml = pd.merge(res_ing_x, res_eg_x, on='Empresa', how='outer').fillna(0.0)
                 st.dataframe(
                     df_res_xml.style.format({
-                        'Ingresos XML': '${:,.2f}',                         'Egresos XML': '${:,.2f}'
+                        'Ingresos XML': '${:,.2f}', 
+                        'Egresos XML': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
@@ -473,7 +482,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en XML.")
 
         with tab_master:
-            st.markdown(f"### 📁 Ingresos y Egresos Master (Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### 📁 Ingresos y Egresos Master - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             st.markdown("#### 📊 Resumen de Ingresos y Egresos por Empresa Origen (Master)")
             if not df_ingresos_master.empty or not df_egresos_master.empty:
@@ -486,7 +495,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 df_res_mas = pd.merge(res_ing_m, res_eg_m, on='Empresa', how='outer').fillna(0.0)
                 st.dataframe(
                     df_res_mas.style.format({
-                        'Ingresos Master': '${:,.2f}',                         'Egresos Master': '${:,.2f}'
+                        'Ingresos Master': '${:,.2f}',                          'Egresos Master': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
@@ -513,13 +522,13 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                     st.warning("Sin registros de egresos en Master.")
 
         with tab_conc:
-            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+            st.markdown(f"### 🔍 Conciliación por UUID (Ingresos Vigentes y Error) - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
             
             if not df_ingresos_master.empty and not df_ingresos_sat.empty:
                 df_m_agg = df_ingresos_master[['UUID', 'Empresa', 'SubTotal']].rename(
                     columns={'SubTotal': 'SubTotal_Master'}
                 )
-                df_s_agg = df_ingresos_sat[['UUID', 'Empresa', 'SubTotal']].rename(
+                df_s_agg = df_ingresos_sat[['UUID', 'Empresa', 'Estado_SAT', 'SubTotal']].rename(
                     columns={'SubTotal': 'SubTotal_SAT', 'Empresa': 'Empresa_SAT'}
                 )
                 
@@ -542,16 +551,16 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
                 if not df_con_dif.empty:
                     st.dataframe(
                         df_con_dif[[
-                            'UUID', 'Empresa', 'SubTotal_Master', 'SubTotal_SAT', 'Diferencia'
+                            'UUID', 'Empresa', 'Estado_SAT', 'SubTotal_Master', 'SubTotal_SAT', 'Diferencia'
                         ]].style.format({
                             'SubTotal_Master': '${:,.2f}',
-                            'SubTotal_SAT': '${:,.2f}',                             'Diferencia': '${:,.2f}'
+                            'SubTotal_SAT': '${:,.2f}',                              'Diferencia': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
                     )
                 else:
-                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs vigentes cruzados.")
+                    st.success("🎉 ¡Excelente! No se encontraron diferencias en los UUIDs cruzados.")
             else:
                 st.info("Se requiere información tanto del Master como de los XMLs para ejecutar la conciliación.")
 
@@ -563,7 +572,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             if not df_balanzas.empty:
                 st.dataframe(
                     df_balanzas.style.format({
-                        'Contabilidad Ingresos': '${:,.2f}',                         'Contabilidad Egresos': '${:,.2f}'
+                        'Contabilidad Ingresos': '${:,.2f}',                          'Contabilidad Egresos': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
@@ -576,7 +585,7 @@ if st.button("🚀 Ejecutar Procesamiento Completo"):
             if not df_detalle_cont.empty:
                 st.dataframe(
                     df_detalle_cont.style.format({
-                        'Saldo Deudor Final': '${:,.2f}',                         'Saldo Acreedor Final': '${:,.2f}'
+                        'Saldo Deudor Final': '${:,.2f}',                          'Saldo Acreedor Final': '${:,.2f}'
                     }),
                     use_container_width=True,
                     hide_index=True
