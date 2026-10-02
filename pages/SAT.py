@@ -613,7 +613,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # --- FUNCIONALIDAD MEJORADA PARA LEER REPORTES HORIZONTALES DE NÓMINA (eToolSAT / SAT) ---
+    # --- FUNCIONALIDAD PARA EXTRAER CONCEPTOS A PARTIR DE 001/001 O CLAVES DE NÓMINA ---
     def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(carpeta_nomina):
             return pd.DataFrame()
@@ -625,18 +625,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         archivos = list(set(archivos))
         dfs_procesados = []
 
-        # Columnas típicas que NO son conceptos numéricos de nómina
-        cols_omitir_keywords = [
-            'uuid', 'folio', 'estado', 'estatus', 'version', 'serie', 'tipo', 
-            'moneda', 'tc', 'cancelac', 'sustituc', 'sello', 'certificado', 
-            'versionnomina', 'origenrecurso', 'curp', 'nss', 'numempleado', 
-            'departamento', 'puesto', 'riesgopuesto', 'periodicidad', 'banco', 
-            'cuentabancaria', 'claveentfed', 'metodopago'
-        ]
-
         for arch in archivos:
             try:
-                # Extraer RFC del nombre del archivo si está presente (ej. CIV141222JD5...)
                 nombre_base = os.path.basename(arch).upper()
                 rfc_archivo = nombre_base.split('-')[0].strip() if '-' in nombre_base else ""
 
@@ -646,7 +636,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                     if df.empty:
                         continue
 
-                    # Limpiar nombres de columnas
                     df.columns = [str(c).strip() for c in df.columns]
 
                     # 1. Identificar RFC Emisor
@@ -683,25 +672,37 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                     df['Mes_Pago'] = df['Fecha_Dt'].dt.strftime('%Y-%m')
 
-                    # 3. Detectar Columnas de Conceptos (Columnas numéricas de Percepciones/Deducciones/Totales)
+                    # 3. Filtrar columnas de conceptos A PARTIR DE '001/001' o con formato de clave tipo '00X/' / 'Total'
                     cols_conceptos = []
+                    inicio_conceptos = False
+
                     for c in df.columns:
-                        c_low = c.lower()
-                        # Excluir identificadores y fechas
-                        if c in ['Empresa_RFC_Clean', 'Fecha_Dt', 'Mes_Pago', col_fecha]:
-                            continue
-                        if any(kw in c_low for kw in cols_omitir_keywords):
-                            continue
-                        # Verificar si la columna contiene valores numéricos o conceptos (ej. 001/001/Sueldo, Total Gravado, etc.)
-                        val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
-                        if val_num.notnull().any() and val_num.abs().sum() > 0:
-                            df[c] = val_num.fillna(0.0)
-                            cols_conceptos.append(c)
+                        c_trim = c.strip()
+                        # Si encontramos 001/001/Sueldo activamos el flag de inicio
+                        if '001/001' in c_trim or c_trim.startswith('001/001'):
+                            inicio_conceptos = True
+
+                        if inicio_conceptos:
+                            # Convertir y limpiar valores numéricos de la columna
+                            val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
+                            if val_num.notnull().any() and val_num.abs().sum() > 0:
+                                df[c] = val_num.fillna(0.0)
+                                cols_conceptos.append(c)
+
+                    # Si no encontró '001/001' explícito, busca cualquier columna con formato de clave de nómina (ej. 001/, 002/, Total)
+                    if not cols_conceptos:
+                        for c in df.columns:
+                            c_trim = c.strip()
+                            if any(c_trim.startswith(prefix) for prefix in ['001/', '002/', '003/', '004/', '005/', '009/', 'Total']):
+                                val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
+                                if val_num.notnull().any() and val_num.abs().sum() > 0:
+                                    df[c] = val_num.fillna(0.0)
+                                    cols_conceptos.append(c)
 
                     if not cols_conceptos:
                         continue
 
-                    # Agrupar este archivo/hoja por RFC y Mes
+                    # Agrupar por RFC y Mes sumando solo los conceptos seleccionados
                     df_agg = df.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_conceptos].sum().reset_index()
                     dfs_procesados.append(df_agg)
 
@@ -711,10 +712,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if not dfs_procesados:
             return pd.DataFrame()
 
-        # Unir todos los archivos procesados
+        # Unir todos los DataFrames procesados
         df_consolidado = pd.concat(dfs_procesados, ignore_index=True)
         
-        # Agrupar nuevamente por si había datos del mismo RFC y Mes en distintos archivos/hojas
+        # Agrupar nuevamente por si hay más de una hoja o archivo para la misma empresa y mes
         cols_totales = [c for c in df_consolidado.columns if c not in ['Empresa_RFC_Clean', 'Mes_Pago']]
         df_final = df_consolidado.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_totales].sum().reset_index()
 
@@ -743,7 +744,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
 
     if st.button("🚀 Ejecutar Amarre Nóminas"):
-        with st.spinner("Procesando archivos de la carpeta Nómina y consolidando conceptos por columna..."):
+        with st.spinner("Procesando archivos de la carpeta Nómina y consolidando conceptos desde 001/001..."):
             df_nomina_sat = cargar_y_procesar_nomina_sat(
                 carpeta_nomina=carpeta_nomina_input,
                 anio_filtro=anio_sel_nom,
@@ -779,7 +780,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron registros de nómina en la carpeta especificada para el periodo seleccionado.")
+                    st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
             with subtab_nom_cont:
                 st.markdown("#### 📊 Contabilidad de Nómina")
