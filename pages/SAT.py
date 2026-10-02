@@ -720,11 +720,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (MATRIZ POR CONCEPTO DE CUENTA) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (FILTRO EXCLUSIVO 500-699 CON -001- EN 3ER NIVEL) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Recorrer todos los meses seleccionados
+        # Recorrer todos los meses del rango seleccionado
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
             
@@ -759,7 +759,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             cta_limpia = cta.replace(' ', '')
                             nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
-                            # EXCLUIR CUENTAS TOTALES O ACUMULADORAS PRINCIPALES
+                            # EXCLUIR FILAS ACUMULADORAS TOTALES
                             if '-99999-' in cta_limpia or '-00000-' in cta_limpia or \
                                cta_limpia.endswith('-99999') or cta_limpia.endswith('-00000') or \
                                'TOTAL' in nom_cuenta or 'SUMA' in nom_cuenta:
@@ -767,29 +767,33 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                             partes_cta = cta_limpia.split('-')
 
-                            # FILTRAR COSTOS Y GASTOS (500 a 699)
+                            # REGLA 1: CUENTAS DEL RANGO 500 A 699
                             if not partes_cta[0].isdigit():
                                 continue
                             num_base = int(partes_cta[0])
                             if num_base < 500 or num_base > 699:
                                 continue
 
-                            # IDENTIFICAR SUBCUENTA COMPLETA DE NÓMINA (-001-XXXX O -056-XXXX)
-                            if len(partes_cta) >= 4:
-                                dept = partes_cta[2].strip()
-                                subcta = partes_cta[3].strip()
+                            # REGLA 2: DEBE TENER AL MENOS 3 SEGMENTOS Y EL TERCERO DEBE SER EXACTAMENTE '001'
+                            if len(partes_cta) < 3:
+                                continue
 
-                                # FORMATO EXACTO SOLICITADO: "-001-0001 Sueldo"
-                                label_concepto = f"-{dept}-{subcta} {nom_cuenta.title()}"
+                            dept_3er_nivel = partes_cta[2].strip()
+                            if dept_3er_nivel != '001':
+                                continue
 
-                                cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
+                            # FORMATO DE SALIDA: "-001-XXXX Nombre Cuenta"
+                            subcta_4to = partes_cta[3].strip() if len(partes_cta) >= 4 else ""
+                            label_concepto = f"-001-{subcta_4to} {nom_cuenta.title()}".strip()
 
-                                if cargos_mes > 0.0:
-                                    registros_contables.append({
-                                        'Concepto / Cuenta': label_concepto,
-                                        'Empresa': nombre_empresa,
-                                        'Monto': cargos_mes
-                                    })
+                            cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
+
+                            if cargos_mes > 0.0:
+                                registros_contables.append({
+                                    'Concepto / Cuenta': label_concepto,
+                                    'Empresa': nombre_empresa,
+                                    'Monto': cargos_mes
+                                })
                 except Exception:
                     continue
 
@@ -797,7 +801,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Construir la matriz pivote: Filas = Cuentas, Columnas = Empresas
+        # Matriz pivote: Filas = Cuentas, Columnas = Empresas
         pivot_cont = pd.pivot_table(
             df_cont,
             index='Concepto / Cuenta',
@@ -835,7 +839,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina en formato de Matriz por Cuenta / Empresa
+            # Cargar Contabilidad Nómina (Filtrado estricto Rango 500-699 y 3er Nivel -001-)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -876,7 +880,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (MATRIZ POR CONCEPTO DE CUENTA)
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Nómina por Cuentas (Rango 500-699 con -001-) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     empresas_cols = [col for col in df_nomina_cont.columns if col != 'Concepto / Cuenta']
                     format_dict_c = {col: '${:,.2f}' for col in empresas_cols}
@@ -899,4 +903,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas del grupo 500 a 699 con subniveles de nómina en las balanzas del periodo seleccionado.")
+                    st.warning("No se encontraron cuentas del grupo 500 a 699 con subnivel -001- en las balanzas del periodo seleccionado.")
