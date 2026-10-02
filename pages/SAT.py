@@ -719,7 +719,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (CONSOLIDACIÓN POR NOMBRE DE CONCEPTO / 4TO NIVEL) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (ESTRICTO: TERCER SEGMENTO ES '001') ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
@@ -756,9 +756,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             continue
 
                         cta_limpia = cta.replace(' ', '')
-                        
-                        # Filtrar cuentas que tengan el tercer subnivel '-001-' (Sueldos y Salarios)
-                        if '-001-' in cta_limpia:
+                        partes_cta = cta_limpia.split('-')
+
+                        # Estructura limpia: Debe tener al menos 4 segmentos y el 3er segmento ser exactamente '001'
+                        # Ejemplo: 560-99999-001-0001
+                        if len(partes_cta) >= 4 and partes_cta[2] == '001':
                             nom_cuenta = str(row.iloc[col_nom]).strip() if df_hoja.shape[1] > col_nom else ""
                             
                             cargos = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
@@ -767,7 +769,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             monto_neto_mes = cargos - abonos
 
                             if monto_neto_mes != 0.0:
-                                # Agrupar por la descripción/nombre del concepto para consolidar 510, 530, 550, 560, etc.
+                                # Consolidar por la descripción del concepto en Mayúsculas
                                 concepto_label = nom_cuenta.upper() if nom_cuenta and nom_cuenta.lower() != 'nan' else cta_limpia
                                 
                                 registros_contables.append({
@@ -783,7 +785,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote consolidada por Empresa, Mes_Pago y Nombre del Concepto
+        # Matriz pivote consolidada por Empresa, Mes_Pago y Nombre del Concepto de Nómina
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -821,7 +823,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina (Consolidado por Concepto -001-**** de Columnas E y F)
+            # Cargar Contabilidad Nómina (Consolidado por Concepto *-001-****)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -860,9 +862,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 else:
                     st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
 
-            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CONSOLIDADO POR CONCEPTO -001-****)
+            # SUBPESTAÑA 2: CONTABILIDAD NÓMINA (CONSOLIDADO POR CONCEPTO *-001-****)
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (-001-****) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios (*-*-001-****) ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
                     format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
@@ -885,4 +887,4 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("No se encontraron cuentas con subnivel -001- con movimientos en las columnas E y F en el periodo seleccionado.")
+                    st.warning("No se encontraron cuentas con estructura *-*-001-**** con movimientos en las columnas E y F en el periodo seleccionado.")
