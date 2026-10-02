@@ -332,7 +332,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "秤️ 1.- Comparativos", 
+                "⚖️ 1.- Comparativos", 
                 "📑 2.- Ingresos y Egresos de los XML", 
                 "📁 3.- Ingresos y Egresos Master",
                 "🔍 4.- Conciliacion por UUID",
@@ -720,11 +720,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (REGLA AFECTABLE EXCLUSIVA SIN ACUMULADORAS) ---
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXTRACCIÓN DE SALDO ACUMULADO DEL MES FINAL) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
-        # Catálogo maestro oficial de 4to nivel unificado
         mapeo_cuarto_nivel = {
             '0001': '001-0001/Sueldo',
             '0002': '001-0002/Despensa',
@@ -737,102 +736,97 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             '0011': '001-0011/Aguinaldo'
         }
 
-        for m in range(int(mes_ini), int(mes_fin) + 1):
-            mes_str = f"{m:02d}"
-            ruta_balanza = os.path.join(ruta_base, str(anio_filtro), mes_str, "Balanza.xlsx")
-            
-            if not os.path.exists(ruta_balanza):
-                posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
-                if posibles:
-                    ruta_balanza = posibles[0]
-                else:
+        # Leer directamente la balanza del MES FINAL del filtro (ej. Agosto) para extraer el acumulado total
+        mes_str = f"{int(mes_fin):02d}"
+        ruta_balanza = os.path.join(ruta_base, str(anio_filtro), mes_str, "Balanza.xlsx")
+        
+        if not os.path.exists(ruta_balanza):
+            posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+            if posibles:
+                ruta_balanza = posibles[0]
+            else:
+                return pd.DataFrame()
+
+        try:
+            xls = pd.ExcelFile(ruta_balanza)
+            for hoja in xls.sheet_names:
+                if hoja.lower() in ['hoja1', 'resumen']:
                     continue
 
-            try:
-                xls = pd.ExcelFile(ruta_balanza)
-                for hoja in xls.sheet_names:
-                    if hoja.lower() in ['hoja1', 'resumen']:
+                nombre_empresa = hoja.strip().upper()
+                df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+                if df_hoja.empty or df_hoja.shape[1] < 4:
+                    continue
+
+                num_cols = df_hoja.shape[1]
+                col_cta = 0
+                col_nom = 1
+                col_deudor_f = num_cols - 2  # Columna Deudor Final (Saldo acumulado del año)
+
+                for _, row in df_hoja.iterrows():
+                    cta = str(row.iloc[col_cta]).strip()
+                    if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                         continue
 
-                    nombre_empresa = hoja.strip().upper()
-                    df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-                    if df_hoja.empty or df_hoja.shape[1] < 5:
+                    cta_limpia = cta.replace(' ', '')
+                    partes_cta = cta_limpia.split('-')
+
+                    # 1. EXCLUIR CUENTAS ACUMULADORAS TOTALES (99999 O 00000 EN EL 2DO SEGMENTO)
+                    if len(partes_cta) >= 2 and partes_cta[1] in ['99999', '00000']:
+                        continue
+                    
+                    # 2. FILTRAR GRUPO DE CUENTAS DE COSTOS Y GASTOS (500 a 699)
+                    if not partes_cta[0].isdigit():
+                        continue
+                    num_base = int(partes_cta[0])
+                    if num_base < 500 or num_base > 699:
                         continue
 
-                    col_cta = 0
-                    col_nom = 1
-                    col_cargos_e = 4  # Columna E de Cargos del Mes
+                    # 3. VERIFICAR QUE CONTENGA LOS SUFIJOS DE DEPARTAMENTO DE NÓMINA (-001- O -056-)
+                    if '-001-' in cta_limpia or '-056-' in cta_limpia:
+                        clave_4to = partes_cta[-1].strip() if len(partes_cta) >= 4 else ""
+                        nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
 
-                    for _, row in df_hoja.iterrows():
-                        cta = str(row.iloc[col_cta]).strip()
-                        if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
-                            continue
-
-                        cta_limpia = cta.replace(' ', '')
-                        partes_cta = cta_limpia.split('-')
-
-                        # REGLA 1: EXCLUIR CUENTAS ACUMULADORAS Y TOTALES (99999 O 00000 EN 2DO NIVEL)
-                        if len(partes_cta) >= 2 and partes_cta[1] in ['99999', '00000']:
-                            continue
+                        concepto_label = None
                         
-                        # REGLA 2: RANGO DE COSTOS Y GASTOS (500 a 699)
-                        if not partes_cta[0].isdigit():
-                            continue
-                        num_base = int(partes_cta[0])
-                        if num_base < 500 or num_base > 699:
-                            continue
+                        if clave_4to in mapeo_cuarto_nivel:
+                            concepto_label = mapeo_cuarto_nivel[clave_4to]
+                        elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
+                            concepto_label = '001-0001/Sueldo'
+                        elif 'DESPENSA' in nom_cuenta:
+                            concepto_label = '001-0002/Despensa'
+                        elif 'COMPENSAC' in nom_cuenta:
+                            concepto_label = '001-0004/Compensacion'
+                        elif 'ASISTENCIA' in nom_cuenta:
+                            concepto_label = '001-0005/Premio Asistencia'
+                        elif 'PUNTUALIDAD' in nom_cuenta:
+                            concepto_label = '001-0006/Premio Puntualidad'
+                        elif 'VACACION' in nom_cuenta:
+                            concepto_label = '001-0009/Vacaciones'
+                        elif 'PRIMA VACAC' in nom_cuenta:
+                            concepto_label = '001-0010/Prima Vacacional'
+                        elif 'AGUINALDO' in nom_cuenta:
+                            concepto_label = '001-0011/Aguinaldo'
 
-                        # REGLA 3: DEBE TENER AL MENOS 4 NIVELES PARA SER AFECTABLE (XXX-XXXXX-XXX-XXXX)
-                        if len(partes_cta) < 4:
-                            continue
+                        if concepto_label:
+                            # SE TOMA EL SALDO DEUDOR FINAL DEL PERIODO (COLUMNA G / DEUDOR F)
+                            saldo_acumulado = float(pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0)
 
-                        nivel_3 = partes_cta[2].strip()  # Ej: 001 o 056
-                        nivel_4 = partes_cta[3].strip()  # Ej: 0001, 0002, 0011
-
-                        # Filtrar solo departamentos de nóminas (-001- o -056-)
-                        if nivel_3 in ['001', '056']:
-                            nom_cuenta = str(row.iloc[col_nom]).strip().upper() if df_hoja.shape[1] > col_nom else ""
-
-                            concepto_label = None
-                            
-                            # Mapear por clave de 4to nivel o por texto de cuenta
-                            if nivel_4 in mapeo_cuarto_nivel:
-                                concepto_label = mapeo_cuarto_nivel[nivel_4]
-                            elif 'SUELDO' in nom_cuenta or 'SALARIO' in nom_cuenta:
-                                concepto_label = '001-0001/Sueldo'
-                            elif 'DESPENSA' in nom_cuenta:
-                                concepto_label = '001-0002/Despensa'
-                            elif 'COMPENSAC' in nom_cuenta:
-                                concepto_label = '001-0004/Compensacion'
-                            elif 'ASISTENCIA' in nom_cuenta:
-                                concepto_label = '001-0005/Premio Asistencia'
-                            elif 'PUNTUALIDAD' in nom_cuenta:
-                                concepto_label = '001-0006/Premio Puntualidad'
-                            elif 'VACACION' in nom_cuenta:
-                                concepto_label = '001-0009/Vacaciones'
-                            elif 'PRIMA VACAC' in nom_cuenta:
-                                concepto_label = '001-0010/Prima Vacacional'
-                            elif 'AGUINALDO' in nom_cuenta:
-                                concepto_label = '001-0011/Aguinaldo'
-
-                            if concepto_label:
-                                cargos_mes = float(pd.to_numeric(row.iloc[col_cargos_e], errors='coerce') or 0.0)
-
-                                if cargos_mes != 0.0:
-                                    registros_contables.append({
-                                        'Empresa': nombre_empresa,
-                                        'Mes_Pago': f"{anio_filtro}-{mes_str}",
-                                        'Concepto_Subnivel': concepto_label,
-                                        'Monto': cargos_mes
-                                    })
-            except Exception:
-                continue
+                            if saldo_acumulado != 0.0:
+                                registros_contables.append({
+                                    'Empresa': nombre_empresa,
+                                    'Mes_Pago': f"{anio_filtro}-{mes_str}",
+                                    'Concepto_Subnivel': concepto_label,
+                                    'Monto': saldo_acumulado
+                                })
+        except Exception:
+            pass
 
         df_cont = pd.DataFrame(registros_contables)
         if df_cont.empty:
             return pd.DataFrame()
 
-        # Matriz pivote unificada
+        # Matriz pivote unificada acumulando las subcuentas afectables por empresa
         pivot_cont = pd.pivot_table(
             df_cont,
             index=['Empresa', 'Mes_Pago'],
@@ -870,7 +864,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina
+            # Cargar Contabilidad Nómina (Extrayendo el Saldo Deudor Final Acumulado)
             df_nomina_cont = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
                 anio_filtro=anio_sel_nom,
@@ -911,7 +905,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # SUBPESTAÑA 2: CONTABILIDAD NÓMINA
             with subtab_nom_cont:
-                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                st.markdown(f"#### 📊 Consolidado Contable de Sueldos y Salarios Acumulado ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
                 if not df_nomina_cont.empty:
                     num_cols_c = [col for col in df_nomina_cont.columns if col not in ['Empresa', 'Mes_Pago']]
                     format_dict_c = {col: '${:,.2f}' for col in num_cols_c}
