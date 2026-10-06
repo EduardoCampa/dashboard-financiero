@@ -987,28 +987,30 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 "🌐 Universo Total (OC y SP)"
             ])
 
-            # --- FUNCIÓN AUXILIAR PARA RENDERIZAR VISTA DE TABLA Y FILTROS DEL REPORTE ---
+            # --- FUNCIÓN AUXILIAR EFICIENTE PARA RENDERIZAR VISTAS DE REPORTES DE PAGOS ---
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
                 st.markdown("#### ⚙️ Filtros de Selección Independientes")
 
-                no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key=f"{key_prefix}_no_fcog_chk")
-
-                if no_fcog_chk:
-                    if 'En_FCoG' in df_rep_total.columns:
-                        df_rep_total = df_rep_total[df_rep_total['En_FCoG'] == False]
-                    col_monto_eval = 'Total'
-                    label_monto = "Total"
-                    st.info("Mostrando consolidado de Solicitud de Pago y Orden de Compra NO encontradas en FCoG (Mostrando Total en lugar de Saldo Pendiente).")
-                else:
-                    if solo_pendientes and 'Saldo_Pendiente' in df_rep_total.columns:
+                # En la pestaña de Saldo Pendiente quitamos la opción de 'No se encuentra en FCoG'
+                if solo_pendientes:
+                    if 'Saldo_Pendiente' in df_rep_total.columns:
                         df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
-                        col_monto_eval = 'Saldo_Pendiente'
-                        label_monto = "Saldo Pendiente"
-                    else:
+                    col_monto_eval = 'Saldo_Pendiente'
+                    label_monto = "Saldo Pendiente"
+                    no_fcog_chk = False
+                else:
+                    no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key=f"{key_prefix}_no_fcog_chk")
+                    if no_fcog_chk:
+                        if 'En_FCoG' in df_rep_total.columns:
+                            df_rep_total = df_rep_total[df_rep_total['En_FCoG'] == False]
                         col_monto_eval = 'Total'
                         label_monto = "Total"
+                        st.info("Mostrando consolidado de Solicitud de Pago y Orden de Compra NO encontradas en FCoG.")
+                    else:
+                        col_monto_eval = 'Total'
+                        label_monto = "Monto Total"
 
                 df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
                 df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -1088,6 +1090,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     )
                     st.markdown("---")
 
+                    # OPTIMIZACIÓN DE RENDIMIENTO: Renderizado masivo sin loops excesivos
                     for empresa in sorted(empresas_agrupadas):
                         df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
                         total_empresa = df_emp_subset[col_monto_eval].sum()
@@ -1100,7 +1103,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                             proveedor = prov_row[col_prov_name]
                             subtotal_prov = prov_row[col_monto_eval]
 
-                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=True):
+                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=False if not solo_pendientes else True):
                                 df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
                                 monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
 
@@ -1109,19 +1112,16 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                                     st.markdown(f"##### 💱 Moneda: **{moneda}**")
 
-                                    data_det_list = []
-                                    for _, row in df_det_moneda.iterrows():
-                                        data_det_list.append({
-                                            "Tipo": row['Tipo_Movimiento'],
-                                            "Fecha Vencimiento": row['Fecha_Fmt'],
-                                            "Folio / Documento": row[col_folio_name],
-                                            "DocumentID": row.get('DocumentID', ''),
-                                            "UUID": row.get('UUID', ''),
-                                            "Moneda": row[col_currency] if col_currency and not pd.isnull(row[col_currency]) else "MXN",
-                                            "Descripción": row[col_desc] if col_desc else "",
-                                            label_monto: row[col_monto_eval]
-                                        })
-                                    df_tabla_det = pd.DataFrame(data_det_list)
+                                    df_tabla_det = pd.DataFrame({
+                                        "Tipo": df_det_moneda['Tipo_Movimiento'],
+                                        "Fecha Vencimiento": df_det_moneda['Fecha_Fmt'],
+                                        "Folio / Documento": df_det_moneda[col_folio_name],
+                                        "DocumentID": df_det_moneda['DocumentID'] if 'DocumentID' in df_det_moneda.columns else "",
+                                        "UUID": df_det_moneda['UUID'] if 'UUID' in df_det_moneda.columns else "",
+                                        "Moneda": df_det_moneda[col_currency].fillna("MXN") if col_currency else "MXN",
+                                        "Descripción": df_det_moneda[col_desc] if col_desc else "",
+                                        label_monto: df_det_moneda[col_monto_eval]
+                                    })
 
                                     mostrar_tabla_con_totales(
                                         df_tabla_det,
@@ -1132,7 +1132,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 else:
                     st.warning("No hay registros que coincidan con los filtros seleccionados.")
 
-            # --- RENDERIZAR CADA PESTAÑA CON SU RESPECTIVA LÓGICA Y KEY PREFIX ---
+            # --- RENDERIZAR PESTAÑAS ---
             with tab_pendientes:
                 renderizar_vista_reporte_pagos(df_rep_total_base, solo_pendientes=True, key_prefix="rep_pend")
 
