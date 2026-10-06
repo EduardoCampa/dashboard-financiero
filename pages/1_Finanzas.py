@@ -36,7 +36,6 @@ def normalizar_empresa(df):
     if df is None or df.empty:
         return df
 
-    # Normalizar OwnedBusinessEntityID a string de entero limpio (ej. "2512")
     if 'OwnedBusinessEntityID' in df.columns:
         id_clean = pd.to_numeric(df['OwnedBusinessEntityID'], errors='coerce').fillna(0).astype(int).astype(str)
         emp_mapped = id_clean.map(MAPA_EMPRESAS)
@@ -46,9 +45,7 @@ def normalizar_empresa(df):
     if 'EmpresaOrigen' not in df.columns:
         df['EmpresaOrigen'] = emp_mapped.fillna('OTRA EMPRESA')
     else:
-        # Si ya existe EmpresaOrigen, rellenamos valores numéricos o vacíos con el mapeo de ID
         df['EmpresaOrigen_Str'] = df['EmpresaOrigen'].astype(str).str.strip()
-        # Intentar mapear por si viene en formato ID numérico en la columna EmpresaOrigen
         emp_desde_col = df['EmpresaOrigen_Str'].map(MAPA_EMPRESAS)
         
         df['EmpresaOrigen'] = emp_desde_col.fillna(emp_mapped).fillna(df['EmpresaOrigen_Str'])
@@ -68,11 +65,11 @@ def filtrar_no_eliminados(df):
         df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
     return df
 
-# --- FUNCIÓN GENERAR EXCEL FACTURACIÓN (DEDUPLICADO SIN REGISTROS DE PAGOS) ---
-def generar_excel_facturacion_ejecutivo(df_datos):
+# --- 1. REPORTE COMPLETO EN EXCEL (CON PAGOS Y DUPLICADOS) ---
+def generar_excel_facturacion_con_pagos(df_datos):
     wb = Workbook()
     ws = wb.active
-    ws.title = "Facturación y NC"
+    ws.title = "Facturación y NC (Con Pagos)"
     ws.views.sheetView[0].showGridLines = True
 
     font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
@@ -90,18 +87,130 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     )
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
 
-    # Deduplicamos df_datos por comprobante para que cada factura/NC aparezca solo una vez
+    row_idx = 1
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=18)
+    cell_t = ws.cell(row=row_idx, column=1, value="REPORTE EJECUTIVO DE FACTURACIÓN Y NC (DETALLE DE PAGOS) — GRUPO SERVYRE")
+    cell_t.font = font_titulo; cell_t.fill = fill_titulo; cell_t.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row_idx].height = 35
+    row_idx += 2
+
+    headers = [
+        'FECHA DOC', 'EMPRESA ORIGEN', 'FOLIO', 'UUID', 'TIPO DOC',
+        'ESTATUS CANCELACIÓN', 'CLIENTE', 'RETENCIONES',
+        'SUBTOTAL', 'DESCUENTO', 'SUBTOTAL 2', 'IMPUESTOS', 'TOTAL',
+        'ESTATUS COMPLEMENTO', 'CENTRO COSTOS', 'MONTO COBRADO', 'FECHA PAGO', 'SALDO PENDIENTE'
+    ]
+
+    for col_num, h in enumerate(headers, 1):
+        c = ws.cell(row=row_idx, column=col_num, value=h)
+        c.font = font_header; c.fill = fill_header; c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = borde_delgado
+    ws.row_dimensions[row_idx].height = 25
+    row_idx += 1
+
+    for _, r in df_datos.iterrows():
+        es_nc = str(r.get('TIPO DOC', '')) == 'NC'
+        f_usar = font_nc if es_nc else font_normal
+
+        ws.cell(row=row_idx, column=1, value=str(r.get('DateDocument', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=2, value=str(r.get('EmpresaOrigen', ''))).alignment = Alignment(horizontal="left")
+        ws.cell(row=row_idx, column=3, value=str(r.get('DocFolio', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=4, value=str(r.get('UUID', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=5, value=str(r.get('TIPO DOC', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=6, value=str(r.get('CFDStatusCancelledName', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=7, value=str(r.get('BusinessEntityName', ''))).alignment = Alignment(horizontal="left")
+        
+        cols_indices = [
+            (8, 'TotalRetention'), (9, 'SubTotal'), (10, 'TotalDiscount'), (11, 'Subtotal2'),
+            (12, 'TotalTax'), (13, 'Total'), (16, 'Amount'), (18, 'SaldoFactura')
+        ]
+        
+        for c_idx, col_name in cols_indices:
+            val = float(r.get(col_name, 0))
+            cell_m = ws.cell(row=row_idx, column=c_idx, value=val)
+            cell_m.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            cell_m.alignment = Alignment(horizontal="right")
+
+        ws.cell(row=row_idx, column=14, value=str(r.get('StatusComplemento', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=15, value=str(r.get('CostCenterName', ''))).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=17, value=str(r.get('DateOperation', ''))).alignment = Alignment(horizontal="center")
+
+        for c_num in range(1, 19):
+            cell_curr = ws.cell(row=row_idx, column=c_num)
+            cell_curr.font = f_usar
+            cell_curr.border = borde_delgado
+
+        ws.row_dimensions[row_idx].height = 18
+        row_idx += 1
+
+    ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
+    for c_num in range(1, 19):
+        ws.cell(row=row_idx, column=c_num).fill = fill_total
+        ws.cell(row=row_idx, column=c_num).border = borde_total
+
+    df_unicos = df_datos.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio'])
+
+    totales_map = {
+        8: df_unicos['TotalRetention'].sum(),
+        9: df_unicos['SubTotal'].sum(),
+        10: df_unicos['TotalDiscount'].sum(),
+        11: df_unicos['Subtotal2'].sum(),
+        12: df_unicos['TotalTax'].sum(),
+        13: df_unicos['Total'].sum(),
+        16: df_datos['Amount'].sum(),
+        18: df_unicos['SaldoFactura'].sum()
+    }
+
+    for c_idx, val_tot in totales_map.items():
+        cell_t_val = ws.cell(row=row_idx, column=c_idx, value=val_tot)
+        cell_t_val.font = font_total
+        cell_t_val.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        cell_t_val.alignment = Alignment(horizontal="right", vertical="center")
+
+    ws.row_dimensions[row_idx].height = 25
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+# --- 2. REPORTE DEDUPLICADO EN EXCEL (SIN PAGOS Y SIN DUPLICADOS) ---
+def generar_excel_facturacion_sin_pagos(df_datos):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Facturación y NC (Sin Pagos)"
+    ws.views.sheetView[0].showGridLines = True
+
+    font_titulo = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
+    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    font_normal = Font(name="Calibri", size=10, color="000000")
+    font_nc = Font(name="Calibri", size=10, color="9C0006")
+    font_total = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
+
+    borde_delgado = Border(
+        left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+    )
+    borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
+
     subset_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio']
     df_unicos = df_datos.drop_duplicates(subset=subset_keys).copy()
 
     row_idx = 1
     ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=16)
-    cell_t = ws.cell(row=row_idx, column=1, value="REPORTE EJECUTIVO DE FACTURACIÓN Y NOTAS DE CRÉDITO — GRUPO SERVYRE")
+    cell_t = ws.cell(row=row_idx, column=1, value="REPORTE EJECUTIVO DE FACTURACIÓN Y NC (SIN PAGOS / DEDUPLICADO) — GRUPO SERVYRE")
     cell_t.font = font_titulo; cell_t.fill = fill_titulo; cell_t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[row_idx].height = 35
     row_idx += 2
 
-    # Encabezados de reporte sin columnas de pagos
     headers = [
         'FECHA DOC', 'EMPRESA ORIGEN', 'FOLIO', 'UUID', 'TIPO DOC',
         'ESTATUS CANCELACIÓN', 'CLIENTE', 'RETENCIONES',
@@ -128,7 +237,6 @@ def generar_excel_facturacion_ejecutivo(df_datos):
         ws.cell(row=row_idx, column=6, value=str(r.get('CFDStatusCancelledName', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=7, value=str(r.get('BusinessEntityName', ''))).alignment = Alignment(horizontal="left")
         
-        # Mapeo ajustado a las 16 columnas
         cols_indices = [
             (8, 'TotalRetention'), (9, 'SubTotal'), (10, 'TotalDiscount'), (11, 'Subtotal2'),
             (12, 'TotalTax'), (13, 'Total'), (16, 'SaldoFactura')
@@ -701,14 +809,28 @@ if submodulo == "📊 Facturación":
         st.markdown("---")
         st.subheader("📋 Tabla General de Facturación y Notas de Crédito")
 
-        st.download_button(
-            label="📊 Descargar Reporte Ejecutivo de Facturación y NC en Excel",
-            data=generar_excel_facturacion_ejecutivo(df_f),
-            file_name="Reporte_Ejecutivo_Facturacion_NC.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_exp_fact_ejec_v3",
-            use_container_width=True
-        )
+        # --- SECCIÓN CON 2 BOTONES DE DESCARGA EN COLUMNAS PARALELAS ---
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            st.download_button(
+                label="📊 Descargar Reporte COMPLETO (Con Pagos / Duplicados)",
+                data=generar_excel_facturacion_con_pagos(df_f),
+                file_name="Reporte_Facturacion_Con_Pagos.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_exp_fact_con_pagos",
+                use_container_width=True
+            )
+        
+        with col_btn2:
+            st.download_button(
+                label="📄 Descargar Reporte DEDUPLICADO (Sin Pagos / 1 Renglón)",
+                data=generar_excel_facturacion_sin_pagos(df_f),
+                file_name="Reporte_Facturacion_Sin_Pagos.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_exp_fact_sin_pagos",
+                use_container_width=True
+            )
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -876,7 +998,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 col_monto_eval = 'Saldo_Pendiente'
                 label_monto = "Saldo Pendiente"
 
-            # Columna limpia estandarizada para búsqueda de folios
             df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
             df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
 
