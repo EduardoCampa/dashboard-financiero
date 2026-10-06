@@ -737,7 +737,7 @@ if submodulo == "📊 Facturación":
             if col_r in df_f.columns:
                 df_f.loc[es_nc_mask, col_r] = -1 * df_f.loc[es_nc_mask, col_r].abs()
 
-        st.markdown("#### ⚙️ Filtros de Selección")
+        st.markdown("#### ⚙️️ Filtros de Selección")
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             if 'EmpresaOrigen' in df_f.columns:
@@ -978,18 +978,9 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
                     col_monto_eval = 'Saldo_Pendiente'
                     label_monto = "Saldo Pendiente"
-                    no_fcog_chk = False
                 else:
-                    no_fcog_chk = st.checkbox("🚫 No se encuentra en FCoG", value=False, key=f"{key_prefix}_no_fcog_chk")
-                    if no_fcog_chk:
-                        if 'En_FCoG' in df_rep_total.columns:
-                            df_rep_total = df_rep_total[df_rep_total['En_FCoG'] == False]
-                        col_monto_eval = 'Total'
-                        label_monto = "Total"
-                        st.info("Mostrando consolidado de Solicitud de Pago y Orden de Compra NO encontradas en FCoG.")
-                    else:
-                        col_monto_eval = 'Total'
-                        label_monto = "Monto Total"
+                    col_monto_eval = 'Total'
+                    label_monto = "Monto Total"
 
                 df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
                 df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -1056,7 +1047,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     empresa_para_excel = empresas_agrupadas[0] if len(empresas_agrupadas) == 1 else "Consolidado"
 
                     df_excel = df_rep_total.copy()
-                    if no_fcog_chk or not solo_pendientes:
+                    if not solo_pendientes:
                         df_excel['Saldo_Pendiente'] = df_excel['Total']
 
                     st.download_button(
@@ -1069,7 +1060,24 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     )
                     st.markdown("---")
 
-                    # LIMITAR A TOP PROVEEDORES PARA QUE CARGUE RÁPIDO SI ES UNIVERSO TOTAL
+                    # BOTONES PARA CONTROLAR DESPLEGADOS
+                    if f"{key_prefix}_expand_all" not in st.session_state:
+                        st.session_state[f"{key_prefix}_expand_all"] = True
+
+                    btn_c1, btn_c2, _ = st.columns([1, 1, 3])
+                    with btn_c1:
+                        if st.button("📂 Ver todo desplegado", key=f"{key_prefix}_btn_exp"):
+                            st.session_state[f"{key_prefix}_expand_all"] = True
+                            st.rerun()
+                    with btn_c2:
+                        if st.button("📁 Ver todo contraído", key=f"{key_prefix}_btn_col"):
+                            st.session_state[f"{key_prefix}_expand_all"] = False
+                            st.rerun()
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    estado_desplegado = st.session_state[f"{key_prefix}_expand_all"]
+
                     max_provs = 30 if not solo_pendientes and not prov_seleccionados else None
 
                     for empresa in sorted(empresas_agrupadas):
@@ -1081,14 +1089,14 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         resumen_proveedor = resumen_proveedor.sort_values(by=col_monto_eval, ascending=False)
 
                         if max_provs and len(resumen_proveedor) > max_provs:
-                            st.caption(f"⚡ Mostrando Top {max_provs} proveedores para acelerar la carga de la vista previa web. (Usa los filtros o descarga Excel para el 100%).")
+                            st.caption(f"⚡ Mostrando Top {max_provs} proveedores para acelerar la carga web. (Usa filtros o descarga el Excel para ver el 100%).")
                             resumen_proveedor = resumen_proveedor.head(max_provs)
 
                         for _, prov_row in resumen_proveedor.iterrows():
                             proveedor = prov_row[col_prov_name]
                             subtotal_prov = prov_row[col_monto_eval]
 
-                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=solo_pendientes):
+                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=estado_desplegado):
                                 df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
                                 monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
 
