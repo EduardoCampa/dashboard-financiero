@@ -68,7 +68,7 @@ def filtrar_no_eliminados(df):
         df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
     return df
 
-# --- FUNCIÓN GENERAR EXCEL FACTURACIÓN ---
+# --- FUNCIÓN GENERAR EXCEL FACTURACIÓN (DEDUPLICADO SIN REGISTROS DE PAGOS) ---
 def generar_excel_facturacion_ejecutivo(df_datos):
     wb = Workbook()
     ws = wb.active
@@ -90,18 +90,23 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     )
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
 
+    # Deduplicamos df_datos por comprobante para que cada factura/NC aparezca solo una vez
+    subset_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio']
+    df_unicos = df_datos.drop_duplicates(subset=subset_keys).copy()
+
     row_idx = 1
-    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=18)
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=16)
     cell_t = ws.cell(row=row_idx, column=1, value="REPORTE EJECUTIVO DE FACTURACIÓN Y NOTAS DE CRÉDITO — GRUPO SERVYRE")
     cell_t.font = font_titulo; cell_t.fill = fill_titulo; cell_t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[row_idx].height = 35
     row_idx += 2
 
+    # Encabezados de reporte sin columnas de pagos
     headers = [
         'FECHA DOC', 'EMPRESA ORIGEN', 'FOLIO', 'UUID', 'TIPO DOC',
         'ESTATUS CANCELACIÓN', 'CLIENTE', 'RETENCIONES',
         'SUBTOTAL', 'DESCUENTO', 'SUBTOTAL 2', 'IMPUESTOS', 'TOTAL',
-        'ESTATUS COMPLEMENTO', 'CENTRO COSTOS', 'MONTO COBRADO', 'FECHA PAGO', 'SALDO PENDIENTE'
+        'ESTATUS COMPLEMENTO', 'CENTRO COSTOS', 'SALDO PENDIENTE'
     ]
 
     for col_num, h in enumerate(headers, 1):
@@ -111,7 +116,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
     ws.row_dimensions[row_idx].height = 25
     row_idx += 1
 
-    for _, r in df_datos.iterrows():
+    for _, r in df_unicos.iterrows():
         es_nc = str(r.get('TIPO DOC', '')) == 'NC'
         f_usar = font_nc if es_nc else font_normal
 
@@ -123,9 +128,10 @@ def generar_excel_facturacion_ejecutivo(df_datos):
         ws.cell(row=row_idx, column=6, value=str(r.get('CFDStatusCancelledName', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=7, value=str(r.get('BusinessEntityName', ''))).alignment = Alignment(horizontal="left")
         
+        # Mapeo ajustado a las 16 columnas
         cols_indices = [
             (8, 'TotalRetention'), (9, 'SubTotal'), (10, 'TotalDiscount'), (11, 'Subtotal2'),
-            (12, 'TotalTax'), (13, 'Total'), (16, 'Amount'), (18, 'SaldoFactura')
+            (12, 'TotalTax'), (13, 'Total'), (16, 'SaldoFactura')
         ]
         
         for c_idx, col_name in cols_indices:
@@ -136,9 +142,8 @@ def generar_excel_facturacion_ejecutivo(df_datos):
 
         ws.cell(row=row_idx, column=14, value=str(r.get('StatusComplemento', ''))).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=15, value=str(r.get('CostCenterName', ''))).alignment = Alignment(horizontal="center")
-        ws.cell(row=row_idx, column=17, value=str(r.get('DateOperation', ''))).alignment = Alignment(horizontal="center")
 
-        for c_num in range(1, 19):
+        for c_num in range(1, 17):
             cell_curr = ws.cell(row=row_idx, column=c_num)
             cell_curr.font = f_usar
             cell_curr.border = borde_delgado
@@ -147,11 +152,9 @@ def generar_excel_facturacion_ejecutivo(df_datos):
         row_idx += 1
 
     ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
-    for c_num in range(1, 19):
+    for c_num in range(1, 17):
         ws.cell(row=row_idx, column=c_num).fill = fill_total
         ws.cell(row=row_idx, column=c_num).border = borde_total
-
-    df_unicos = df_datos.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio'])
 
     totales_map = {
         8: df_unicos['TotalRetention'].sum(),
@@ -160,8 +163,7 @@ def generar_excel_facturacion_ejecutivo(df_datos):
         11: df_unicos['Subtotal2'].sum(),
         12: df_unicos['TotalTax'].sum(),
         13: df_unicos['Total'].sum(),
-        16: df_datos['Amount'].sum(),
-        18: df_unicos['SaldoFactura'].sum()
+        16: df_unicos['SaldoFactura'].sum()
     }
 
     for c_idx, val_tot in totales_map.items():
