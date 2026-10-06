@@ -15,7 +15,6 @@ def formato_mx(val):
     try:
         num = float(val)
         partes = f"{num:,.2f}".split(".")
-        entero_formateado = f"{int(partes[0].replace(',', '')):,}"
         decimales = partes[1] if len(partes) > 1 else "00"
         prefix = "-$" if num < 0 else "$"
         return f"{prefix}{abs(int(partes[0].replace(',', ''))):,}.{decimales}"
@@ -24,12 +23,8 @@ def formato_mx(val):
 
 # --- MAPEO Y NORMALIZACIÓN GLOBAL DE EMPRESA ORIGEN ---
 MAPA_EMPRESAS = {
-    '2510': 'CIVLAT',
-    '2512': 'CIVLAT',
-    '7342': 'SERVYRE',
-    '2510.0': 'CIVLAT',
-    '2512.0': 'CIVLAT',
-    '7342.0': 'SERVYRE'
+    '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
+    '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE'
 }
 
 def normalizar_empresa(df):
@@ -56,7 +51,6 @@ def normalizar_empresa(df):
 
     return df
 
-# --- FUNCIÓN AUXILIAR DE FILTRADO ESTRICTO DE REGISTROS ELIMINADOS (DELETED == 1) ---
 def filtrar_no_eliminados(df):
     if df is None or df.empty:
         return df
@@ -65,7 +59,7 @@ def filtrar_no_eliminados(df):
         df = df[pd.to_numeric(df[col_del], errors='coerce').fillna(0) == 0].copy()
     return df
 
-# --- 1. REPORTE COMPLETO EN EXCEL (CON PAGOS Y DUPLICADOS) ---
+# --- REPORTE EXCEL CON PAGOS ---
 def generar_excel_facturacion_con_pagos(df_datos):
     wb = Workbook()
     ws = wb.active
@@ -81,10 +75,7 @@ def generar_excel_facturacion_con_pagos(df_datos):
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
     fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
 
-    borde_delgado = Border(
-        left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
-        top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
-    )
+    borde_delgado = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
 
     row_idx = 1
@@ -179,7 +170,7 @@ def generar_excel_facturacion_con_pagos(df_datos):
     output.seek(0)
     return output
 
-# --- 2. REPORTE DEDUPLICADO EN EXCEL (SIN PAGOS Y SIN DUPLICADOS) ---
+# --- REPORTE EXCEL SIN PAGOS ---
 def generar_excel_facturacion_sin_pagos(df_datos):
     wb = Workbook()
     ws = wb.active
@@ -195,10 +186,7 @@ def generar_excel_facturacion_sin_pagos(df_datos):
     font_total = Font(name="Calibri", size=11, bold=True, color="000000")
     fill_total = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
 
-    borde_delgado = Border(
-        left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
-        top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
-    )
+    borde_delgado = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
     borde_total = Border(top=Side(style='thin', color='000000'), bottom=Side(style='double', color='000000'))
 
     subset_keys = ['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_datos.columns and 'DocumentID' in df_datos.columns else ['DocFolio']
@@ -292,7 +280,7 @@ def generar_excel_facturacion_sin_pagos(df_datos):
     output.seek(0)
     return output
 
-# --- FUNCIÓN GENERAR EXCEL EJECUTIVO DE PAGOS ---
+# --- REPORTE EXCEL EJECUTIVO ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
@@ -481,7 +469,6 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CON DESGLOSE POR RENGLÓN SI HAY MÚLTIPLES FACTURAS/PAGOS ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     pagos_edo_map = {}
@@ -496,7 +483,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 df_edo_c['Emp_Clean'] = df_edo_c['EmpresaOrigen'].astype(str).str.strip()
                 pagos_edo_map = df_edo_c.groupby(['Emp_Clean', 'DocID_Clean'])['Amount'].sum().to_dict()
 
-    # PREPARAR HOJA DE GASTOS
     df_gs_m = pd.DataFrame()
     if _df_gas is not None and not _df_gas.empty:
         col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'OrdenCompra', 'DocFolio'] if c in _df_gas.columns), None)
@@ -516,7 +502,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             if col_tot_gs:
                 df_gs_m['Monto_GS'] = pd.to_numeric(df_gs_m[col_tot_gs], errors='coerce').fillna(0)
 
-    # PREPARAR HOJA DE FACTURACOMPRA
     df_fc_m = pd.DataFrame()
     if _df_fc is not None and not _df_fc.empty:
         col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'OrdenCompra', 'DocFolio'] if c in _df_fc.columns), None)
@@ -536,7 +521,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             if col_tot_fc:
                 df_fc_m['Monto_FC'] = pd.to_numeric(df_fc_m[col_tot_fc], errors='coerce').fillna(0)
 
-    # 1. SOLICITUDES DE PAGO (SP)
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
@@ -588,7 +572,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
-    # 2. ÓRDENES DE COMPRA (OC)
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
@@ -656,7 +639,6 @@ columnas_sp_visuales = [
     'TotalRetention', 'Total', 'UUID', 'Amount', 'SaldoPagoSP'
 ]
 
-# --- FUNCIÓN AUXILIAR PARA MOSTRAR TABLA DE DATOS CON FILA DE TOTALES ---
 def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     if df_entrada.empty:
         st.info("No hay registros para mostrar.")
@@ -809,9 +791,7 @@ if submodulo == "📊 Facturación":
         st.markdown("---")
         st.subheader("📋 Tabla General de Facturación y Notas de Crédito")
 
-        # --- SECCIÓN CON 2 BOTONES DE DESCARGA EN COLUMNAS PARALELAS ---
         col_btn1, col_btn2 = st.columns(2)
-        
         with col_btn1:
             st.download_button(
                 label="📊 Descargar Reporte COMPLETO (Con Pagos / Duplicados)",
@@ -821,7 +801,6 @@ if submodulo == "📊 Facturación":
                 key="btn_exp_fact_con_pagos",
                 use_container_width=True
             )
-        
         with col_btn2:
             st.download_button(
                 label="📄 Descargar Reporte DEDUPLICADO (Sin Pagos / 1 Renglón)",
@@ -833,7 +812,6 @@ if submodulo == "📊 Facturación":
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
-
         cols_num_fac = ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']
         mostrar_tabla_con_totales(df_f, cols_num_fac, columnas_requeridas)
     else:
@@ -883,7 +861,6 @@ elif submodulo == "📦 Órdenes de Compra y SP":
 
             st.markdown("---")
 
-            # --- KPIS OC ---
             kpi_oc1, kpi_oc2, kpi_oc3 = st.columns(3)
             with kpi_oc1:
                 st.metric("Total OC Registradas", formato_mx(df_oc_f['Total'].sum()))
@@ -937,7 +914,6 @@ elif submodulo == "📦 Órdenes de Compra y SP":
 
             st.markdown("---")
 
-            # --- KPIS SP ---
             kpi_sp1, kpi_sp2, kpi_sp3 = st.columns(3)
             with kpi_sp1:
                 st.metric("Total SP Solicito", formato_mx(df_sp_f['Total'].sum()))
@@ -982,18 +958,21 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
         col_currency = 'Currency' if 'Currency' in df_rep_total_base.columns else None
 
         if col_prov_name and col_folio_name:
-            tab_pendientes, tab_universo = st.tabs([
-                "🔴 Solo Saldo Pendiente", 
-                "🌐 Universo Total (OC y SP)"
-            ])
+            pestana_seleccionada = st.radio(
+                "Selecciona la vista a consultar:",
+                ["🔴 Solo Saldo Pendiente", "🌐 Universo Total (OC y SP)"],
+                horizontal=True,
+                key="radio_rep_pagos_pestanas"
+            )
 
-            # --- FUNCIÓN AUXILIAR EFICIENTE PARA RENDERIZAR VISTAS DE REPORTES DE PAGOS ---
+            st.markdown("---")
+
+            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
-                st.markdown("#### ⚙️ Filtros de Selección Independientes")
+                st.markdown("#### ⚙️ Filtros de Selección")
 
-                # En la pestaña de Saldo Pendiente quitamos la opción de 'No se encuentra en FCoG'
                 if solo_pendientes:
                     if 'Saldo_Pendiente' in df_rep_total.columns:
                         df_rep_total = df_rep_total[df_rep_total['Saldo_Pendiente'] > 1.0]
@@ -1046,7 +1025,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                 st.markdown("---")
 
-                # --- METRICAS / KPIS GENERALES REPORTE ---
+                # --- METRICAS / KPIS ---
                 st.markdown("### 📊 Indicadores Clave de Desempeño (KPIs)")
                 col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
@@ -1090,7 +1069,9 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     )
                     st.markdown("---")
 
-                    # OPTIMIZACIÓN DE RENDIMIENTO: Renderizado masivo sin loops excesivos
+                    # LIMITAR A TOP PROVEEDORES PARA QUE CARGUE RÁPIDO SI ES UNIVERSO TOTAL
+                    max_provs = 30 if not solo_pendientes and not prov_seleccionados else None
+
                     for empresa in sorted(empresas_agrupadas):
                         df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
                         total_empresa = df_emp_subset[col_monto_eval].sum()
@@ -1099,11 +1080,15 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         resumen_proveedor = df_emp_subset.groupby(col_prov_name)[col_monto_eval].sum().reset_index()
                         resumen_proveedor = resumen_proveedor.sort_values(by=col_monto_eval, ascending=False)
 
+                        if max_provs and len(resumen_proveedor) > max_provs:
+                            st.caption(f"⚡ Mostrando Top {max_provs} proveedores para acelerar la carga de la vista previa web. (Usa los filtros o descarga Excel para el 100%).")
+                            resumen_proveedor = resumen_proveedor.head(max_provs)
+
                         for _, prov_row in resumen_proveedor.iterrows():
                             proveedor = prov_row[col_prov_name]
                             subtotal_prov = prov_row[col_monto_eval]
 
-                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=False if not solo_pendientes else True):
+                            with st.expander(f"👤 {proveedor} — {label_monto} Total: {formato_mx(subtotal_prov)}", expanded=solo_pendientes):
                                 df_det_prov = df_emp_subset[df_emp_subset[col_prov_name] == proveedor]
                                 monedas_del_prov = sorted(df_det_prov[col_currency].dropna().unique()) if col_currency else ['MXN']
 
@@ -1132,11 +1117,9 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 else:
                     st.warning("No hay registros que coincidan con los filtros seleccionados.")
 
-            # --- RENDERIZAR PESTAÑAS ---
-            with tab_pendientes:
+            if pestana_seleccionada == "🔴 Solo Saldo Pendiente":
                 renderizar_vista_reporte_pagos(df_rep_total_base, solo_pendientes=True, key_prefix="rep_pend")
-
-            with tab_universo:
+            else:
                 renderizar_vista_reporte_pagos(df_rep_total_base, solo_pendientes=False, key_prefix="rep_univ")
 
     else:
