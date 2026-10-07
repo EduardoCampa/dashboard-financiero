@@ -24,9 +24,12 @@ def formato_mx(val):
 
 # --- MAPEO Y NORMALIZACIÓN GLOBAL DE EMPRESA ORIGEN ---
 MAPA_EMPRESAS = {
-    '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
-    '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE',
-    '3389': 'CIVLAT', '3389.0': 'CIVLAT', '21715': 'CIVLAT', '21715.0': 'CIVLAT'
+    '1': 'CIVLAT', '1.0': 'CIVLAT',
+    '2510': 'CIVLAT', '2510.0': 'CIVLAT',
+    '2512': 'CIVLAT', '2512.0': 'CIVLAT',
+    '3389': 'CIVLAT', '3389.0': 'CIVLAT',
+    '7342': 'SERVYRE', '7342.0': 'SERVYRE',
+    '21715': 'CIVLAT', '21715.0': 'CIVLAT'
 }
 
 def normalizar_empresa(df):
