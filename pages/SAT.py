@@ -614,19 +614,17 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # MAPEO EXACTO DE EQUIVALENCIAS
+    # MAPEO CONSOLIDADO DE EQUIVALENCIAS (Agrupado por Cuenta Contable)
     MAPEO_EQUIVALENCIAS = [
-        {"Concepto SAT": "001/001/Sueldo", "Cuenta Contable": "-001-0001 Sueldo"},
-        {"Concepto SAT": "001/019/Vacaciones a tiempo", "Cuenta Contable": "-001-0009 Vacaciones"},
-        {"Concepto SAT": "002/024/Aguinaldo", "Cuenta Contable": "-001-0011 Aguinaldo"},
-        {"Concepto SAT": "010/033/Premio Puntualidad", "Cuenta Contable": "-001-0006 Premio Puntualidad"},
-        {"Concepto SAT": "021/020/Prima de vacaciones a tiempo", "Cuenta Contable": "-001-0010 Prima Vacacional"},
-        {"Concepto SAT": "021/022/Prima de vacaciones reportada", "Cuenta Contable": "-001-0010 Prima Vacacional"},
-        {"Concepto SAT": "029/032/Vales Despensa", "Cuenta Contable": "-001-0002 Despensa"},
-        {"Concepto SAT": "038/012/Gratificación", "Cuenta Contable": "-001-0004 Compensación"},
-        {"Concepto SAT": "038/013/Compensación", "Cuenta Contable": "-001-0004 Compensación"},
-        {"Concepto SAT": "046/002/Asimilados a Salarios", "Cuenta Contable": "-029-0000 Asimilados"},
-        {"Concepto SAT": "049/034/Premio Asistencia", "Cuenta Contable": "-001-0005 Premio Asistencia"}
+        {"Conceptos SAT": ["001/001/Sueldo"], "Cuenta Contable": "-001-0001 Sueldo"},
+        {"Conceptos SAT": ["001/019/Vacaciones a tiempo"], "Cuenta Contable": "-001-0009 Vacaciones"},
+        {"Conceptos SAT": ["002/024/Aguinaldo"], "Cuenta Contable": "-001-0011 Aguinaldo"},
+        {"Conceptos SAT": ["010/033/Premio Puntualidad"], "Cuenta Contable": "-001-0006 Premio Puntualidad"},
+        {"Conceptos SAT": ["021/020/Prima de vacaciones a tiempo", "021/022/Prima de vacaciones reportada"], "Cuenta Contable": "-001-0010 Prima Vacacional"},
+        {"Conceptos SAT": ["029/032/Vales Despensa"], "Cuenta Contable": "-001-0002 Despensa"},
+        {"Conceptos SAT": ["038/012/Gratificación", "038/013/Compensación"], "Cuenta Contable": "-001-0004 Compensación"},
+        {"Conceptos SAT": ["046/002/Asimilados a Salarios"], "Cuenta Contable": "-029-0000 Asimilados"},
+        {"Conceptos SAT": ["049/034/Premio Asistencia"], "Cuenta Contable": "-001-0005 Premio Asistencia"}
     ]
 
     # MAPEO DE RFCS A EMPRESAS DE CONTABILIDAD
@@ -950,19 +948,20 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             else:
                                 df_cont_emp = pd.DataFrame(columns=['Concepto / Subcuenta', 'Contabilidad'])
 
-                            # Construcción de la tabla cruzada
+                            # Construcción de la tabla cruzada con conceptos agrupados
                             filas_comparativas = []
 
                             for eq in MAPEO_EQUIVALENCIAS:
-                                c_sat_nombre = eq['Concepto SAT']
+                                lista_sat_nombres = eq['Conceptos SAT']
                                 c_cont_nombre = eq['Cuenta Contable']
 
-                                # Cifra SAT
+                                # Cifra SAT (Suma de todos los códigos de esta equivalencia)
                                 monto_sat = 0.0
                                 if not sumas_sat.empty:
-                                    col_match = next((col for col in sumas_sat.index if c_sat_nombre.lower() in col.lower() or col.lower().startswith(c_sat_nombre[:7].lower())), None)
-                                    if col_match:
-                                        monto_sat = float(sumas_sat[col_match])
+                                    for c_sat_nombre in lista_sat_nombres:
+                                        col_match = next((col for col in sumas_sat.index if c_sat_nombre.lower() in col.lower() or col.lower().startswith(c_sat_nombre[:7].lower())), None)
+                                        if col_match:
+                                            monto_sat += float(sumas_sat[col_match])
 
                                 # Cifra Contabilidad
                                 monto_cont = 0.0
@@ -971,8 +970,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                     if not row_c.empty:
                                         monto_cont = float(row_c['Contabilidad'].sum())
 
+                                label_sat_mostrar = " / ".join(lista_sat_nombres)
+
                                 filas_comparativas.append({
-                                    'Concepto SAT': c_sat_nombre,
+                                    'Concepto SAT': label_sat_mostrar,
                                     'Monto SAT': monto_sat,
                                     'Cuenta Contable': c_cont_nombre,
                                     'Monto Contabilidad': monto_cont,
