@@ -585,8 +585,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_balanzas.empty:
                     st.dataframe(
                         df_balanzas.style.format({
-                            'Contabilidad Ingresos': '${:,.2f}', 
-                            'Contabilidad Egresos': '${:,.2f}'
+                            'Contabilidad Ingresos': '${:,.2f}',                              'Contabilidad Egresos': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -599,8 +598,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_detalle_cont.empty:
                     st.dataframe(
                         df_detalle_cont.style.format({
-                            'Saldo Deudor Final': '${:,.2f}', 
-                            'Saldo Acreedor Final': '${:,.2f}'
+                            'Saldo Deudor Final': '${:,.2f}',                              'Saldo Acreedor Final': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -744,8 +742,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS ---
-    def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (USANDO BALANZA RH) ---
+    def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", archivo_balanza_rh="Balanza RH.xlsx", anio_filtro=2026, mes_ini=1, mes_fin=8):
         registros_contables = []
 
         mapeo_conceptos_fijos = {
@@ -762,9 +760,16 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
-            posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
-                       glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
-                       glob.glob(os.path.join(ruta_base, "*.xlsx"))
+            
+            # Priorizar búsqueda del archivo de Balanza RH
+            posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, archivo_balanza_rh)) + \
+                       glob.glob(os.path.join(ruta_base, "**", mes_str, archivo_balanza_rh), recursive=True)
+            
+            # Si no encuentra Balanza RH.xlsx, buscar cualquier .xlsx como respaldo
+            if not posibles:
+                posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
+                           glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
+                           glob.glob(os.path.join(ruta_base, "*.xlsx"))
             
             posibles = list(set(posibles))
             if not posibles:
@@ -881,9 +886,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     st.markdown("---")
     carpeta_nomina_input = st.text_input("Carpeta Raíz de Nómina (XMLs / Excel):", value="Nomina", key="nom_dir")
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
+    archivo_balanza_rh_input = st.text_input("Nombre del archivo de Balanza RH:", value="Balanza RH.xlsx", key="nom_bal_rh_file")
 
     if st.button("🚀 Ejecutar Amarre Nóminas"):
-        with st.spinner("Procesando archivos del SAT y Balanzas Contables para Nómina..."):
+        with st.spinner("Procesando archivos del SAT y Balanzas RH para Nómina..."):
             
             # Cargar SAT Nómina
             df_nomina_sat = cargar_y_procesar_nomina_sat(
@@ -893,9 +899,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 mes_fin=mes_final_nom
             )
 
-            # Cargar Contabilidad Nómina
+            # Cargar Contabilidad Nómina usando preferentemente Balanza RH.xlsx
             df_nomina_resumen, df_nomina_detalle = cargar_y_procesar_nomina_contabilidad(
                 ruta_base=ruta_balanzas_nom_input,
+                archivo_balanza_rh=archivo_balanza_rh_input,
                 anio_filtro=anio_sel_nom,
                 mes_ini=mes_inicial_nom,
                 mes_fin=mes_final_nom

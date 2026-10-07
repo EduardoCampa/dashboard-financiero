@@ -1,6 +1,7 @@
 import glob
 import os
 import io
+import re
 import pandas as pd
 import streamlit as st
 
@@ -21,7 +22,7 @@ nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
 
 
 # ==========================================
-# 1. SUBMÓDULO: AMARRE INGRESOS (CÓDIGO ORIGINAL)
+# 1. SUBMÓDULO: AMARRE INGRESOS
 # ==========================================
 if submodulo_sat == "📊 Amarre Ingresos":
 
@@ -130,7 +131,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                     elif 'E - Egreso' in tipo_doc or tipo_doc.startswith('E'):
                         registros_egresos.append(registro)
 
-            except Exception as e:
+            except Exception:
                 continue
 
         return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
@@ -188,7 +189,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 })
 
                 return df_final
-            except Exception as e:
+            except Exception:
                 return pd.DataFrame()
 
         df_ingresos_master = procesar_hoja("FacturaCliente", es_egreso=False)
@@ -271,7 +272,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                             'Saldo Deudor Final': monto_de,
                             'Saldo Acreedor Final': monto_ac
                         })
-        except Exception as e:
+        except Exception:
             pass
 
         df_det = pd.DataFrame(detalles)
@@ -321,7 +322,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
     ruta_master_input = st.text_input("Archivo Consolidado Master:", value="Consolidado_Master.xlsx")
     ruta_balanzas_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas")
 
-    if st.button("🚀 Ejecutar Procesamiento Completo"):
+    if st.button("🚀 Ejecutar Amarre Ingresos"):
         with st.spinner("Procesando información, balanzas por mes y conciliando..."):
             df_ingresos_sat, df_egresos_sat = cargar_y_procesar_sat(carpeta_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
             df_ingresos_master, df_egresos_master = cargar_y_procesar_master(ruta_master_input, anio_filtro=anio_sel, mes_ini=mes_inicial, mes_fin=mes_final)
@@ -331,7 +332,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "⚖️ 1.- Comparativos", 
+                "⚖ 1.- Comparativos", 
                 "📑 2.- Ingresos y Egresos de los XML", 
                 "📁 3.- Ingresos y Egresos Master",
                 "🔍 4.- Conciliacion por UUID",
@@ -584,7 +585,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_balanzas.empty:
                     st.dataframe(
                         df_balanzas.style.format({
-                            'Contabilidad Ingresos': '${:,.2f}',                              'Contabilidad Egresos': '${:,.2f}'
+                            'Contabilidad Ingresos': '${:,.2f}', 
+                            'Contabilidad Egresos': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -597,7 +599,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_detalle_cont.empty:
                     st.dataframe(
                         df_detalle_cont.style.format({
-                            'Saldo Deudor Final': '${:,.2f}',                              'Saldo Acreedor Final': '${:,.2f}'
+                            'Saldo Deudor Final': '${:,.2f}', 
+                            'Saldo Acreedor Final': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -613,7 +616,259 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # Controles de Filtros para Nómina
+    # MAPEO EXACTO DE EQUIVALENCIAS
+    MAPEO_EQUIVALENCIAS = [
+        {"Concepto SAT": "001/001/Sueldo", "Cuenta Contable": "-001-0001 Sueldo"},
+        {"Concepto SAT": "001/019/Vacaciones a tiempo", "Cuenta Contable": "-001-0009 Vacaciones"},
+        {"Concepto SAT": "002/024/Aguinaldo", "Cuenta Contable": "-001-0011 Aguinaldo"},
+        {"Concepto SAT": "010/033/Premio Puntualidad", "Cuenta Contable": "-001-0006 Premio Puntualidad"},
+        {"Concepto SAT": "021/020/Prima de vacaciones a tiempo", "Cuenta Contable": "-001-0010 Prima Vacacional"},
+        {"Concepto SAT": "021/022/Prima de vacaciones reportada", "Cuenta Contable": "-001-0010 Prima Vacacional"},
+        {"Concepto SAT": "029/032/Vales Despensa", "Cuenta Contable": "-001-0002 Despensa"},
+        {"Concepto SAT": "038/012/Gratificación", "Cuenta Contable": "-001-0004 Compensación"},
+        {"Concepto SAT": "038/013/Compensación", "Cuenta Contable": "-001-0004 Compensación"},
+        {"Concepto SAT": "046/002/Asimilados a Salarios", "Cuenta Contable": "-029-0000 Asimilados"},
+        {"Concepto SAT": "049/034/Premio Asistencia", "Cuenta Contable": "-001-0005 Premio Asistencia"}
+    ]
+
+    # MAPEO DE RFCS A EMPRESAS DE CONTABILIDAD
+    MAPEO_RFC_EMPRESA = {
+        'CIV141222JD5': 'CIVLAT',
+        'EFC840210UI4': 'EFCO',
+        'GFE811209FZ2': 'FERVIC',
+        'SER970728JN8': 'SERVYRE'
+    }
+
+    # --- 1. PROCESAMIENTO SAT NÓMINAS ---
+    def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
+        if not os.path.exists(carpeta_nomina):
+            return pd.DataFrame()
+
+        archivos = (
+            glob.glob(os.path.join(carpeta_nomina, "**", "*.xlsx"), recursive=True) + 
+            glob.glob(os.path.join(carpeta_nomina, "*.xlsx"))
+        )
+        archivos = list(set(archivos))
+        dfs_procesados = []
+
+        for arch in archivos:
+            try:
+                nombre_base = os.path.basename(arch).upper()
+                rfc_archivo = nombre_base.split('-')[0].strip() if '-' in nombre_base else ""
+
+                xls = pd.ExcelFile(arch)
+                for sheet in xls.sheet_names:
+                    df = pd.read_excel(xls, sheet_name=sheet)
+                    if df.empty:
+                        continue
+
+                    df.columns = [str(c).strip() for c in df.columns]
+
+                    col_rfc = next((c for c in df.columns if 'rfc' in c.lower() and 'emisor' in c.lower()), None)
+                    if not col_rfc:
+                        col_rfc = next((c for c in df.columns if 'rfc' in c.lower()), None)
+
+                    if col_rfc:
+                        rfc_val = df[col_rfc].astype(str).str.strip().str.upper()
+                        df['Empresa_RFC_Clean'] = rfc_val.map(lambda r: MAPEO_RFC_EMPRESA.get(r, r))
+                    elif rfc_archivo:
+                        df['Empresa_RFC_Clean'] = MAPEO_RFC_EMPRESA.get(rfc_archivo, rfc_archivo)
+                    else:
+                        df['Empresa_RFC_Clean'] = "EMPRESA NÓMINA"
+
+                    col_fecha = next((c for c in df.columns if 'fecha' in c.lower() and ('pago' in c.lower() or 'emision' in c.lower() or 'certific' in c.lower())), None)
+                    if not col_fecha:
+                        col_fecha = next((c for c in df.columns if 'fecha' in c.lower()), None)
+
+                    if not col_fecha:
+                        continue
+
+                    df['Fecha_Dt'] = pd.to_datetime(df[col_fecha], errors='coerce')
+                    df = df[df['Fecha_Dt'].notnull()].copy()
+
+                    if anio_filtro:
+                        df = df[df['Fecha_Dt'].dt.year == int(anio_filtro)]
+                    if mes_ini and mes_fin:
+                        df = df[(df['Fecha_Dt'].dt.month >= int(mes_ini)) & (df['Fecha_Dt'].dt.month <= int(mes_fin))]
+
+                    if df.empty:
+                        continue
+
+                    df['Mes_Pago'] = df['Fecha_Dt'].dt.strftime('%Y-%m')
+
+                    cols_conceptos = []
+                    inicio_conceptos = False
+
+                    for c in df.columns:
+                        c_trim = c.strip()
+                        if '001/001' in c_trim or c_trim.startswith('001/001'):
+                            inicio_conceptos = True
+
+                        if inicio_conceptos:
+                            val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
+                            if val_num.notnull().any() and val_num.abs().sum() > 0:
+                                df[c] = val_num.fillna(0.0)
+                                cols_conceptos.append(c)
+
+                    if not cols_conceptos:
+                        for c in df.columns:
+                            c_trim = c.strip()
+                            if any(c_trim.startswith(prefix) for prefix in ['001/', '002/', '003/', '004/', '005/', '009/', 'Total']):
+                                val_num = pd.to_numeric(df[c].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False), errors='coerce')
+                                if val_num.notnull().any() and val_num.abs().sum() > 0:
+                                    df[c] = val_num.fillna(0.0)
+                                    cols_conceptos.append(c)
+
+                    if not cols_conceptos:
+                        continue
+
+                    df_agg = df.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_conceptos].sum().reset_index()
+                    dfs_procesados.append(df_agg)
+
+            except Exception:
+                continue
+
+        if not dfs_procesados:
+            return pd.DataFrame()
+
+        df_consolidado = pd.concat(dfs_procesados, ignore_index=True)
+        cols_totales = [c for c in df_consolidado.columns if c not in ['Empresa_RFC_Clean', 'Mes_Pago']]
+        df_final = df_consolidado.groupby(['Empresa_RFC_Clean', 'Mes_Pago'])[cols_totales].sum().reset_index()
+
+        df_final = df_final.rename(columns={'Empresa_RFC_Clean': 'Empresa / RFC'})
+        
+        for c in cols_totales:
+            if df_final[c].abs().sum() == 0:
+                df_final.drop(columns=[c], inplace=True)
+
+        return df_final
+
+
+    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS ---
+    def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", anio_filtro=2026, mes_ini=1, mes_fin=8):
+        registros_contables = []
+
+        mapeo_conceptos_fijos = {
+            '0001': '-001-0001 Sueldo',
+            '0002': '-001-0002 Despensa',
+            '0004': '-001-0004 Compensación',
+            '0005': '-001-0005 Premio Asistencia',
+            '0006': '-001-0006 Premio Puntualidad',
+            '0008': '-001-0008 Gratificación Extraordinaria',
+            '0009': '-001-0009 Vacaciones',
+            '0010': '-001-0010 Prima Vacacional',
+            '0011': '-001-0011 Aguinaldo'
+        }
+
+        for m in range(int(mes_ini), int(mes_fin) + 1):
+            mes_str = f"{m:02d}"
+            posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
+                       glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
+                       glob.glob(os.path.join(ruta_base, "*.xlsx"))
+            
+            posibles = list(set(posibles))
+            if not posibles:
+                continue
+
+            for ruta_balanza in posibles:
+                try:
+                    nombre_archivo = os.path.basename(ruta_balanza).upper()
+                    xls = pd.ExcelFile(ruta_balanza)
+
+                    for hoja in xls.sheet_names:
+                        hoja_upper = hoja.strip().upper()
+
+                        if hoja_upper not in ['HOJA1', 'HOJA 1', 'RESUMEN', 'BALANZA', 'SHEET1']:
+                            nombre_empresa = hoja_upper
+                        elif 'EFCO' in nombre_archivo:
+                            nombre_empresa = 'EFCO'
+                        elif 'CIVLAT' in nombre_archivo:
+                            nombre_empresa = 'CIVLAT'
+                        elif 'FERVIC' in nombre_archivo:
+                            nombre_empresa = 'FERVIC'
+                        elif 'SERVYRE' in nombre_archivo:
+                            nombre_empresa = 'SERVYRE'
+                        else:
+                            nombre_empresa = hoja_upper
+
+                        df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
+                        if df_hoja.empty or df_hoja.shape[1] < 3:
+                            continue
+
+                        idx_cargos_e = 4
+                        for idx_c, col_name in enumerate(df_hoja.columns):
+                            c_str = str(col_name).strip().upper()
+                            if 'CARGO' in c_str or 'DEBITO' in c_str:
+                                idx_cargos_e = idx_c
+                                break
+
+                        for _, row in df_hoja.iterrows():
+                            cta = str(row.iloc[0]).strip()
+                            if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
+                                continue
+
+                            cta_limpia = cta.replace(' ', '')
+                            nom_cuenta = str(row.iloc[1]).strip().title() if df_hoja.shape[1] > 1 else ""
+
+                            match = re.match(r'^(5\d\d|6\d\d)-(\d+)-(001|029|056)-(\d{4})$', cta_limpia)
+
+                            if match:
+                                grupo, obra, dept, subcta = match.groups()
+
+                                es_valida = False
+                                label_resumen = ""
+
+                                if dept in ['001', '056'] and subcta != '0000':
+                                    es_valida = True
+                                    if subcta in mapeo_conceptos_fijos:
+                                        label_resumen = mapeo_conceptos_fijos[subcta]
+                                    else:
+                                        label_resumen = f"-{dept}-{subcta} {nom_cuenta}".strip()
+
+                                elif dept == '029' and subcta == '0000':
+                                    es_valida = True
+                                    label_resumen = "-029-0000 Asimilados"
+
+                                if es_valida:
+                                    val_cargo = row.iloc[idx_cargos_e] if df_hoja.shape[1] > idx_cargos_e else 0.0
+                                    monto_cargo = float(pd.to_numeric(str(val_cargo).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+
+                                    if monto_cargo > 0.0:
+                                        registros_contables.append({
+                                            'Cuenta Completa': f"{cta_limpia} {nom_cuenta}".strip(),
+                                            'Subcuenta Resumen': label_resumen,
+                                            'Empresa': nombre_empresa,
+                                            'Monto': monto_cargo
+                                        })
+                except Exception:
+                    continue
+
+        df_cont = pd.DataFrame(registros_contables)
+        if df_cont.empty:
+            return pd.DataFrame(), pd.DataFrame()
+
+        pivot_resumen = pd.pivot_table(
+            df_cont,
+            index='Subcuenta Resumen',
+            columns='Empresa',
+            values='Monto',
+            aggfunc='sum',
+            fill_value=0.0
+        ).reset_index().rename(columns={'Subcuenta Resumen': 'Concepto / Subcuenta'})
+
+        pivot_detalle = pd.pivot_table(
+            df_cont,
+            index='Cuenta Completa',
+            columns='Empresa',
+            values='Monto',
+            aggfunc='sum',
+            fill_value=0.0
+        ).reset_index().rename(columns={'Cuenta Completa': 'Cuenta Contable'})
+
+        return pivot_resumen, pivot_detalle
+
+
+    # --- CONTROLES DE FILTRO ---
     col_a_nom, col_mini_nom, col_mfin_nom = st.columns([1, 1, 1])
 
     with col_a_nom:
@@ -624,16 +879,191 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         mes_final_nom = st.selectbox("Mes Final:", list(range(1, 13)), index=7, format_func=lambda x: nombres_meses[x-1], key="nom_mfin")
 
     st.markdown("---")
-    carpeta_nomina_input = st.text_input("Carpeta Raíz de Nómina (XMLs):", value="Nomina", key="nom_dir")
+    carpeta_nomina_input = st.text_input("Carpeta Raíz de Nómina (XMLs / Excel):", value="Nomina", key="nom_dir")
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
 
-    # Subpestañas del Submódulo de Nómina
-    subtab_nom_sat, subtab_nom_cont = st.tabs(["📑 SAT", "📊 Contabilidad"])
+    if st.button("🚀 Ejecutar Amarre Nóminas"):
+        with st.spinner("Procesando archivos del SAT y Balanzas Contables para Nómina..."):
+            
+            # Cargar SAT Nómina
+            df_nomina_sat = cargar_y_procesar_nomina_sat(
+                carpeta_nomina=carpeta_nomina_input,
+                anio_filtro=anio_sel_nom,
+                mes_ini=mes_inicial_nom,
+                mes_fin=mes_final_nom
+            )
 
-    with subtab_nom_sat:
-        st.markdown("#### 📋 Consolidado de Nómina SAT por RFC, Mes y Conceptos")
-        st.info("Espacio preparado para la tabla consolidada por RFC y conceptos de Nómina.")
+            # Cargar Contabilidad Nómina
+            df_nomina_resumen, df_nomina_detalle = cargar_y_procesar_nomina_contabilidad(
+                ruta_base=ruta_balanzas_nom_input,
+                anio_filtro=anio_sel_nom,
+                mes_ini=mes_inicial_nom,
+                mes_fin=mes_final_nom
+            )
 
-    with subtab_nom_cont:
-        st.markdown("#### 📊 Contabilidad de Nómina")
-        st.info("Espacio preparado para el detalle contable de Nómina.")
+            st.success("✅ Procesamiento de Amarre de Nóminas completado.")
+
+            subtab_nom_comp, subtab_nom_sat, subtab_nom_cont = st.tabs([
+                "⚖️ Resumen Comparativo", 
+                "📑 SAT", 
+                "📊 Contabilidad"
+            ])
+
+            # PESTAÑA 1: RESUMEN COMPARATIVO CON PESTAÑAS POR EMPRESA
+            with subtab_nom_comp:
+                st.markdown(f"### ⚖️ Amarre Comparativo SAT vs Contabilidad ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                
+                # Obtener la lista unificada de empresas
+                empresas_sat = df_nomina_sat['Empresa / RFC'].unique() if not df_nomina_sat.empty else []
+                empresas_cont = [c for c in df_nomina_resumen.columns if c != 'Concepto / Subcuenta'] if not df_nomina_resumen.empty else []
+                
+                todas_empresas = sorted(list(set(empresas_sat).union(set(empresas_cont))))
+
+                if todas_empresas:
+                    # Crear dinámicamente pestañas por cada empresa
+                    tabs_empresas = st.tabs([f"🏢 {emp}" for emp in todas_empresas])
+
+                    for idx, emp_nombre in enumerate(todas_empresas):
+                        with tabs_empresas[idx]:
+                            st.markdown(f"#### 🏢 Resumen de Amarre para: `{emp_nombre}`")
+
+                            # Sumas SAT
+                            if not df_nomina_sat.empty and emp_nombre in df_nomina_sat['Empresa / RFC'].values:
+                                df_sat_emp = df_nomina_sat[df_nomina_sat['Empresa / RFC'] == emp_nombre]
+                                cols_conceptos_sat = [c for c in df_sat_emp.columns if c not in ['Empresa / RFC', 'Mes_Pago']]
+                                sumas_sat = df_sat_emp[cols_conceptos_sat].sum()
+                            else:
+                                sumas_sat = pd.Series(dtype=float)
+
+                            # Datos Contabilidad
+                            if not df_nomina_resumen.empty and emp_nombre in df_nomina_resumen.columns:
+                                df_cont_emp = df_nomina_resumen[['Concepto / Subcuenta', emp_nombre]].rename(
+                                    columns={emp_nombre: 'Contabilidad'}
+                                )
+                            else:
+                                df_cont_emp = pd.DataFrame(columns=['Concepto / Subcuenta', 'Contabilidad'])
+
+                            # Construcción de la tabla cruzada
+                            filas_comparativas = []
+
+                            for eq in MAPEO_EQUIVALENCIAS:
+                                c_sat_nombre = eq['Concepto SAT']
+                                c_cont_nombre = eq['Cuenta Contable']
+
+                                # Cifra SAT
+                                monto_sat = 0.0
+                                if not sumas_sat.empty:
+                                    col_match = next((col for col in sumas_sat.index if c_sat_nombre.lower() in col.lower() or col.lower().startswith(c_sat_nombre[:7].lower())), None)
+                                    if col_match:
+                                        monto_sat = float(sumas_sat[col_match])
+
+                                # Cifra Contabilidad
+                                monto_cont = 0.0
+                                if not df_cont_emp.empty:
+                                    row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].str.startswith(c_cont_nombre[:9])]
+                                    if not row_c.empty:
+                                        monto_cont = float(row_c['Contabilidad'].sum())
+
+                                filas_comparativas.append({
+                                    'Concepto SAT': c_sat_nombre,
+                                    'Monto SAT': monto_sat,
+                                    'Cuenta Contable': c_cont_nombre,
+                                    'Monto Contabilidad': monto_cont,
+                                    'Diferencia (SAT - Contab)': monto_sat - monto_cont
+                                })
+
+                            df_comp_final = pd.DataFrame(filas_comparativas)
+
+                            st.dataframe(
+                                df_comp_final.style.format({
+                                    'Monto SAT': '${:,.2f}',
+                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                            # Descarga Excel individual
+                            output_comp = io.BytesIO()
+                            with pd.ExcelWriter(output_comp, engine='openpyxl') as writer:
+                                df_comp_final.to_excel(writer, sheet_name=f'Amarre {emp_nombre}', index=False)
+                            excel_data_comp = output_comp.getvalue()
+
+                            st.download_button(
+                                label=f"📥 Descargar Amarre Comparativo de {emp_nombre} en Excel",
+                                data=excel_data_comp,
+                                file_name=f"Amarre_{emp_nombre}_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"btn_dl_{emp_nombre}"
+                            )
+
+                else:
+                    st.info("No se encontraron empresas con datos para comparar.")
+
+
+            # PESTAÑA 2: SAT NÓMINA
+            with subtab_nom_sat:
+                st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC / Empresa, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                if not df_nomina_sat.empty:
+                    num_cols = [col for col in df_nomina_sat.columns if col not in ['Empresa / RFC', 'Mes_Pago']]
+                    format_dict = {col: '${:,.2f}' for col in num_cols}
+                    
+                    st.dataframe(
+                        df_nomina_sat.style.format(format_dict),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    output_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_nom, engine='openpyxl') as writer:
+                        df_nomina_sat.to_excel(writer, sheet_name='Consolidado Nómina SAT', index=False)
+                    excel_data_nom = output_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Nómina SAT en Excel",
+                        data=excel_data_nom,
+                        file_name=f"Consolidado_Nomina_SAT_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
+
+            # PESTAÑA 3: CONTABILIDAD NÓMINA
+            with subtab_nom_cont:
+                if not df_nomina_resumen.empty:
+                    st.markdown(f"#### 📊 1. Resumen Contable de Nómina por Empresa y Concepto ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_res = [col for col in df_nomina_resumen.columns if col != 'Concepto / Subcuenta']
+                    format_dict_res = {col: '${:,.2f}' for col in empresas_cols_res}
+
+                    st.dataframe(
+                        df_nomina_resumen.style.format(format_dict_res),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    st.markdown("---")
+
+                    st.markdown(f"#### 📋 2. Detalle Completo de Cuentas por Obra ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_det = [col for col in df_nomina_detalle.columns if col != 'Cuenta Contable']
+                    format_dict_det = {col: '${:,.2f}' for col in empresas_cols_det}
+
+                    st.dataframe(
+                        df_nomina_detalle.style.format(format_dict_det),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    output_cont_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_cont_nom, engine='openpyxl') as writer:
+                        df_nomina_resumen.to_excel(writer, sheet_name='Resumen Nómina', index=False)
+                        df_nomina_detalle.to_excel(writer, sheet_name='Detalle Cuentas', index=False)
+                    excel_data_cont_nom = output_cont_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Contable de Nómina en Excel",
+                        data=excel_data_cont_nom,
+                        file_name=f"Consolidado_Contable_Nomina_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron cuentas que coincidan con las reglas definidas en las balanzas del periodo seleccionado.")
