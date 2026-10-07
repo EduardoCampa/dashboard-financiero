@@ -1002,13 +1002,16 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
             with tab_cont:
                 st.markdown(f"### 📊 Contabilidad y Balanzas (Mes: {nombres_meses[mes_final-1]} {anio_sel})")
-                st.markdown("Fórmula aplicada:\n* **Ingresos:** `410-00000-000-0000` (+) `411-00000-000-0000` (-) `423-00000-000-0000`\n* **Egresos:** `420-00000-000-0000` (+) `421-00000-000-0000`")
+                st.markdown("""Fórmula aplicada:
+* **Ingresos:** `410-00000-000-0000` (+) `411-00000-000-0000` (-) `423-00000-000-0000`
+* **Egresos:** `420-00000-000-0000` (+) `421-00000-000-0000`""")
                 
                 st.markdown("#### 📊 Resumen Contable por Pestaña de Balanza")
                 if not df_balanzas.empty:
                     st.dataframe(
                         df_balanzas.style.format({
-                            'Contabilidad Ingresos': '${:,.2f}',                             'Contabilidad Egresos': '${:,.2f}'
+                            'Contabilidad Ingresos': '${:,.2f}',
+                            'Contabilidad Egresos': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -1021,7 +1024,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_detalle_cont.empty:
                     st.dataframe(
                         df_detalle_cont.style.format({
-                            'Saldo Deudor Final': '${:,.2f}',                             'Saldo Acreedor Final': '${:,.2f}'
+                            'Saldo Deudor Final': '${:,.2f}',
+                            'Saldo Acreedor Final': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -1398,4 +1402,98 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             dict_dfs_para_excel[emp_nombre] = df_comp_final
 
                             st.dataframe(
-                                df_comp_final.style.format
+                                df_comp_final.style.format({
+                                    'Monto SAT': '${:,.2f}',
+                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                    st.markdown("---")
+
+                    # BOTÓN ÚNICO DE DESCARGA
+                    excel_completo_bytes = generar_excel_ejecutivo_completo_nomina(
+                        dict_dfs_empresas=dict_dfs_para_excel,
+                        periodo_str=periodo_texto
+                    )
+
+                    st.download_button(
+                        label="📥 Descargar Reporte Completo de Nómina en Excel (Todas las Empresas + Consolidado)",
+                        data=excel_completo_bytes,
+                        file_name=f"Amarre_Nomina_Ejecutivo_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="btn_dl_completo_nomina",
+                        use_container_width=True
+                    )
+
+                else:
+                    st.info("No se encontraron empresas con datos para comparar.")
+
+
+            # PESTAÑA 2: SAT NÓMINA
+            with subtab_nom_sat:
+                st.markdown(f"#### 📋 Consolidado de Nómina SAT por RFC / Empresa, Mes y Conceptos ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                if not df_nomina_sat.empty:
+                    num_cols = [col for col in df_nomina_sat.columns if col not in ['Empresa / RFC', 'Mes_Pago']]
+                    format_dict = {col: '${:,.2f}' for col in num_cols}
+                    
+                    st.dataframe(
+                        df_nomina_sat.style.format(format_dict),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    output_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_nom, engine='openpyxl') as writer:
+                        df_nomina_sat.to_excel(writer, sheet_name='Consolidado Nómina SAT', index=False)
+                    excel_data_nom = output_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Nómina SAT en Excel",
+                        data=excel_data_nom,
+                        file_name=f"Consolidado_Nomina_SAT_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron registros de nómina a partir de los conceptos 001/001 en la carpeta especificada para el periodo seleccionado.")
+
+            # PESTAÑA 3: CONTABILIDAD NÓMINA
+            with subtab_nom_cont:
+                if not df_nomina_resumen.empty:
+                    st.markdown(f"#### 📊 1. Resumen Contable de Nómina por Empresa y Concepto ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_res = [col for col in df_nomina_resumen.columns if col != 'Concepto / Subcuenta']
+                    format_dict_res = {col: '${:,.2f}' for col in empresas_cols_res}
+
+                    st.dataframe(
+                        df_nomina_resumen.style.format(format_dict_res),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    st.markdown("---")
+
+                    st.markdown(f"#### 📋 2. Detalle Completo de Cuentas por Obra ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                    empresas_cols_det = [col for col in df_nomina_detalle.columns if col != 'Cuenta Contable']
+                    format_dict_det = {col: '${:,.2f}' for col in empresas_cols_det}
+
+                    st.dataframe(
+                        df_nomina_detalle.style.format(format_dict_det),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    output_cont_nom = io.BytesIO()
+                    with pd.ExcelWriter(output_cont_nom, engine='openpyxl') as writer:
+                        df_nomina_resumen.to_excel(writer, sheet_name='Resumen Nómina', index=False)
+                        df_nomina_detalle.to_excel(writer, sheet_name='Detalle Cuentas', index=False)
+                    excel_data_cont_nom = output_cont_nom.getvalue()
+
+                    st.download_button(
+                        label="📥 Descargar Consolidado Contable de Nómina en Excel",
+                        data=excel_data_cont_nom,
+                        file_name=f"Consolidado_Contable_Nomina_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron cuentas que coincidan con las reglas definidas en las balanzas del periodo seleccionado.")
