@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -24,12 +23,8 @@ def formato_mx(val):
 
 # --- MAPEO Y NORMALIZACIÓN GLOBAL DE EMPRESA ORIGEN ---
 MAPA_EMPRESAS = {
-    '1': 'CIVLAT', '1.0': 'CIVLAT',
-    '2510': 'CIVLAT', '2510.0': 'CIVLAT',
-    '2512': 'CIVLAT', '2512.0': 'CIVLAT',
-    '3389': 'CIVLAT', '3389.0': 'CIVLAT',
-    '7342': 'SERVYRE', '7342.0': 'SERVYRE',
-    '21715': 'CIVLAT', '21715.0': 'CIVLAT'
+    '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
+    '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE'
 }
 
 def normalizar_empresa(df):
@@ -415,10 +410,31 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     output.seek(0)
     return output
 
-ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
+# ============================================================
+# CONFIGURACIÓN ROBUSTA DEL MASTER
+# ============================================================
+# Siempre toma el Master desde la misma carpeta donde está este script.
+# Esto evita que Streamlit termine leyendo otra copia del archivo.
+ruta_archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Consolidado_Master.xlsx")
+
+def normalizar_folio(valor):
+    """Normaliza folios como SP3133, sp3133, SP3133.0, 3133, etc."""
+    if pd.isna(valor):
+        return ""
+    texto = str(valor).strip().upper()
+    if texto.endswith('.0'):
+        texto = texto[:-2]
+    return texto.strip()
+
+def folio_clave(valor):
+    """Obtiene la clave numérica/limpia del folio para comparar SP/OC."""
+    texto = normalizar_folio(valor)
+    if texto.startswith('SP') or texto.startswith('OC'):
+        texto = texto[2:]
+    return texto.strip()
 
 @st.cache_data
-def cargar_datos_finanzas(path):
+def cargar_datos_finanzas(path, archivo_mtime, archivo_size):
     if not os.path.exists(path):
         return None, None, None, None, None, None
     try:
@@ -472,7 +488,18 @@ def cargar_datos_finanzas(path):
         st.error(f"Error al cargar datos de finanzas: {e}")
         return None, None, None, None, None, None
 
-df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
+# El timestamp y tamaño forman parte de la clave del cache.
+# Si se reemplaza/actualiza el Master, Streamlit vuelve a leerlo.
+if not os.path.exists(ruta_archivo):
+    st.error(f"No se encontró el archivo Master en: {ruta_archivo}")
+    st.stop()
+
+_archivo_mtime = os.path.getmtime(ruta_archivo)
+_archivo_size = os.path.getsize(ruta_archivo)
+
+df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(
+    ruta_archivo, _archivo_mtime, _archivo_size
+)
 
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
@@ -488,55 +515,143 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 df_edo_c['Emp_Clean'] = df_edo_c['EmpresaOrigen'].astype(str).str.strip()
                 pagos_edo_map = df_edo_c.groupby(['Emp_Clean', 'DocID_Clean'])['Amount'].sum().to_dict()
 
+    df_gs_m = pd.DataFrame()
+    if _df_gas is not None and not _df_gas.empty:
+        col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'OrdenCompra', 'DocFolio'] if c in _df_gas.columns), None)
+        col_doc_gs = 'DocumentID' if 'DocumentID' in _df_gas.columns else ('Document' if 'Document' in _df_gas.columns else None)
+        col_uuid_gs = next((c for c in ['CFDIFolioFiscal', 'UUID', 'FolioFiscal'] if c in _df_gas.columns), None)
+        col_emp_gs = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_gas.columns), None)
+        col_tot_gs = next((c for c in ['TotalM', 'Total', 'SubTotal'] if c in _df_gas.columns), None)
+
+        if col_sp_gs and col_doc_gs:
+            df_gs_m = _df_gas.copy()
+            df_gs_m['Folio_Match'] = df_gs_m[col_sp_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+            df_gs_m['DocumentID_GS'] = df_gs_m[col_doc_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+            if col_emp_gs:
+                df_gs_m['Emp_GS'] = df_gs_m[col_emp_gs].astype(str).str.strip()
+            if col_uuid_gs:
+                df_gs_m['UUID_GS'] = df_gs_m[col_uuid_gs].astype(str).str.strip()
+            if col_tot_gs:
+                df_gs_m['Monto_GS'] = pd.to_numeric(df_gs_m[col_tot_gs], errors='coerce').fillna(0)
+
+    df_fc_m = pd.DataFrame()
+    if _df_fc is not None and not _df_fc.empty:
+        col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'OrdenCompra', 'DocFolio'] if c in _df_fc.columns), None)
+        col_doc_fc = 'DocumentID' if 'DocumentID' in _df_fc.columns else ('Document' if 'Document' in _df_fc.columns else None)
+        col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
+        col_emp_fc = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_fc.columns), None)
+        col_tot_fc = next((c for c in ['TotalM', 'Total', 'SubTotal'] if c in _df_fc.columns), None)
+
+        if col_sp_fc and col_doc_fc:
+            df_fc_m = _df_fc.copy()
+            df_fc_m['Folio_Match'] = df_fc_m[col_sp_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+            df_fc_m['DocumentID_FC'] = df_fc_m[col_doc_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
+            if col_emp_fc:
+                df_fc_m['Emp_FC'] = df_fc_m[col_emp_fc].astype(str).str.strip()
+            if col_uuid_fc:
+                df_fc_m['UUID_FC'] = df_fc_m[col_uuid_fc].astype(str).str.strip()
+            if col_tot_fc:
+                df_fc_m['Monto_FC'] = pd.to_numeric(df_fc_m[col_tot_fc], errors='coerce').fillna(0)
+
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
-            folio_raw = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
-            folio_num = re.sub(r'^(SP|OC)', '', folio_raw).strip()
-            folio_display = f"SP{folio_num}" if folio_num else folio_raw
-
+            folio_sp = normalizar_folio(row.get('DocFolio', ''))
             emp = str(row.get('EmpresaOrigen', '')).strip()
-            doc_id = str(row.get('DocumentID', '')).replace('.0', '').strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
-            m_pagado = pagos_edo_map.get((emp, doc_id), 0.0) if doc_id else 0.0
+            sub_items = []
 
-            r_copy = row.to_dict()
-            r_copy['DocFolio'] = folio_display
-            r_copy['DocumentID'] = doc_id
-            r_copy['UUID'] = str(row.get('UUID', '')) if 'UUID' in row and pd.notnull(row.get('UUID')) else ''
-            r_copy['Total'] = total_doc
-            r_copy['Amount'] = m_pagado
-            r_copy['SaldoPagoSP'] = max(0.0, total_doc - m_pagado)
-            r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoSP']
-            r_copy['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
-            rows_sp.append(r_copy)
+            if not df_gs_m.empty:
+                sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_sp) & (df_gs_m['Emp_GS'] == emp)] if 'Emp_GS' in df_gs_m.columns else df_gs_m[df_gs_m['Folio_Match'] == folio_sp]
+                for _, r_gs in sub_gs.iterrows():
+                    d_id = str(r_gs.get('DocumentID_GS', '')).strip()
+                    u_id = str(r_gs.get('UUID_GS', '')).strip()
+                    m_item = float(r_gs.get('Monto_GS', 0.0))
+                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
+
+            if not df_fc_m.empty:
+                sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_sp) & (df_fc_m['Emp_FC'] == emp)] if 'Emp_FC' in df_fc_m.columns else df_fc_m[df_fc_m['Folio_Match'] == folio_sp]
+                for _, r_fc in sub_fc.iterrows():
+                    d_id = str(r_fc.get('DocumentID_FC', '')).strip()
+                    u_id = str(r_fc.get('UUID_FC', '')).strip()
+                    m_item = float(r_fc.get('Monto_FC', 0.0))
+                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
+
+            tiene_fcog = True if sub_items else False
+
+            if not sub_items:
+                doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
+                sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
+
+            num_sub = len(sub_items)
+            for item in sub_items:
+                r_copy = row.to_dict()
+                d_id = item['doc_id']
+                m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
+
+                r_copy['DocumentID'] = d_id
+                r_copy['UUID'] = item['uuid'] if item['uuid'] != 'nan' else ''
+                
+                m_fact = item['monto'] if item['monto'] > 0 else (total_doc / num_sub)
+                r_copy['Total'] = m_fact
+                r_copy['Amount'] = m_pagado
+                r_copy['SaldoPagoSP'] = max(0.0, m_fact - m_pagado)
+                r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoSP']
+                r_copy['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
+                r_copy['En_FCoG'] = tiene_fcog
+                rows_sp.append(r_copy)
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
-            folio_raw = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
-            folio_num = re.sub(r'^(SP|OC)', '', folio_raw).strip()
-            folio_display = f"OC{folio_num}" if folio_num else folio_raw
-
+            folio_oc = normalizar_folio(row.get('DocFolio', ''))
             emp = str(row.get('EmpresaOrigen', '')).strip()
-            doc_id = str(row.get('DocumentID', '')).replace('.0', '').strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
-            m_pagado = pagos_edo_map.get((emp, doc_id), 0.0) if doc_id else 0.0
+            sub_items = []
 
-            r_copy = row.to_dict()
-            r_copy['DocFolio'] = folio_display
-            r_copy['DocumentID'] = doc_id
-            r_copy['UUID'] = str(row.get('UUID', '')) if 'UUID' in row and pd.notnull(row.get('UUID')) else ''
-            r_copy['Total'] = total_doc
-            r_copy['Amount'] = m_pagado
-            r_copy['SaldoPagoOC'] = max(0.0, total_doc - m_pagado)
-            r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoOC']
-            r_copy['Tipo_Movimiento'] = 'Orden de Compra (OC)'
-            rows_oc.append(r_copy)
+            if not df_fc_m.empty:
+                sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_oc) & (df_fc_m['Emp_FC'] == emp)] if 'Emp_FC' in df_fc_m.columns else df_fc_m[df_fc_m['Folio_Match'] == folio_oc]
+                for _, r_fc in sub_fc.iterrows():
+                    d_id = str(r_fc.get('DocumentID_FC', '')).strip()
+                    u_id = str(r_fc.get('UUID_FC', '')).strip()
+                    m_item = float(r_fc.get('Monto_FC', 0.0))
+                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
+
+            if not df_gs_m.empty:
+                sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_oc) & (df_gs_m['Emp_GS'] == emp)] if 'Emp_GS' in df_gs_m.columns else df_gs_m[df_gs_m['Folio_Match'] == folio_oc]
+                for _, r_gs in sub_gs.iterrows():
+                    d_id = str(r_gs.get('DocumentID_GS', '')).strip()
+                    u_id = str(r_gs.get('UUID_GS', '')).strip()
+                    m_item = float(r_gs.get('Monto_GS', 0.0))
+                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
+
+            tiene_fcog = True if sub_items else False
+
+            if not sub_items:
+                doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
+                sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
+
+            num_sub = len(sub_items)
+            for item in sub_items:
+                r_copy = row.to_dict()
+                d_id = item['doc_id']
+                m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
+
+                r_copy['DocumentID'] = d_id
+                r_copy['UUID'] = item['uuid'] if item['uuid'] != 'nan' else ''
+
+                m_fact = item['monto'] if item['monto'] > 0 else (total_doc / num_sub)
+                r_copy['Total'] = m_fact
+                r_copy['Amount'] = m_pagado
+                r_copy['SaldoPagoOC'] = max(0.0, m_fact - m_pagado)
+                r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoOC']
+                r_copy['Tipo_Movimiento'] = 'Orden de Compra (OC)'
+                r_copy['En_FCoG'] = tiene_fcog
+                rows_oc.append(r_copy)
 
     df_oc_calc = pd.DataFrame(rows_oc) if rows_oc else pd.DataFrame()
 
@@ -584,6 +699,41 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     st.dataframe(df_view[cols_existentes], use_container_width=True)
 
 st.sidebar.title("💰 Módulo de Finanzas")
+
+# Estado de carga del Master para poder detectar rápidamente
+# si la aplicación está leyendo una versión distinta del Excel.
+with st.sidebar.expander("🔎 Diagnóstico del Master", expanded=False):
+    st.caption(f"Archivo leído: {os.path.basename(ruta_archivo)}")
+    st.caption(f"Ruta: {ruta_archivo}")
+    st.caption(f"Tamaño: {_archivo_size:,} bytes")
+    st.caption(f"Modificado: {pd.to_datetime(_archivo_mtime, unit='s')}")
+
+    if df_tesoreria is not None and not df_tesoreria.empty and 'DocFolio' in df_tesoreria.columns:
+        folios_master = df_tesoreria['DocFolio'].apply(normalizar_folio)
+        existe_sp3133_master = (folios_master == 'SP3133').any()
+        st.write(f"SP3133 en SolicitudPago: {'✅ SÍ' if existe_sp3133_master else '❌ NO'}")
+        if existe_sp3133_master:
+            st.write(f"Filas SP3133: {(folios_master == 'SP3133').sum():,}")
+    else:
+        st.write("SolicitudPago: ❌ sin datos")
+
+    if df_tesoreria_proc is not None and not df_tesoreria_proc.empty and 'DocFolio' in df_tesoreria_proc.columns:
+        folios_proc = df_tesoreria_proc['DocFolio'].apply(normalizar_folio)
+        existe_sp3133_proc = (folios_proc == 'SP3133').any()
+        st.write(f"SP3133 procesado: {'✅ SÍ' if existe_sp3133_proc else '❌ NO'}")
+        if existe_sp3133_proc and 'Saldo_Pendiente' in df_tesoreria_proc.columns:
+            saldo_3133 = pd.to_numeric(
+                df_tesoreria_proc.loc[folios_proc == 'SP3133', 'Saldo_Pendiente'],
+                errors='coerce'
+            ).fillna(0).sum()
+            st.write(f"Saldo SP3133: {formato_mx(saldo_3133)}")
+    else:
+        st.write("SolicitudPago procesada: ❌ sin datos")
+
+    if st.button("🔄 Recargar Master ahora", key="btn_recargar_master", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 st.sidebar.markdown("---")
 submodulo = st.sidebar.radio(
     "Seleccione Submódulo:",
@@ -654,7 +804,7 @@ if submodulo == "📊 Facturación":
             if col_r in df_f.columns:
                 df_f.loc[es_nc_mask, col_r] = -1 * df_f.loc[es_nc_mask, col_r].abs()
 
-        st.markdown("#### ⚙ Filtros de Selección")
+        st.markdown("#### ⚙️️ Filtros de Selección")
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             if 'EmpresaOrigen' in df_f.columns:
@@ -884,7 +1034,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
             st.markdown("---")
 
-            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO CON FILTRO ROBUSTO
+            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
@@ -899,18 +1049,10 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     col_monto_eval = 'Total'
                     label_monto = "Monto Total"
 
-                df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
-                df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
-
-                # BUSCADOR DIRECTO POR TEXTO
-                folio_buscar_texto = st.text_input("🔍 Buscar Folio exacto o parcial (Ej. 3133 o SP3133):", value="", key=f"{key_prefix}_text_search").strip().upper()
-                
-                if folio_buscar_texto:
-                    num_buscado = re.sub(r'^(SP|OC)', '', folio_buscar_texto).strip()
-                    df_rep_total = df_rep_total[
-                        (df_rep_total['DocFolio_Upper'].str.contains(folio_buscar_texto, na=False)) |
-                        (df_rep_total['DocFolio_Clean'].str.contains(num_buscado, na=False))
-                    ]
+                # Normalización única y consistente de folios.
+                # Así SP3133, sp3133, SP3133.0 y 3133 se pueden localizar.
+                df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].apply(normalizar_folio)
+                df_rep_total['DocFolio_Clean'] = df_rep_total[col_folio_name].apply(folio_clave)
 
                 c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
                 with c_rf1:
@@ -930,20 +1072,24 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     if prov_seleccionados:
                         df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
                 with c_rf4:
-                    lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
-                    folios_seleccionados = st.multiselect("Filtrar por Lista de Folios:", lista_folios, default=[], key=f"{key_prefix}_folio_f")
+                    # Usamos los folios ya normalizados para que el buscador
+                    # no dependa del formato exacto que venga desde Excel.
+                    lista_folios = sorted(
+                        [f for f in df_rep_total['DocFolio_Upper'].dropna().unique() if str(f).strip()]
+                    )
+                    folios_seleccionados = st.multiselect(
+                        "Filtrar por Folio(s):",
+                        lista_folios,
+                        default=[],
+                        key=f"{key_prefix}_folio_f"
+                    )
                     if folios_seleccionados:
-                        patrones = []
-                        for f in folios_seleccionados:
-                            val_str = str(f).strip().upper()
-                            num_only = re.sub(r'^(SP|OC)', '', val_str).strip()
-                            patrones.extend([val_str, num_only, f"SP{num_only}", f"OC{num_only}"])
-                        
-                        patrones = list(set(filter(None, patrones)))
-                        
+                        folios_upper = [normalizar_folio(f) for f in folios_seleccionados]
+                        folios_clean = [folio_clave(f) for f in folios_seleccionados]
+
                         df_rep_total = df_rep_total[
-                            (df_rep_total['DocFolio_Upper'].isin(patrones)) | 
-                            (df_rep_total['DocFolio_Clean'].isin(patrones))
+                            df_rep_total['DocFolio_Upper'].isin(folios_upper) |
+                            df_rep_total['DocFolio_Clean'].isin(folios_clean)
                         ]
 
                 st.markdown("---")
@@ -1010,7 +1156,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                     estado_desplegado = st.session_state[f"{key_prefix}_expand_all"]
 
-                    max_provs = 30 if not solo_pendientes and not prov_seleccionados and not folio_buscar_texto else None
+                    max_provs = 30 if not solo_pendientes and not prov_seleccionados else None
 
                     for empresa in sorted(empresas_agrupadas):
                         df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
