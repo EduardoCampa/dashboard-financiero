@@ -645,17 +645,233 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
                 st.markdown("---")
 
-                # --- BOTÓN DE EXPORTACIÓN A EXCEL ---
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_ingresos_final.to_excel(writer, sheet_name='Resumen Ingresos', index=False)
-                    df_egresos_final.to_excel(writer, sheet_name='Resumen Egresos', index=False)
-                excel_data = output.getvalue()
+                # --- BOTÓN DE EXPORTACIÓN A EXCEL CON FORMATO EJECUTIVO ---
+                def generar_excel_amarre_ingresos(df_ing, df_eg, periodo_texto):
+                    wb = Workbook()
+                    ws_default = wb.active
+                    wb.remove(ws_default)
+
+                    # Paleta y estilos
+                    fill_titulo = PatternFill("solid", fgColor="1F4E78")
+                    fill_header = PatternFill("solid", fgColor="2F75B5")
+                    fill_subtitulo = PatternFill("solid", fgColor="D9EAF7")
+                    fill_total = PatternFill("solid", fgColor="D9E1F2")
+                    fill_ok = PatternFill("solid", fgColor="E2F0D9")
+                    fill_dif = PatternFill("solid", fgColor="FCE4D6")
+                    fill_zebra = PatternFill("solid", fgColor="F7F9FC")
+
+                    font_titulo = Font(name="Calibri", size=15, bold=True, color="FFFFFF")
+                    font_subtitulo = Font(name="Calibri", size=10, italic=True, color="404040")
+                    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+                    font_normal = Font(name="Calibri", size=10, color="000000")
+                    font_total = Font(name="Calibri", size=10, bold=True, color="000000")
+                    font_ok = Font(name="Calibri", size=10, bold=True, color="006100")
+                    font_error = Font(name="Calibri", size=10, bold=True, color="9C0006")
+
+                    thin_gray = Side(style="thin", color="D9E1F2")
+                    border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+                    border_total = Border(top=Side(style="thin", color="7F7F7F"), bottom=Side(style="double", color="1F1F1F"))
+                    money_fmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+
+                    def preparar_hoja(ws, titulo, df, columnas_moneda, incluir_estado=True):
+                        ws.sheet_view.showGridLines = False
+                        ultima_col = len(df.columns)
+
+                        # Título
+                        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ultima_col)
+                        c = ws.cell(1, 1, titulo)
+                        c.fill = fill_titulo
+                        c.font = font_titulo
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                        ws.row_dimensions[1].height = 28
+
+                        # Periodo
+                        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ultima_col)
+                        c = ws.cell(2, 1, f"Periodo: {periodo_texto}    |    Generado: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
+                        c.fill = fill_subtitulo
+                        c.font = font_subtitulo
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                        ws.row_dimensions[2].height = 21
+
+                        fila_header = 4
+                        for col_idx, nombre in enumerate(df.columns, 1):
+                            c = ws.cell(fila_header, col_idx, nombre)
+                            c.fill = fill_header
+                            c.font = font_header
+                            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                            c.border = border
+                        ws.row_dimensions[fila_header].height = 34
+
+                        fila_inicio = fila_header + 1
+                        for r_idx, (_, row) in enumerate(df.iterrows(), fila_inicio):
+                            for col_idx, nombre in enumerate(df.columns, 1):
+                                valor = row.get(nombre, "")
+                                c = ws.cell(r_idx, col_idx, valor)
+                                c.font = font_normal
+                                c.border = border
+                                c.alignment = Alignment(horizontal="right" if nombre in columnas_moneda else "left", vertical="center")
+
+                                if nombre in columnas_moneda:
+                                    try:
+                                        c.value = float(valor)
+                                    except Exception:
+                                        c.value = 0.0
+                                    c.number_format = money_fmt
+
+                                if (r_idx - fila_inicio) % 2 == 1:
+                                    c.fill = fill_zebra
+
+                                if incluir_estado and nombre.startswith("Dif."):
+                                    try:
+                                        diferencia = float(valor)
+                                    except Exception:
+                                        diferencia = 0.0
+                                    if abs(diferencia) <= 0.01:
+                                        c.fill = fill_ok
+                                        c.font = font_ok
+                                    else:
+                                        c.fill = fill_dif
+                                        c.font = font_error
+
+                        fila_total = fila_inicio + len(df)
+                        ws.cell(fila_total, 1, "TOTALES")
+                        ws.cell(fila_total, 1).font = font_total
+                        ws.cell(fila_total, 1).alignment = Alignment(horizontal="center", vertical="center")
+
+                        for col_idx, nombre in enumerate(df.columns, 1):
+                            c = ws.cell(fila_total, col_idx)
+                            c.fill = fill_total
+                            c.border = border_total
+                            if nombre in columnas_moneda:
+                                try:
+                                    total = pd.to_numeric(df[nombre], errors="coerce").fillna(0).sum()
+                                except Exception:
+                                    total = 0.0
+                                c.value = float(total)
+                                c.number_format = money_fmt
+                                c.font = font_total
+                                c.alignment = Alignment(horizontal="right", vertical="center")
+
+                        ws.row_dimensions[fila_total].height = 24
+                        ws.freeze_panes = "A5"
+                        ws.auto_filter.ref = f"A4:{get_column_letter(ultima_col)}{fila_total - 1 if len(df) else 4}"
+                        ws.print_title_rows = "1:4"
+                        ws.sheet_properties.pageSetUpPr.fitToPage = True
+                        ws.page_setup.fitToWidth = 1
+                        ws.page_setup.fitToHeight = 0
+                        ws.page_setup.orientation = "landscape"
+                        ws.page_margins.left = 0.25
+                        ws.page_margins.right = 0.25
+                        ws.page_margins.top = 0.5
+                        ws.page_margins.bottom = 0.5
+
+                        # Anchos
+                        for col_idx, nombre in enumerate(df.columns, 1):
+                            letra = get_column_letter(col_idx)
+                            if nombre == "Empresa (XML / Master / Contab)":
+                                ancho = 48
+                            elif nombre.startswith("Dif."):
+                                ancho = 22
+                            else:
+                                ancho = 20
+                            ws.column_dimensions[letra].width = ancho
+
+                        return fila_total
+
+                    # 1) Resumen ejecutivo
+                    ws_res = wb.create_sheet("Resumen Ejecutivo")
+                    ws_res.sheet_view.showGridLines = False
+                    ws_res.merge_cells("A1:F1")
+                    c = ws_res["A1"]
+                    c.value = "REPORTE EJECUTIVO — AMARRE DE INGRESOS SAT"
+                    c.fill = fill_titulo
+                    c.font = font_titulo
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                    ws_res.row_dimensions[1].height = 30
+
+                    ws_res.merge_cells("A2:F2")
+                    c = ws_res["A2"]
+                    c.value = f"Periodo: {periodo_texto}    |    Generado: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}"
+                    c.fill = fill_subtitulo
+                    c.font = font_subtitulo
+                    c.alignment = Alignment(horizontal="center")
+
+                    tot_xml = pd.to_numeric(df_ing.get("XML Ingresos", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+                    tot_master = pd.to_numeric(df_ing.get("Master Ingresos", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+                    tot_cont = pd.to_numeric(df_ing.get("Contabilidad Ingresos", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+                    dif_master = tot_xml - tot_master
+                    dif_cont = tot_xml - tot_cont
+
+                    kpis = [
+                        ("Total XML Ingresos", tot_xml),
+                        ("Total Master Ingresos", tot_master),
+                        ("Total Contabilidad Ingresos", tot_cont),
+                        ("Diferencia XML vs Master", dif_master),
+                        ("Diferencia XML vs Contabilidad", dif_cont),
+                    ]
+                    for i, (label, value) in enumerate(kpis, 4):
+                        ws_res.cell(i, 1, label).font = font_header
+                        ws_res.cell(i, 1).fill = fill_header
+                        ws_res.cell(i, 2, float(value)).number_format = money_fmt
+                        ws_res.cell(i, 2).font = font_total
+                        ws_res.cell(i, 2).alignment = Alignment(horizontal="right")
+                        ws_res.cell(i, 1).border = border
+                        ws_res.cell(i, 2).border = border
+                        if "Diferencia" in label:
+                            if abs(value) <= 0.01:
+                                ws_res.cell(i, 2).fill = fill_ok
+                                ws_res.cell(i, 2).font = font_ok
+                            else:
+                                ws_res.cell(i, 2).fill = fill_dif
+                                ws_res.cell(i, 2).font = font_error
+
+                    estado = "CONCILIADO" if abs(dif_master) <= 0.01 and abs(dif_cont) <= 0.01 else "CON DIFERENCIAS"
+                    ws_res.cell(10, 1, "ESTATUS DEL AMARRE").font = font_header
+                    ws_res.cell(10, 1).fill = fill_header
+                    ws_res.cell(10, 2, estado).font = font_ok if estado == "CONCILIADO" else font_error
+                    ws_res.cell(10, 2).fill = fill_ok if estado == "CONCILIADO" else fill_dif
+                    ws_res.cell(10, 1).border = border
+                    ws_res.cell(10, 2).border = border
+
+                    ws_res.column_dimensions["A"].width = 38
+                    ws_res.column_dimensions["B"].width = 25
+                    ws_res.column_dimensions["C"].width = 4
+                    ws_res.column_dimensions["D"].width = 4
+                    ws_res.column_dimensions["E"].width = 4
+                    ws_res.column_dimensions["F"].width = 4
+                    ws_res.freeze_panes = "A4"
+                    ws_res.sheet_properties.pageSetUpPr.fitToPage = True
+                    ws_res.page_setup.fitToWidth = 1
+                    ws_res.page_setup.fitToHeight = 1
+
+                    # 2) Hojas detalladas originales, pero con formato ejecutivo
+                    columnas_ing = ["XML Ingresos", "Master Ingresos", "Contabilidad Ingresos", "Dif. (XML vs Master)", "Dif. (XML vs Contab)"]
+                    columnas_eg = ["XML Egresos", "Master Egresos", "Contabilidad Egresos", "Dif. (XML vs Master)", "Dif. (XML vs Contab)"]
+
+                    ws_ing = wb.create_sheet("Resumen Ingresos")
+                    preparar_hoja(ws_ing, "REPORTE EJECUTIVO — RESUMEN DE INGRESOS SAT", df_ing, columnas_ing)
+
+                    ws_eg = wb.create_sheet("Resumen Egresos")
+                    preparar_hoja(ws_eg, "REPORTE EJECUTIVO — RESUMEN DE EGRESOS SAT", df_eg, columnas_eg)
+
+                    # Vista inicial
+                    wb.active = 0
+
+                    output = io.BytesIO()
+                    wb.save(output)
+                    output.seek(0)
+                    return output.getvalue()
+
+                excel_data = generar_excel_amarre_ingresos(
+                    df_ingresos_final,
+                    df_egresos_final,
+                    f"{nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} de {anio_sel}"
+                )
 
                 st.download_button(
                     label="📥 Descargar Reporte Ejecutivo en Excel",
                     data=excel_data,
-                    file_name=f"Reporte_Ejecutivo_SAT_{nombres_meses[mes_final-1]}_{anio_sel}.xlsx",
+                    file_name=f"Reporte_Ejecutivo_Amarre_Ingresos_{nombres_meses[mes_final-1]}_{anio_sel}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
