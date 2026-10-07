@@ -26,8 +26,7 @@ def formato_mx(val):
 MAPA_EMPRESAS = {
     '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
     '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE',
-    '21715': 'CIV', '21715.0': 'CIV',
-    '3389': 'CIV', '3389.0': 'CIV'  # Se agrega 3389 para reconocer SP3133
+    '3389': 'CIVLAT', '3389.0': 'CIVLAT', '21715': 'CIVLAT', '21715.0': 'CIVLAT'
 }
 
 def normalizar_empresa(df):
@@ -283,7 +282,7 @@ def generar_excel_facturacion_sin_pagos(df_datos):
     output.seek(0)
     return output
 
-# --- REPORTE EXCEL EJECUTIVO DE PAGOS ---
+# --- REPORTE EXCEL EJECUTIVO ---
 def generar_excel_ejecutivo(df_datos, empresa_nombre):
     wb = Workbook()
     ws = wb.active
@@ -472,7 +471,6 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO DIRECTO Y NORMALIZACIÓN DE FOLIOS ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     pagos_edo_map = {}
@@ -883,7 +881,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
             st.markdown("---")
 
-            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO CON BÚSQUEDA ROBUSTA DE FOLIOS
+            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO CON FILTRO ROBUSTO
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
@@ -899,9 +897,9 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     label_monto = "Monto Total"
 
                 df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
-                df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].apply(lambda x: re.sub(r'^(SP|OC)', '', x).strip())
+                df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
 
-                # BUSCADOR DE TEXTO DIRECTO
+                # BUSCADOR DIRECTO POR TEXTO
                 folio_buscar_texto = st.text_input("🔍 Buscar Folio exacto o parcial (Ej. 3133 o SP3133):", value="", key=f"{key_prefix}_text_search").strip().upper()
                 
                 if folio_buscar_texto:
@@ -930,14 +928,19 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
                 with c_rf4:
                     lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
-                    folios_seleccionados = st.multiselect("Filtrar por Lista de Folio(s):", lista_folios, default=[], key=f"{key_prefix}_folio_f")
+                    folios_seleccionados = st.multiselect("Filtrar por Lista de Folios:", lista_folios, default=[], key=f"{key_prefix}_folio_f")
                     if folios_seleccionados:
-                        folios_upper = [str(f).strip().upper() for f in folios_seleccionados]
-                        folios_clean = [re.sub(r'^(SP|OC)', '', f).strip() for f in folios_upper]
+                        patrones = []
+                        for f in folios_seleccionados:
+                            val_str = str(f).strip().upper()
+                            num_only = re.sub(r'^(SP|OC)', '', val_str).strip()
+                            patrones.extend([val_str, num_only, f"SP{num_only}", f"OC{num_only}"])
+                        
+                        patrones = list(set(filter(None, patrones)))
                         
                         df_rep_total = df_rep_total[
-                            (df_rep_total['DocFolio_Upper'].isin(folios_upper)) | 
-                            (df_rep_total['DocFolio_Clean'].isin(folios_clean))
+                            (df_rep_total['DocFolio_Upper'].isin(patrones)) | 
+                            (df_rep_total['DocFolio_Clean'].isin(patrones))
                         ]
 
                 st.markdown("---")
