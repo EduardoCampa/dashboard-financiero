@@ -415,7 +415,16 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 # ============================================================
 # Siempre toma el Master desde la misma carpeta donde está este script.
 # Esto evita que Streamlit termine leyendo otra copia del archivo.
-ruta_archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Consolidado_Master.xlsx")
+# En Streamlit Cloud este archivo está dentro de /pages, mientras que el Master
+# normalmente está en la raíz del repositorio. Buscamos primero en la raíz del repo.
+DIRECTORIO_SCRIPT = os.path.dirname(os.path.abspath(__file__))
+DIRECTORIO_REPO = os.path.dirname(DIRECTORIO_SCRIPT)
+CANDIDATOS_MASTER = [
+    os.path.join(DIRECTORIO_REPO, "Consolidado_Master.xlsx"),
+    os.path.join(DIRECTORIO_SCRIPT, "Consolidado_Master.xlsx"),
+]
+
+ruta_archivo = next((p for p in CANDIDATOS_MASTER if os.path.exists(p)), CANDIDATOS_MASTER[0])
 
 def normalizar_folio(valor):
     """Normaliza folios como SP3133, sp3133, SP3133.0, 3133, etc."""
@@ -491,7 +500,11 @@ def cargar_datos_finanzas(path, archivo_mtime, archivo_size):
 # El timestamp y tamaño forman parte de la clave del cache.
 # Si se reemplaza/actualiza el Master, Streamlit vuelve a leerlo.
 if not os.path.exists(ruta_archivo):
-    st.error(f"No se encontró el archivo Master en: {ruta_archivo}")
+    st.error("No se encontró el archivo Consolidado_Master.xlsx.")
+    st.info(
+        "El sistema buscó el Master en la raíz del repositorio y en la carpeta pages. "
+        f"Ruta esperada en la raíz: {CANDIDATOS_MASTER[0]}"
+    )
     st.stop()
 
 _archivo_mtime = os.path.getmtime(ruta_archivo)
