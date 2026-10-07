@@ -26,7 +26,8 @@ def formato_mx(val):
 MAPA_EMPRESAS = {
     '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
     '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE',
-    '21715': 'CIV', '21715.0': 'CIV'
+    '21715': 'CIV', '21715.0': 'CIV',
+    '3389': 'CIV', '3389.0': 'CIV'  # Se agrega 3389 para reconocer SP3133
 }
 
 def normalizar_empresa(df):
@@ -471,7 +472,7 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO DIRECTO SIN EXPANSIÓN NI DESGLOSE DE XMLS DE GASTOS/FACTURACOMPRA ---
+# --- PROCESAMIENTO DIRECTO Y NORMALIZACIÓN DE FOLIOS ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     pagos_edo_map = {}
@@ -882,7 +883,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
             st.markdown("---")
 
-            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO
+            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO CON BÚSQUEDA ROBUSTA DE FOLIOS
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
@@ -899,6 +900,16 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                 df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
                 df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].apply(lambda x: re.sub(r'^(SP|OC)', '', x).strip())
+
+                # BUSCADOR DE TEXTO DIRECTO
+                folio_buscar_texto = st.text_input("🔍 Buscar Folio exacto o parcial (Ej. 3133 o SP3133):", value="", key=f"{key_prefix}_text_search").strip().upper()
+                
+                if folio_buscar_texto:
+                    num_buscado = re.sub(r'^(SP|OC)', '', folio_buscar_texto).strip()
+                    df_rep_total = df_rep_total[
+                        (df_rep_total['DocFolio_Upper'].str.contains(folio_buscar_texto, na=False)) |
+                        (df_rep_total['DocFolio_Clean'].str.contains(num_buscado, na=False))
+                    ]
 
                 c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
                 with c_rf1:
@@ -919,7 +930,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
                 with c_rf4:
                     lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
-                    folios_seleccionados = st.multiselect("Filtrar por Folio(s):", lista_folios, default=[], key=f"{key_prefix}_folio_f")
+                    folios_seleccionados = st.multiselect("Filtrar por Lista de Folio(s):", lista_folios, default=[], key=f"{key_prefix}_folio_f")
                     if folios_seleccionados:
                         folios_upper = [str(f).strip().upper() for f in folios_seleccionados]
                         folios_clean = [re.sub(r'^(SP|OC)', '', f).strip() for f in folios_upper]
@@ -993,7 +1004,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                     estado_desplegado = st.session_state[f"{key_prefix}_expand_all"]
 
-                    max_provs = 30 if not solo_pendientes and not prov_seleccionados else None
+                    max_provs = 30 if not solo_pendientes and not prov_seleccionados and not folio_buscar_texto else None
 
                     for empresa in sorted(empresas_agrupadas):
                         df_emp_subset = df_rep_total[df_rep_total[col_emp_name] == empresa] if col_emp_name else df_rep_total
