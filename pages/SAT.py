@@ -1186,12 +1186,10 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, archivo_balanza_rh)) + \
                        glob.glob(os.path.join(ruta_base, "**", mes_str, archivo_balanza_rh), recursive=True)
             
-            if not posibles:
-                posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
-                           glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
-                           glob.glob(os.path.join(ruta_base, "*.xlsx"))
-            
-            posibles = list(set(posibles))
+            # IMPORTANTE: para Nóminas SOLO se debe utilizar Balanza RH.xlsx.
+            # No hacemos fallback a cualquier *.xlsx porque en la misma carpeta
+            # también existe Balanza.xlsx y ese archivo corresponde a otra fuente.
+            posibles = list(dict.fromkeys(posibles))
             if not posibles:
                 continue
 
