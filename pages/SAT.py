@@ -4,6 +4,9 @@ import io
 import re
 import pandas as pd
 import streamlit as st
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(
     page_title="Módulo SAT y Conciliación Master vs XML",
@@ -19,6 +22,129 @@ submodulo_sat = st.sidebar.radio(
 )
 
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+# --- FUNCIÓN AUXILIAR PARA GENERAR EXCEL EJECUTIVO DE AMARRE DE NÓMINA ---
+def generar_excel_ejecutivo_amarre_nomina(df_datos, empresa_nombre, periodo_str):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Amarre {empresa_nombre}"[:31]
+    ws.views.sheetView[0].showGridLines = True
+
+    # Estilos Ejecutivos
+    font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    
+    font_normal = Font(name="Calibri", size=10, color="000000")
+    font_total = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_total = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+
+    borde_delgado = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    borde_total = Border(
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='double', color='000000')
+    )
+
+    # Titulo Encabezado
+    row_idx = 1
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+    cell_t = ws.cell(row=row_idx, column=1, value=f"REPORTE EJECUTIVO DE AMARRE DE NÓMINA — {empresa_nombre.upper()} ({periodo_str.upper()})")
+    cell_t.font = font_titulo
+    cell_t.fill = fill_titulo
+    cell_t.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row_idx].height = 32
+    row_idx += 2
+
+    headers = ["Concepto SAT", "Monto SAT", "Cuenta Contable", "Monto Contabilidad", "Diferencia (SAT - Contab)"]
+
+    for col_num, h in enumerate(headers, 1):
+        c = ws.cell(row=row_idx, column=col_num, value=h)
+        c.font = font_header
+        c.fill = fill_header
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = borde_delgado
+    ws.row_dimensions[row_idx].height = 25
+    row_idx += 1
+
+    # Filas de Datos
+    for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+        ws.cell(row=row_idx, column=1, value=str(r.get('Concepto SAT', ''))).alignment = Alignment(horizontal="left", vertical="center")
+        
+        c_m_sat = ws.cell(row=row_idx, column=2, value=float(r.get('Monto SAT', 0.0)))
+        c_m_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_m_sat.alignment = Alignment(horizontal="right", vertical="center")
+
+        ws.cell(row=row_idx, column=3, value=str(r.get('Cuenta Contable', ''))).alignment = Alignment(horizontal="center", vertical="center")
+
+        c_m_cont = ws.cell(row=row_idx, column=4, value=float(r.get('Monto Contabilidad', 0.0)))
+        c_m_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_m_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+        c_dif = ws.cell(row=row_idx, column=5, value=float(r.get('Diferencia (SAT - Contab)', 0.0)))
+        c_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+        fill_row = fill_zebra if idx_f % 2 == 1 else None
+        for c_num in range(1, 6):
+            cell_curr = ws.cell(row=row_idx, column=c_num)
+            cell_curr.font = font_normal
+            cell_curr.border = borde_delgado
+            if fill_row:
+                cell_curr.fill = fill_row
+
+        ws.row_dimensions[row_idx].height = 20
+        row_idx += 1
+
+    # Renglón de Totales
+    ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
+    ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    
+    tot_sat = df_datos['Monto SAT'].sum() if 'Monto SAT' in df_datos.columns else 0.0
+    tot_cont = df_datos['Monto Contabilidad'].sum() if 'Monto Contabilidad' in df_datos.columns else 0.0
+    tot_dif = df_datos['Diferencia (SAT - Contab)'].sum() if 'Diferencia (SAT - Contab)' in df_datos.columns else 0.0
+
+    c_tot_sat = ws.cell(row=row_idx, column=2, value=tot_sat)
+    c_tot_sat.font = font_total
+    c_tot_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+    c_tot_sat.alignment = Alignment(horizontal="right", vertical="center")
+
+    ws.cell(row=row_idx, column=3, value="").font = font_total
+
+    c_tot_cont = ws.cell(row=row_idx, column=4, value=tot_cont)
+    c_tot_cont.font = font_total
+    c_tot_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+    c_tot_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+    c_tot_dif = ws.cell(row=row_idx, column=5, value=tot_dif)
+    c_tot_dif.font = font_total
+    c_tot_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+    c_tot_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+    for col_num in range(1, 6):
+        c_tot_item = ws.cell(row=row_idx, column=col_num)
+        c_tot_item.fill = fill_total
+        c_tot_item.border = borde_total
+
+    ws.row_dimensions[row_idx].height = 24
+
+    # Ajustar Ancho de Columnas
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
 
 
 # ==========================================
@@ -332,7 +458,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "⚖ 1.- Comparativos", 
+                "秤 1.- Comparativos", 
                 "📑 2.- Ingresos y Egresos de los XML", 
                 "📁 3.- Ingresos y Egresos Master",
                 "🔍 4.- Conciliacion por UUID",
@@ -340,7 +466,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
             ])
 
             with tab_comp:
-                st.markdown(f"### ⚖ Tablas de Resumen General - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
+                st.markdown(f"### 秤 Tablas de Resumen General - Periodo: {nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} del {anio_sel}")
                 
                 mapeo_tabla = [
                     {"XML": "CIVMEX", "MASTER": "CIVMEX", "CONTABILIDAD": "CIVMEX"},
@@ -759,11 +885,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         for m in range(int(mes_ini), int(mes_fin) + 1):
             mes_str = f"{m:02d}"
             
-            # Priorizar búsqueda del archivo de Balanza RH
             posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, archivo_balanza_rh)) + \
                        glob.glob(os.path.join(ruta_base, "**", mes_str, archivo_balanza_rh), recursive=True)
             
-            # Si no encuentra Balanza RH.xlsx, buscar cualquier .xlsx como respaldo
             if not posibles:
                 posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, "*.xlsx")) + \
                            glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) + \
@@ -916,7 +1040,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
             # PESTAÑA 1: RESUMEN COMPARATIVO CON PESTAÑAS POR EMPRESA
             with subtab_nom_comp:
-                st.markdown(f"### ⚖️ Amarre Comparativo SAT vs Contabilidad ({nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom})")
+                periodo_texto = f"{nombres_meses[mes_inicial_nom-1]} a {nombres_meses[mes_final_nom-1]} {anio_sel_nom}"
+                st.markdown(f"### ⚖️ Amarre Comparativo SAT vs Contabilidad ({periodo_texto})")
                 
                 # Obtener la lista unificada de empresas
                 empresas_sat = df_nomina_sat['Empresa / RFC'].unique() if not df_nomina_sat.empty else []
@@ -925,14 +1050,12 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 todas_empresas = sorted(list(set(empresas_sat).union(set(empresas_cont))))
 
                 if todas_empresas:
-                    # Crear dinámicamente pestañas por cada empresa
                     tabs_empresas = st.tabs([f"🏢 {emp}" for emp in todas_empresas])
 
                     for idx, emp_nombre in enumerate(todas_empresas):
                         with tabs_empresas[idx]:
                             st.markdown(f"#### 🏢 Resumen de Amarre para: `{emp_nombre}`")
 
-                            # Sumas SAT
                             if not df_nomina_sat.empty and emp_nombre in df_nomina_sat['Empresa / RFC'].values:
                                 df_sat_emp = df_nomina_sat[df_nomina_sat['Empresa / RFC'] == emp_nombre]
                                 cols_conceptos_sat = [c for c in df_sat_emp.columns if c not in ['Empresa / RFC', 'Mes_Pago']]
@@ -940,7 +1063,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             else:
                                 sumas_sat = pd.Series(dtype=float)
 
-                            # Datos Contabilidad
                             if not df_nomina_resumen.empty and emp_nombre in df_nomina_resumen.columns:
                                 df_cont_emp = df_nomina_resumen[['Concepto / Subcuenta', emp_nombre]].rename(
                                     columns={emp_nombre: 'Contabilidad'}
@@ -948,14 +1070,12 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             else:
                                 df_cont_emp = pd.DataFrame(columns=['Concepto / Subcuenta', 'Contabilidad'])
 
-                            # Construcción de la tabla cruzada con conceptos agrupados
                             filas_comparativas = []
 
                             for eq in MAPEO_EQUIVALENCIAS:
                                 lista_sat_nombres = eq['Conceptos SAT']
                                 c_cont_nombre = eq['Cuenta Contable']
 
-                                # Cifra SAT (Suma de todos los códigos de esta equivalencia)
                                 monto_sat = 0.0
                                 if not sumas_sat.empty:
                                     for c_sat_nombre in lista_sat_nombres:
@@ -963,7 +1083,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                         if col_match:
                                             monto_sat += float(sumas_sat[col_match])
 
-                                # Cifra Contabilidad
                                 monto_cont = 0.0
                                 if not df_cont_emp.empty:
                                     row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].str.startswith(c_cont_nombre[:9])]
@@ -991,15 +1110,16 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                                 hide_index=True
                             )
 
-                            # Descarga Excel individual
-                            output_comp = io.BytesIO()
-                            with pd.ExcelWriter(output_comp, engine='openpyxl') as writer:
-                                df_comp_final.to_excel(writer, sheet_name=f'Amarre {emp_nombre}', index=False)
-                            excel_data_comp = output_comp.getvalue()
+                            # Descarga Excel Ejecutivo con OpenPyXL
+                            excel_ejecutivo_bytes = generar_excel_ejecutivo_amarre_nomina(
+                                df_datos=df_comp_final,
+                                empresa_nombre=emp_nombre,
+                                periodo_str=periodo_texto
+                            )
 
                             st.download_button(
-                                label=f"📥 Descargar Amarre Comparativo de {emp_nombre} en Excel",
-                                data=excel_data_comp,
+                                label=f"📥 Descargar Amarre Comparativo de {emp_nombre} en Excel (Formato Ejecutivo)",
+                                data=excel_ejecutivo_bytes,
                                 file_name=f"Amarre_{emp_nombre}_{nombres_meses[mes_final_nom-1]}_{anio_sel_nom}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key=f"btn_dl_{emp_nombre}"
