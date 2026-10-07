@@ -25,7 +25,8 @@ def formato_mx(val):
 # --- MAPEO Y NORMALIZACIÓN GLOBAL DE EMPRESA ORIGEN ---
 MAPA_EMPRESAS = {
     '2510': 'CIVLAT', '2512': 'CIVLAT', '7342': 'SERVYRE',
-    '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE'
+    '2510.0': 'CIVLAT', '2512.0': 'CIVLAT', '7342.0': 'SERVYRE',
+    '21715': 'CIV', '21715.0': 'CIV'
 }
 
 def normalizar_empresa(df):
@@ -470,7 +471,7 @@ def cargar_datos_finanzas(path):
 
 df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
 
-# --- PROCESAMIENTO CORREGIDO Y OPTIMIZADO DE ÓRDENES DE COMPRA Y SOLICITUDES DE PAGO ---
+# --- PROCESAMIENTO DIRECTO SIN EXPANSIÓN NI DESGLOSE DE XMLS DE GASTOS/FACTURACOMPRA ---
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     pagos_edo_map = {}
@@ -485,48 +486,6 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
                 df_edo_c['Emp_Clean'] = df_edo_c['EmpresaOrigen'].astype(str).str.strip()
                 pagos_edo_map = df_edo_c.groupby(['Emp_Clean', 'DocID_Clean'])['Amount'].sum().to_dict()
 
-    # Preprocesamiento de Gastos
-    df_gs_m = pd.DataFrame()
-    if _df_gas is not None and not _df_gas.empty:
-        col_sp_gs = next((c for c in ['SolicitudPago', 'Solicitud de Pago', 'OrdenCompra', 'DocFolio'] if c in _df_gas.columns), None)
-        col_doc_gs = 'DocumentID' if 'DocumentID' in _df_gas.columns else ('Document' if 'Document' in _df_gas.columns else None)
-        col_uuid_gs = next((c for c in ['CFDIFolioFiscal', 'UUID', 'FolioFiscal'] if c in _df_gas.columns), None)
-        col_emp_gs = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_gas.columns), None)
-        col_tot_gs = next((c for c in ['TotalM', 'Total', 'SubTotal'] if c in _df_gas.columns), None)
-
-        if col_sp_gs and col_doc_gs:
-            df_gs_m = _df_gas.copy()
-            df_gs_m['Folio_Match'] = df_gs_m[col_sp_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-            df_gs_m['Folio_Num'] = df_gs_m['Folio_Match'].str.replace(r'^(SP|OC)', '', regex=True).str.strip()
-            df_gs_m['DocumentID_GS'] = df_gs_m[col_doc_gs].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-            if col_emp_gs:
-                df_gs_m['Emp_GS'] = df_gs_m[col_emp_gs].astype(str).str.strip()
-            if col_uuid_gs:
-                df_gs_m['UUID_GS'] = df_gs_m[col_uuid_gs].astype(str).str.strip()
-            if col_tot_gs:
-                df_gs_m['Monto_GS'] = pd.to_numeric(df_gs_m[col_tot_gs], errors='coerce').fillna(0)
-
-    # Preprocesamiento de FacturaCompra
-    df_fc_m = pd.DataFrame()
-    if _df_fc is not None and not _df_fc.empty:
-        col_sp_fc = next((c for c in ['Solicitud de Pago', 'SolicitudPago', 'OrdenCompra', 'DocFolio'] if c in _df_fc.columns), None)
-        col_doc_fc = 'DocumentID' if 'DocumentID' in _df_fc.columns else ('Document' if 'Document' in _df_fc.columns else None)
-        col_uuid_fc = 'UUID' if 'UUID' in _df_fc.columns else ('CFDIFolioFiscal' if 'CFDIFolioFiscal' in _df_fc.columns else None)
-        col_emp_fc = next((c for c in ['EmpresaOrigen', 'Empresa Origen', 'Empresa'] if c in _df_fc.columns), None)
-        col_tot_fc = next((c for c in ['TotalM', 'Total', 'SubTotal'] if c in _df_fc.columns), None)
-
-        if col_sp_fc and col_doc_fc:
-            df_fc_m = _df_fc.copy()
-            df_fc_m['Folio_Match'] = df_fc_m[col_sp_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-            df_fc_m['Folio_Num'] = df_fc_m['Folio_Match'].str.replace(r'^(SP|OC)', '', regex=True).str.strip()
-            df_fc_m['DocumentID_FC'] = df_fc_m[col_doc_fc].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.upper()
-            if col_emp_fc:
-                df_fc_m['Emp_FC'] = df_fc_m[col_emp_fc].astype(str).str.strip()
-            if col_uuid_fc:
-                df_fc_m['UUID_FC'] = df_fc_m[col_uuid_fc].astype(str).str.strip()
-            if col_tot_fc:
-                df_fc_m['Monto_FC'] = pd.to_numeric(df_fc_m[col_tot_fc], errors='coerce').fillna(0)
-
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
@@ -535,50 +494,21 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             folio_display = f"SP{folio_num}" if folio_num else folio_raw
 
             emp = str(row.get('EmpresaOrigen', '')).strip()
+            doc_id = str(row.get('DocumentID', '')).replace('.0', '').strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
-            sub_items = []
+            m_pagado = pagos_edo_map.get((emp, doc_id), 0.0) if doc_id else 0.0
 
-            if not df_gs_m.empty:
-                sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_raw) | (df_gs_m['Folio_Num'] == folio_num)]
-                for _, r_gs in sub_gs.iterrows():
-                    d_id = str(r_gs.get('DocumentID_GS', '')).strip()
-                    u_id = str(r_gs.get('UUID_GS', '')).strip()
-                    m_item = float(r_gs.get('Monto_GS', 0.0))
-                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
-
-            if not df_fc_m.empty:
-                sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_raw) | (df_fc_m['Folio_Num'] == folio_num)]
-                for _, r_fc in sub_fc.iterrows():
-                    d_id = str(r_fc.get('DocumentID_FC', '')).strip()
-                    u_id = str(r_fc.get('UUID_FC', '')).strip()
-                    m_item = float(r_fc.get('Monto_FC', 0.0))
-                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
-
-            tiene_fcog = True if sub_items else False
-
-            if not sub_items:
-                doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
-                sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
-
-            num_sub = len(sub_items)
-            for item in sub_items:
-                r_copy = row.to_dict()
-                d_id = item['doc_id']
-                m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
-
-                r_copy['DocFolio'] = folio_display
-                r_copy['DocumentID'] = d_id
-                r_copy['UUID'] = item['uuid'] if item['uuid'] and item['uuid'] != 'nan' else ''
-                
-                m_fact = item['monto'] if item['monto'] > 0 else (total_doc / num_sub)
-                r_copy['Total'] = m_fact
-                r_copy['Amount'] = m_pagado
-                r_copy['SaldoPagoSP'] = max(0.0, m_fact - m_pagado)
-                r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoSP']
-                r_copy['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
-                r_copy['En_FCoG'] = tiene_fcog
-                rows_sp.append(r_copy)
+            r_copy = row.to_dict()
+            r_copy['DocFolio'] = folio_display
+            r_copy['DocumentID'] = doc_id
+            r_copy['UUID'] = str(row.get('UUID', '')) if 'UUID' in row and pd.notnull(row.get('UUID')) else ''
+            r_copy['Total'] = total_doc
+            r_copy['Amount'] = m_pagado
+            r_copy['SaldoPagoSP'] = max(0.0, total_doc - m_pagado)
+            r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoSP']
+            r_copy['Tipo_Movimiento'] = 'Solicitud de Pago (SP)'
+            rows_sp.append(r_copy)
 
     df_sp_calc = pd.DataFrame(rows_sp) if rows_sp else pd.DataFrame()
 
@@ -590,50 +520,21 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
             folio_display = f"OC{folio_num}" if folio_num else folio_raw
 
             emp = str(row.get('EmpresaOrigen', '')).strip()
+            doc_id = str(row.get('DocumentID', '')).replace('.0', '').strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
-            sub_items = []
+            m_pagado = pagos_edo_map.get((emp, doc_id), 0.0) if doc_id else 0.0
 
-            if not df_fc_m.empty:
-                sub_fc = df_fc_m[(df_fc_m['Folio_Match'] == folio_raw) | (df_fc_m['Folio_Num'] == folio_num)]
-                for _, r_fc in sub_fc.iterrows():
-                    d_id = str(r_fc.get('DocumentID_FC', '')).strip()
-                    u_id = str(r_fc.get('UUID_FC', '')).strip()
-                    m_item = float(r_fc.get('Monto_FC', 0.0))
-                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
-
-            if not df_gs_m.empty:
-                sub_gs = df_gs_m[(df_gs_m['Folio_Match'] == folio_raw) | (df_gs_m['Folio_Num'] == folio_num)]
-                for _, r_gs in sub_gs.iterrows():
-                    d_id = str(r_gs.get('DocumentID_GS', '')).strip()
-                    u_id = str(r_gs.get('UUID_GS', '')).strip()
-                    m_item = float(r_gs.get('Monto_GS', 0.0))
-                    sub_items.append({'doc_id': d_id, 'uuid': u_id, 'monto': m_item})
-
-            tiene_fcog = True if sub_items else False
-
-            if not sub_items:
-                doc_nat = str(row.get('DocumentID', '')).replace('.0', '').strip()
-                sub_items.append({'doc_id': doc_nat, 'uuid': '', 'monto': total_doc})
-
-            num_sub = len(sub_items)
-            for item in sub_items:
-                r_copy = row.to_dict()
-                d_id = item['doc_id']
-                m_pagado = pagos_edo_map.get((emp, d_id), 0.0) if d_id else 0.0
-
-                r_copy['DocFolio'] = folio_display
-                r_copy['DocumentID'] = d_id
-                r_copy['UUID'] = item['uuid'] if item['uuid'] and item['uuid'] != 'nan' else ''
-
-                m_fact = item['monto'] if item['monto'] > 0 else (total_doc / num_sub)
-                r_copy['Total'] = m_fact
-                r_copy['Amount'] = m_pagado
-                r_copy['SaldoPagoOC'] = max(0.0, m_fact - m_pagado)
-                r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoOC']
-                r_copy['Tipo_Movimiento'] = 'Orden de Compra (OC)'
-                r_copy['En_FCoG'] = tiene_fcog
-                rows_oc.append(r_copy)
+            r_copy = row.to_dict()
+            r_copy['DocFolio'] = folio_display
+            r_copy['DocumentID'] = doc_id
+            r_copy['UUID'] = str(row.get('UUID', '')) if 'UUID' in row and pd.notnull(row.get('UUID')) else ''
+            r_copy['Total'] = total_doc
+            r_copy['Amount'] = m_pagado
+            r_copy['SaldoPagoOC'] = max(0.0, total_doc - m_pagado)
+            r_copy['Saldo_Pendiente'] = r_copy['SaldoPagoOC']
+            r_copy['Tipo_Movimiento'] = 'Orden de Compra (OC)'
+            rows_oc.append(r_copy)
 
     df_oc_calc = pd.DataFrame(rows_oc) if rows_oc else pd.DataFrame()
 
