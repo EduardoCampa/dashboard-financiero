@@ -1186,9 +1186,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
             posibles = glob.glob(os.path.join(ruta_base, str(anio_filtro), mes_str, archivo_balanza_rh)) + \
                        glob.glob(os.path.join(ruta_base, "**", mes_str, archivo_balanza_rh), recursive=True)
             
-            # IMPORTANTE: para Nóminas SOLO se debe utilizar Balanza RH.xlsx.
-            # No hacemos fallback a cualquier *.xlsx porque en la misma carpeta
-            # también existe Balanza.xlsx y ese archivo corresponde a otra fuente.
             posibles = list(dict.fromkeys(posibles))
             if not posibles:
                 continue
@@ -1382,7 +1379,9 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                                 monto_cont = 0.0
                                 if not df_cont_emp.empty:
-                                    row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].str.startswith(c_cont_nombre[:9])]
+                                    # CORRECCIÓN DE COINCIDENCIA EXACTA POR CLAVE DE CUENTA CONTABLE
+                                    clave_cta = c_cont_nombre.split(' ')[0].strip()
+                                    row_c = df_cont_emp[df_cont_emp['Concepto / Subcuenta'].astype(str).str.contains(clave_cta, regex=False, na=False)]
                                     if not row_c.empty:
                                         monto_cont = float(row_c['Contabilidad'].sum())
 
