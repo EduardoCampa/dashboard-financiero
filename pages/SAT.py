@@ -406,51 +406,62 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return df_ingresos_master, df_egresos_master
 
 
-    # --- CARGAR BALANZAS Y DETALLE POR MES ---
+    # --- CARGAR BALANZAS Y DETALLE POR MES (OPTIMIZADO PARA LECTURA DINÁMICA DE COLUMNAS) ---
     def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
-        ruta_balanza = os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx")
         
-        if not os.path.exists(ruta_balanza):
-            posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
-            if posibles:
-                ruta_balanza = posibles[0]
-            else:
-                return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
+        # 1. Buscar cualquier archivo de balanza en la carpeta del periodo (Balanza.xlsx, Balanza General.xlsx, etc.)
+        posibles = (
+            glob.glob(os.path.join(ruta_base, str(anio), mes_str, "*.xlsx"), recursive=True) +
+            glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+        )
+        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
+        ruta_balanza = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
+        
+        if not ruta_balanza or not os.path.exists(ruta_balanza):
+            return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
 
         detalles = []
         try:
             xls = pd.ExcelFile(ruta_balanza)
             for hoja in xls.sheet_names:
-                if hoja.lower() in ['hoja1', 'resumen']:
+                if hoja.lower() in ['hoja1', 'hoja 1', 'resumen', 'sheet1']:
                     continue
                 
                 nombre_pestana = hoja.strip().upper()
-
                 df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
-                if df_hoja.empty:
+                if df_hoja.empty or df_hoja.shape[1] < 4:
                     continue
+
+                # Mapear columnas dinámicamente por encabezado
+                cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
                 
-                num_cols = df_hoja.shape[1]
-                if num_cols < 4:
-                    continue
+                # Buscar columna Acreedor Final / Acreedor Inicial
+                idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), None)
+                if idx_ac_f is None:
+                    idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR' in c), df_hoja.shape[1] - 1)
                     
-                col_cta = 0
-                col_nom = 1
-                col_deudor_f = num_cols - 2
-                col_acreedor_f = num_cols - 1
-                
+                idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR F' in c or 'DEUDOR FINAL' in c), None)
+                if idx_de_f is None:
+                    idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR' in c), df_hoja.shape[1] - 2)
+
                 for _, row in df_hoja.iterrows():
-                    cta = str(row.iloc[col_cta]).strip()
+                    cta = str(row.iloc[0]).strip()
                     if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                         continue
                     
                     cta_limpia = cta.replace(' ', '')
-                    nom = str(row.iloc[col_nom]) if num_cols > col_nom else ""
+                    nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                     
-                    monto_ac = float(pd.to_numeric(row.iloc[col_acreedor_f], errors='coerce') or 0.0)
-                    monto_de = float(pd.to_numeric(row.iloc[col_deudor_f], errors='coerce') or 0.0)
+                    monto_ac = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                    monto_de = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
                     
+                    # Si el Acreedor Final está en $0 pero hay Acreedor Inicial (para cuentas sin movimiento acumulado en el periodo)
+                    if monto_ac == 0.0 and 'ACREEDOR I' in "".join(cols_upper):
+                        idx_ac_i = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR I' in c), None)
+                        if idx_ac_i is not None:
+                            monto_ac = float(pd.to_numeric(str(row.iloc[idx_ac_i]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+
                     match_cuenta = None
                     tipo_reg = None
                     
@@ -1010,8 +1021,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_balanzas.empty:
                     st.dataframe(
                         df_balanzas.style.format({
-                            'Contabilidad Ingresos': '${:,.2f}',
-                            'Contabilidad Egresos': '${:,.2f}'
+                            'Contabilidad Ingresos': '${:,.2f}',                             'Contabilidad Egresos': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -1024,8 +1034,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 if not df_detalle_cont.empty:
                     st.dataframe(
                         df_detalle_cont.style.format({
-                            'Saldo Deudor Final': '${:,.2f}',
-                            'Saldo Acreedor Final': '${:,.2f}'
+                            'Saldo Deudor Final': '${:,.2f}',                             'Saldo Acreedor Final': '${:,.2f}'
                         }),
                         use_container_width=True,
                         hide_index=True
@@ -1194,7 +1203,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 posibles = [ruta_directa]
             else:
                 encontrados = glob.glob(os.path.join(ruta_base, "**", mes_str, archivo_balanza_rh), recursive=True)
-                # Filtrar estrictamente para ignorar Balanza.xlsx general
                 posibles = [f for f in encontrados if os.path.basename(f).lower() == archivo_balanza_rh.lower()]
 
             posibles = list(dict.fromkeys(posibles))
@@ -1404,7 +1412,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             st.dataframe(
                                 df_comp_final.style.format({
                                     'Monto SAT': '${:,.2f}',
-                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
+                                    'Monto Contabilidad': '${:,.2f}',                                      'Diferencia (SAT - Contab)': '${:,.2f}'
                                 }),
                                 use_container_width=True,
                                 hide_index=True
