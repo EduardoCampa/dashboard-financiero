@@ -87,66 +87,6 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN PARA LEER ARCHIVOS DE CONCEPTOS DE NÓMINA SAT DESDE LA CARPETA NOMINA ---
-def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
-    if not os.path.exists(carpeta_nomina):
-        return pd.DataFrame()
-
-    archivos_nom = (
-        glob.glob(os.path.join(carpeta_nomina, "**", "*.xlsx"), recursive=True) +
-        glob.glob(os.path.join(carpeta_nomina, "*.xlsx"))
-    )
-    archivos_nom = list(set(archivos_nom))
-
-    registros_sat = []
-
-    for archivo in archivos_nom:
-        if "Balanza" in os.path.basename(archivo):
-            continue
-        try:
-            xls = pd.ExcelFile(archivo)
-            for sheet in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet)
-                if df.empty:
-                    continue
-                
-                cols = {str(c).strip().lower(): c for c in df.columns}
-                
-                # Identificar columnas principales
-                col_rfc_e = next((cols[k] for k in cols if 'rfc emisor' in k or 'rfc_emisor' in k), None)
-                col_empresa = next((cols[k] for k in cols if 'emisor' in k or 'empresa' in k), None)
-                col_concepto = next((cols[k] for k in cols if 'concepto' in k or 'percepcion' in k or 'clave' in k), None)
-                col_importe = next((cols[k] for k in cols if 'importe' in k or 'monto' in k or 'total' in k), None)
-                col_fecha = next((cols[k] for k in cols if 'fecha' in k or 'pago' in k), None)
-
-                for _, row in df.iterrows():
-                    # Filtrar por fecha si está presente
-                    if col_fecha and pd.notnull(row[col_fecha]):
-                        dt = pd.to_datetime(row[col_fecha], errors='coerce')
-                        if pd.notnull(dt):
-                            if anio_filtro and dt.year != int(anio_filtro):
-                                continue
-                            if mes_ini and mes_fin and (dt.month < int(mes_ini) or dt.month > int(mes_fin)):
-                                continue
-
-                    rfc_val = str(row[col_rfc_e]).strip().upper() if col_rfc_e and pd.notnull(row[col_rfc_e]) else ""
-                    emp_val = str(row[col_empresa]).strip().upper() if col_empresa and pd.notnull(row[col_empresa]) else ""
-                    conc_val = str(row[col_concepto]).strip() if col_concepto and pd.notnull(row[col_concepto]) else ""
-                    imp_val = float(pd.to_numeric(str(row[col_importe]).replace('$', '').replace(',', ''), errors='coerce') or 0.0) if col_importe else 0.0
-
-                    registros_sat.append({
-                        'Archivo': os.path.basename(archivo),
-                        'RFC Emisor': rfc_val,
-                        'Empresa SAT': emp_val,
-                        'Concepto SAT': conc_val,
-                        'Importe SAT': imp_val
-                    })
-        except Exception:
-            continue
-
-    return pd.DataFrame(registros_sat)
-
-
 # --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA CON LAS EMPRESAS Y CONSOLIDADO ---
 def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
     wb = Workbook()
@@ -705,30 +645,23 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
 
 # ==========================================
-# 2. SUBMÓDULO: AMARRE NÓMINAS (CÁLCULO CON XMLS/EXCEL DE NOMINA + BALANZA RH)
+# 2. SUBMÓDULO: AMARRE NÓMINAS (CÁLCULO RESTAURADO CON BALANZA RH)
 # ==========================================
 elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
     MAPEO_EQUIVALENCIAS = [
-        {"Conceptos SAT": ["001/001/Sueldo", "SUELDO"], "Cuenta Contable": "Sueldo"},
-        {"Conceptos SAT": ["001/019/Vacaciones a tiempo", "VACACIONES"], "Cuenta Contable": "Vacaciones"},
-        {"Conceptos SAT": ["002/024/Aguinaldo", "AGUINALDO"], "Cuenta Contable": "Aguinaldo"},
-        {"Conceptos SAT": ["010/033/Premio Puntualidad", "PUN TUALIDAD", "PUNTUALIDAD"], "Cuenta Contable": "Premio Puntualidad"},
-        {"Conceptos SAT": ["021/020/Prima de vacaciones a tiempo", "021/022/Prima de vacaciones reportada", "PRIMA VACACIONAL"], "Cuenta Contable": "Prima Vacacional"},
-        {"Conceptos SAT": ["029/032/Vales Despensa", "VALES", "DESPENSA"], "Cuenta Contable": "Despensa"},
-        {"Conceptos SAT": ["038/012/Gratificación", "038/013/Compensación", "GRATIFICACION", "COMPENSACION"], "Cuenta Contable": "Compensación"},
-        {"Conceptos SAT": ["046/002/Asimilados a Salarios", "ASIMILADOS"], "Cuenta Contable": "Asimilados"},
-        {"Conceptos SAT": ["049/034/Premio Asistencia", "ASISTENCIA"], "Cuenta Contable": "Premio Asistencia"}
+        {"Conceptos SAT": ["001/001/Sueldo"], "Cuenta Contable": "Sueldo"},
+        {"Conceptos SAT": ["001/019/Vacaciones a tiempo"], "Cuenta Contable": "Vacaciones"},
+        {"Conceptos SAT": ["002/024/Aguinaldo"], "Cuenta Contable": "Aguinaldo"},
+        {"Conceptos SAT": ["010/033/Premio Puntualidad"], "Cuenta Contable": "Premio Puntualidad"},
+        {"Conceptos SAT": ["021/020/Prima de vacaciones a tiempo", "021/022/Prima de vacaciones reportada"], "Cuenta Contable": "Prima Vacacional"},
+        {"Conceptos SAT": ["029/032/Vales Despensa"], "Cuenta Contable": "Despensa"},
+        {"Conceptos SAT": ["038/012/Gratificación", "038/013/Compensación"], "Cuenta Contable": "Compensación"},
+        {"Conceptos SAT": ["046/002/Asimilados a Salarios"], "Cuenta Contable": "Asimilados"},
+        {"Conceptos SAT": ["049/034/Premio Asistencia"], "Cuenta Contable": "Premio Asistencia"}
     ]
-
-    MAPEO_RFC_EMPRESA = {
-        'CIV141222JD5': 'CIVLAT',
-        'EFC840210UI4': 'EFCO',
-        'GFE811209FZ2': 'FERVIC',
-        'SER970728JN8': 'SERVYRE'
-    }
 
     col_a_nom, col_mini_nom, col_mfin_nom = st.columns([1, 1, 1])
 
@@ -745,13 +678,8 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     archivo_balanza_rh_input = st.text_input("Nombre del archivo de Balanza RH:", value="Balanza RH.xlsx", key="nom_bal_rh_file")
 
     if st.button("🚀 Ejecutar Amarre Nóminas"):
-        with st.spinner("Procesando archivos de Nómina SAT y Balanza RH.xlsx..."):
+        with st.spinner("Leyendo Balanza RH.xlsx y calculando amarre..."):
             mes_str = f"{int(mes_final_nom):02d}"
-            
-            # 1. Cargar Archivos de la Carpeta Nomina
-            df_sat_nom = cargar_conceptos_nomina_sat(carpeta_nomina_input, anio_sel_nom, mes_inicial_nom, mes_final_nom)
-
-            # 2. Cargar Balanza RH
             posibles_rh = (
                 glob.glob(os.path.join(ruta_balanzas_nom_input, "**", mes_str, archivo_balanza_rh_input), recursive=True) +
                 glob.glob(os.path.join(ruta_balanzas_nom_input, str(anio_sel_nom), mes_str, archivo_balanza_rh_input), recursive=True)
@@ -761,45 +689,27 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 df_rh = obtener_saldos_balanza(posibles_rh[0])
 
                 if not df_rh.empty:
-                    st.success("✅ Archivos de Nómina SAT y Balanza RH procesados correctamente.")
+                    st.success("✅ Datos extraídos de Balanza RH.xlsx correctamente.")
                     
                     dict_resultados_emp = {}
-                    empresas_balanza = sorted(df_rh['Empresa'].unique())
-
-                    for emp in empresas_balanza:
+                    
+                    for emp in sorted(df_rh['Empresa'].unique()):
                         df_emp_rh = df_rh[df_rh['Empresa'] == emp]
                         
-                        # Filtrar datos SAT correspondientes a la empresa por RFC o Nombre
-                        if not df_sat_nom.empty:
-                            rfc_target = [k for k, v in MAPEO_RFC_EMPRESA.items() if v == emp]
-                            if rfc_target:
-                                df_emp_sat = df_sat_nom[df_sat_nom['RFC Emisor'].str.contains(rfc_target[0], na=False)]
-                            else:
-                                df_emp_sat = df_sat_nom[df_sat_nom['Empresa SAT'].str.contains(emp, na=False)]
-                        else:
-                            df_emp_sat = pd.DataFrame()
-
                         filas_emp = []
                         for item in MAPEO_EQUIVALENCIAS:
-                            concepto_label = item["Conceptos SAT"][0]
+                            concepto_sat = " / ".join(item["Conceptos SAT"])
                             cuenta_nom = item["Cuenta Contable"]
                             
-                            # Sumar monto SAT
-                            monto_sat = 0.0
-                            if not df_emp_sat.empty:
-                                for clave_busqueda in item["Conceptos SAT"]:
-                                    match_sat = df_emp_sat[df_emp_sat['Concepto SAT'].str.contains(clave_busqueda, case=False, na=False)]
-                                    if not match_sat.empty:
-                                        monto_sat += match_sat['Importe SAT'].sum()
-
-                            # Sumar monto Contabilidad (Columna E - Cargos)
-                            match_rh = df_emp_rh[df_emp_rh['Nombre Cuenta'].str.contains(cuenta_nom, case=False, na=False)]
-                            monto_cont = match_rh['Columna E (Cargos)'].sum() if not match_rh.empty else 0.0
+                            # Buscar en Balanza RH la cuenta contable de Nómina tomando Columna E (Cargos)
+                            match = df_emp_rh[df_emp_rh['Nombre Cuenta'].str.contains(cuenta_nom, case=False, na=False)]
+                            monto_cont = match['Columna E (Cargos)'].sum() if not match.empty else 0.0
                             
+                            monto_sat = 0.0  # Espacio listo para suma de XMLs
                             diferencia = monto_sat - monto_cont
 
                             filas_emp.append({
-                                'Concepto SAT': concepto_label,
+                                'Concepto SAT': concepto_sat,
                                 'Monto SAT': monto_sat,
                                 'Cuenta Contable': cuenta_nom,
                                 'Monto Contabilidad': monto_cont,
@@ -808,6 +718,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                         dict_resultados_emp[emp] = pd.DataFrame(filas_emp)
 
+                    # Pestañas en pantalla por Empresa
                     tabs_empresas = st.tabs([f"🏢 {emp}" for emp in dict_resultados_emp.keys()])
                     
                     for (emp, df_res_emp), tab_e in zip(dict_resultados_emp.items(), tabs_empresas):
@@ -836,7 +747,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                         use_container_width=True
                     )
                 else:
-                    st.warning("No se encontraron registros en la Balanza RH.")
+                    st.warning("No se encontraron registros de cuentas en la Balanza RH.")
             else:
                 st.error(f"No se encontró el archivo '{archivo_balanza_rh_input}' en la ruta: {ruta_balanzas_nom_input}/{anio_sel_nom}/{mes_str}/")
 
