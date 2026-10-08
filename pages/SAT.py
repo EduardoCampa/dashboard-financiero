@@ -23,7 +23,7 @@ submodulo_sat = st.sidebar.radio(
 
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-# --- FUNCIÓN AUXILIAR GENERAL PARA OBTENER SALDOS DE BALANZA POR CUENTA Y POR COLUMNA EXACTA ---
+# --- FUNCIÓN AUXILIAR GENERAL PARA OBTENER SALDOS DE BALANZA POR CUENTA ---
 def obtener_saldos_balanza(ruta_balanza):
     if not ruta_balanza or not os.path.exists(ruta_balanza):
         return pd.DataFrame()
@@ -42,19 +42,13 @@ def obtener_saldos_balanza(ruta_balanza):
 
             cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
             
-            # Buscar dinámicamente índices de Deudor Final y Acreedor Final (Normalmente Cols G y H)
             idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), None)
             if idx_ac_f is None:
-                idx_ac_f = df_hoja.shape[1] - 1
+                idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR' in c), df_hoja.shape[1] - 1)
                 
             idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR F' in c or 'DEUDOR FINAL' in c), None)
             if idx_de_f is None:
-                idx_de_f = df_hoja.shape[1] - 2
-
-            # Columna E (Movimiento Deudor / Cargo del Periodo) -> Índice 4 (A=0, B=1, C=2, D=3, E=4, F=5)
-            idx_col_e = 4 if df_hoja.shape[1] > 4 else 0
-            # Columna F (Movimiento Acreedor / Abono del Periodo) -> Índice 5
-            idx_col_f = 5 if df_hoja.shape[1] > 5 else 0
+                idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR' in c), df_hoja.shape[1] - 2)
 
             for _, row in df_hoja.iterrows():
                 cta = str(row.iloc[0]).strip()
@@ -64,22 +58,15 @@ def obtener_saldos_balanza(ruta_balanza):
                 cta_limpia = cta.replace(' ', '')
                 nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                 
-                # Extracción con limpieza de $, comas y conversión numérica
-                monto_de_f = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_ac_f = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                
-                # Mapeo explicito de Columna E y F
-                monto_col_e = float(pd.to_numeric(str(row.iloc[idx_col_e]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_col_f = float(pd.to_numeric(str(row.iloc[idx_col_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                monto_ac = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                monto_de = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
                 detalles.append({
                     'Empresa': nombre_pestana,
                     'Cuenta': cta_limpia,
                     'Nombre Cuenta': nom,
-                    'Saldo Deudor Final': monto_de_f,
-                    'Saldo Acreedor Final': monto_ac_f,
-                    'Columna E (Cargos)': monto_col_e,
-                    'Columna F (Abonos)': monto_col_f
+                    'Saldo Deudor Final': monto_de,
+                    'Saldo Acreedor Final': monto_ac
                 })
     except Exception:
         pass
@@ -843,7 +830,7 @@ elif submodulo_sat == "🏛️ Impuestos":
 
 
     # ---------------------------------------------------------
-    # 2. PESTAÑA IVA (AJUSTADO A COLUMNA E Y COLUMNA F)
+    # 2. PESTAÑA IVA (TABLA COMPARATIVA MULTI-EMPRESA)
     # ---------------------------------------------------------
     with tab_iva:
         st.markdown(f"### 💵 Resumen General de IVA — {nombres_meses[mes_imp-1]} {anio_imp}")
@@ -858,12 +845,12 @@ elif submodulo_sat == "🏛️ Impuestos":
                 for emp in empresas_unicas_iva:
                     df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
 
-                    # 201-00010-001-0000 IVA Cobrado -> Tomar COLUMNA F (Abonos del periodo)
-                    v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Columna F (Abonos)'].sum())
+                    # 201-00010-001-0000 IVA Cobrado
+                    v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Saldo Acreedor Final'].sum())
 
-                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado -> Tomar COLUMNA E (Cargos del periodo)
-                    v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Columna E (Cargos)'].sum())
-                    v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Columna E (Cargos)'].sum())
+                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado
+                    v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Saldo Deudor Final'].sum())
+                    v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Saldo Deudor Final'].sum())
                     v_pagado_total = v_pag1 + v_pag2
 
                     diferencia = v_cobrado - v_pagado_total
@@ -872,9 +859,9 @@ elif submodulo_sat == "🏛️ Impuestos":
 
                     datos_iva.append({
                         'Empresa': emp,
-                        'IVA Cobrado (Cuenta 201-00010-001-0000) [Col. F]': v_cobrado,
-                        'IVA Pagado Gastos (Cuenta 101-00011-001-0000) [Col. E]': v_pag1,
-                        'IVA Pagado Costos (Cuenta 101-00011-002-0000) [Col. E]': v_pag2,
+                        'IVA Cobrado (Cuenta 201-00010-001-0000)': v_cobrado,
+                        'IVA Pagado Gastos (Cuenta 101-00011-001-0000)': v_pag1,
+                        'IVA Pagado Costos (Cuenta 101-00011-002-0000)': v_pag2,
                         'Total IVA Pagado / Acreditable': v_pagado_total,
                         'IVA a Pagar (A Cargo)': iva_a_pagar,
                         'IVA a Favor': iva_a_favor
@@ -883,9 +870,9 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_base_iva = pd.DataFrame(datos_iva)
 
                 conceptos_iva = [
-                    'IVA Cobrado (Cuenta 201-00010-001-0000) [Col. F]',
-                    'IVA Pagado Gastos (Cuenta 101-00011-001-0000) [Col. E]',
-                    'IVA Pagado Costos (Cuenta 101-00011-002-0000) [Col. E]',
+                    'IVA Cobrado (Cuenta 201-00010-001-0000)',
+                    'IVA Pagado Gastos (Cuenta 101-00011-001-0000)',
+                    'IVA Pagado Costos (Cuenta 101-00011-002-0000)',
                     'Total IVA Pagado / Acreditable',
                     'IVA a Pagar (A Cargo)',
                     'IVA a Favor'
@@ -897,9 +884,9 @@ elif submodulo_sat == "🏛️ Impuestos":
                 for _, row in df_base_iva.iterrows():
                     emp_col = row['Empresa']
                     tabla_resumen_iva[emp_col] = [
-                        row['IVA Cobrado (Cuenta 201-00010-001-0000) [Col. F]'],
-                        row['IVA Pagado Gastos (Cuenta 101-00011-001-0000) [Col. E]'],
-                        row['IVA Pagado Costos (Cuenta 101-00011-002-0000) [Col. E]'],
+                        row['IVA Cobrado (Cuenta 201-00010-001-0000)'],
+                        row['IVA Pagado Gastos (Cuenta 101-00011-001-0000)'],
+                        row['IVA Pagado Costos (Cuenta 101-00011-002-0000)'],
                         row['Total IVA Pagado / Acreditable'],
                         row['IVA a Pagar (A Cargo)'],
                         row['IVA a Favor']
