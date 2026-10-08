@@ -22,7 +22,7 @@ submodulo_sat = st.sidebar.radio(
 
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-# --- FUNCIÓN DE LECTURA ROBUSTA DE BALANZAS ---
+# --- FUNCIÓN DE LECTURA ROBUSTA DE BALANZAS (OMITE ENCABEZADOS DE TITULOS) ---
 def obtener_saldos_balanza(ruta_balanza):
     if not ruta_balanza or not os.path.exists(ruta_balanza):
         return pd.DataFrame()
@@ -35,11 +35,23 @@ def obtener_saldos_balanza(ruta_balanza):
             if hoja_clean in ['HOJA1', 'HOJA 1', 'RESUMEN', 'SHEET1', 'BALANZA']:
                 continue
             
-            df_hoja = pd.read_excel(xls, sheet_name=hoja)
+            # Leer primeras 15 filas sin encabezado para detectar la tabla real
+            df_raw = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=15)
+            if df_raw.empty:
+                continue
+
+            header_row_idx = 0
+            for r_idx, row in df_raw.iterrows():
+                row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
+                if 'CUENTA' in row_str or 'NOMBRE' in row_str or 'SALDO' in row_str:
+                    header_row_idx = r_idx
+                    break
+
+            df_hoja = pd.read_excel(xls, sheet_name=hoja, skiprows=header_row_idx)
             if df_hoja.empty or df_hoja.shape[1] < 4:
                 continue
 
-            # Identificar dinámicamente o por posición predeterminada
+            # Mapeo dinámico de índices
             idx_de_f = 6 if df_hoja.shape[1] > 6 else df_hoja.shape[1] - 2
             idx_ac_f = 7 if df_hoja.shape[1] > 7 else df_hoja.shape[1] - 1
             idx_col_e = 4 if df_hoja.shape[1] > 4 else 0 # Cargos
@@ -57,7 +69,6 @@ def obtener_saldos_balanza(ruta_balanza):
                 if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
                     continue
                 
-                # Normalización de la cuenta removiendo espacios y guiones para comparaciones flexibles
                 cta_sin_formato = re.sub(r'[^0-9]', '', cta)
                 nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                 
@@ -310,7 +321,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
         mes_str = f"{int(mes):02d}"
         posibles = (
             glob.glob(os.path.join(ruta_base, str(anio), mes_str, "*.xlsx"), recursive=True) +
-            glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+            glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True) +
+            glob.glob(os.path.join(ruta_base, "*.xlsx"))
         )
         posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
         ruta_balanza = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
@@ -326,7 +338,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         for empresa in df_det['Empresa'].unique():
             df_emp = df_det[df_det['Empresa'] == empresa]
             
-            # Filtro flexible para cuentas de ingresos 410, 411 y devoluciones 423
             v_410 = df_emp[df_emp['Cuenta_Clean'].str.startswith('410')]['Saldo Acreedor Final'].sum()
             v_411 = df_emp[df_emp['Cuenta_Clean'].str.startswith('411')]['Saldo Acreedor Final'].sum()
             
@@ -409,7 +420,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 agg_mas_eg = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_mas_eg.columns = ['MASTER', 'Master_Egresos']
 
-                # BÚSQUEDA Y CRUCE FLEXIBLE DE CONTABILIDAD
                 if not df_balanzas.empty:
                     df_bal_ren = df_balanzas.rename(columns={'Empresa': 'CONTABILIDAD', 'Contabilidad Ingresos': 'Cont_Ingresos', 'Contabilidad Egresos': 'Cont_Egresos'})
                 else:
@@ -420,7 +430,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 df_res = pd.merge(df_res, agg_mas_ing, on='MASTER', how='left')
                 df_res = pd.merge(df_res, agg_mas_eg, on='MASTER', how='left')
                 
-                # Coincidencia flexible de nombre de pestaña vs nombre del mapa
                 if not df_bal_ren.empty:
                     res_cont_ing, res_cont_eg = [], []
                     for _, r_map in df_res.iterrows():
@@ -488,7 +497,22 @@ if submodulo_sat == "📊 Amarre Ingresos":
 # ==========================================
 elif submodulo_sat == "👥 Amarre Nóminas":
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
-    st.info("Módulo listo para ejecutar.")
+    
+    col_a_nom, col_mini_nom, col_mfin_nom = st.columns([1, 1, 1])
+    with col_a_nom:
+        anio_sel_nom = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0, key="nom_anio")
+    with col_mini_nom:
+        mes_inicial_nom = st.selectbox("Mes Inicial:", list(range(1, 13)), index=8, format_func=lambda x: nombres_meses[x-1], key="nom_mini")
+    with col_mfin_nom:
+        mes_final_nom = st.selectbox("Mes Final:", list(range(1, 13)), index=8, format_func=lambda x: nombres_meses[x-1], key="nom_mfin")
+
+    st.markdown("---")
+    carpeta_nomina_input = st.text_input("Carpeta Raíz de Nómina (XMLs / Excel):", value="Nomina", key="nom_dir")
+    ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
+    archivo_balanza_rh_input = st.text_input("Nombre del archivo de Balanza RH:", value="Balanza RH.xlsx", key="nom_bal_rh_file")
+
+    if st.button("🚀 Ejecutar Amarre Nóminas"):
+        st.info("Procesando datos de Nómina...")
 
 
 # ==========================================
@@ -510,7 +534,8 @@ elif submodulo_sat == "🏛️ Impuestos":
     mes_str = f"{int(mes_imp):02d}"
     posibles = (
         glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
-        glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True)
+        glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True) +
+        glob.glob(os.path.join(ruta_balanzas_imp, "*.xlsx"))
     )
     posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
     ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
@@ -597,7 +622,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                 for emp in sorted(df_saldos_iva['Empresa'].unique()):
                     df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
 
-                    # Búsqueda flexible de cuentas IVA
                     v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('20100010001')]['Columna F (Abonos)'].sum())
                     if v_cobrado == 0:
                         v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('201') & df_emp_iva['Nombre Cuenta'].str.contains('COBRADO|TRASLADADO', case=False, na=False)]['Columna F (Abonos)'].sum())
