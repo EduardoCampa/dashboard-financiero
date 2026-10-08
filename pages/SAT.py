@@ -23,7 +23,7 @@ submodulo_sat = st.sidebar.radio(
 
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-# --- FUNCIÓN AUXILIAR PARA OBTENER SALDOS DE BALANZA POR CUENTA ---
+# --- FUNCIÓN AUXILIAR GENERAL PARA OBTENER SALDOS DE BALANZA POR CUENTA ---
 def obtener_saldos_balanza(ruta_balanza):
     if not ruta_balanza or not os.path.exists(ruta_balanza):
         return pd.DataFrame()
@@ -74,10 +74,10 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA CON LAS EMPRESAS Y CONSOLIDADO ---
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA DE NÓMINA ---
 def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
     wb = Workbook()
-    wb.remove(wb.active)  # Eliminar la hoja por defecto
+    wb.remove(wb.active)
 
     font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
     fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
@@ -283,6 +283,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
     st.title("📑 Módulo SAT - Comparativos, Conciliación y Reporte Ejecutivo")
 
+    # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
     def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
         archivos_excel = (
             glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
@@ -391,6 +392,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
 
 
+    # --- FUNCIONES DE PROCESAMIENTO CONSOLIDADO MASTER ---
     def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(ruta_master):
             return pd.DataFrame(), pd.DataFrame()
@@ -451,6 +453,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return df_ingresos_master, df_egresos_master
 
 
+    # --- CARGAR BALANZAS Y DETALLE POR MES ---
     def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
         
@@ -496,6 +499,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return pd.DataFrame(res_list), df_det
 
 
+    # --- CONTROLES DE FILTRO POR PERIODOS ---
     col_a, col_mini, col_mfin = st.columns([1, 1, 1])
 
     with col_a:
@@ -680,11 +684,11 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
 
 # ==========================================
-# 3. SUBMÓDULO: IMPUESTOS (NUEVO)
+# 3. SUBMÓDULO: IMPUESTOS (RESUMEN MULTI-EMPRESA)
 # ==========================================
 elif submodulo_sat == "🏛️ Impuestos":
 
-    st.title("🏛️ Módulo de Cálculos de Impuestos")
+    st.title("🏛️ Módulo de Cálculos de Impuestos — Resumen Ejecutivo")
 
     col_a_imp, col_m_imp = st.columns([1, 1])
 
@@ -696,133 +700,220 @@ elif submodulo_sat == "🏛️ Impuestos":
     st.markdown("---")
     ruta_balanzas_imp = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="imp_bal_dir")
 
+    # Buscar Balanza
+    mes_str = f"{int(mes_imp):02d}"
+    posibles = (
+        glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
+        glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True)
+    )
+    posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
+    ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
+
     # PESTAÑAS PRINCIPALES DEL SUBMÓDULO DE IMPUESTOS
     tab_isr, tab_iva, tab_retenciones = st.tabs([
-        "📈 ISR (Pagos Provicionales)", 
+        "📈 ISR (Pagos Provisionales)", 
         "💵 IVA (Cobrado vs Pagado)", 
         "📋 RETENCIONES"
     ])
 
-    # 1. PESTAÑA ISR
+    # ---------------------------------------------------------
+    # 1. PESTAÑA ISR (TABLA COMPARATIVA MULTI-EMPRESA)
+    # ---------------------------------------------------------
     with tab_isr:
-        st.markdown(f"### 📈 Cálculo de Pago Provisional de ISR — {nombres_meses[mes_imp-1]} {anio_imp}")
-
-        mes_str = f"{int(mes_imp):02d}"
-        posibles = (
-            glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
-            glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True)
-        )
-        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
-        ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
+        st.markdown(f"### 📈 Resumen General de ISR — {nombres_meses[mes_imp-1]} {anio_imp}")
 
         if ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
             df_saldos = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos.empty:
-                empresas_unicas = df_saldos['Empresa'].unique()
-                empresa_sel = st.selectbox("Seleccione Empresa:", empresas_unicas, key="emp_isr")
-
-                df_emp = df_saldos[df_saldos['Empresa'] == empresa_sel]
-
-                # Cuentas ISR: 410-00000-000-0000 + 411-00000-000-0000 - 423-00000-000-0000
-                v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
-                v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
-
-                df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
-                v_423_ac = df_423['Saldo Acreedor Final'].sum()
-                v_423_de = df_423['Saldo Deudor Final'].sum()
-                v_423 = v_423_ac if v_423_ac > 0 else v_423_de
-
-                ingresos_isr = float(v_410) + float(v_411) - float(v_423)
-
-                st.markdown("#### 📊 Detalle de Cuentas Contables para Ingresos")
-                col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-                col_i1.metric("Cuenta 410 (Ingresos Obra)", f"${v_410:,.2f}")
-                col_i2.metric("Cuenta 411 (Otros Ingresos)", f"${v_411:,.2f}")
-                col_i3.metric("Cuenta 423 (Devoluciones/Descuentos)", f"${v_423:,.2f}")
-                col_i4.metric("Ingresos Nominales ISR", f"${ingresos_isr:,.2f}")
-
-                st.markdown("---")
-                st.markdown("#### ⚙️ Parámetros de Cálculo ISR")
+                empresas_unicas = sorted(df_saldos['Empresa'].unique())
                 
-                # Input manual del Coeficiente de Utilidad
-                coeficiente_utilidad = st.number_input(
-                    "Coeficiente de Utilidad (Manual):", 
-                    min_value=0.0000, 
-                    max_value=1.0000, 
-                    value=0.0500, 
-                    step=0.0001, 
-                    format="%.4f"
+                # Construir datos base por empresa
+                datos_isr = []
+                for emp in empresas_unicas:
+                    df_emp = df_saldos[df_saldos['Empresa'] == emp]
+
+                    v_410 = float(df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum())
+                    v_411 = float(df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum())
+
+                    df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
+                    v_423_ac = float(df_423['Saldo Acreedor Final'].sum())
+                    v_423_de = float(df_423['Saldo Deudor Final'].sum())
+                    v_423 = v_423_ac if v_423_ac > 0 else v_423_de
+
+                    ingresos_isr = v_410 + v_411 - v_423
+
+                    datos_isr.append({
+                        'Empresa': emp,
+                        'Cuenta 410 (Ventas/Ingresos Obra)': v_410,
+                        'Cuenta 411 (Otros Ingresos)': v_411,
+                        'Cuenta 423 (-) Dev. y Desc.': v_423,
+                        'Ingresos Nominales ISR': ingresos_isr,
+                        'Coeficiente de Utilidad': 0.0500  # Coeficiente inicial editable
+                    })
+
+                df_base_isr = pd.DataFrame(datos_isr)
+
+                st.markdown("#### ✏️ Capture o Modifique el Coeficiente de Utilidad por Empresa:")
+                
+                # Tabla editable para ingresar los Coeficientes de Utilidad
+                df_edited = st.data_editor(
+                    df_base_isr[['Empresa', 'Ingresos Nominales ISR', 'Coeficiente de Utilidad']],
+                    column_config={
+                        "Empresa": st.column_config.TextColumn(disabled=True),
+                        "Ingresos Nominales ISR": st.column_config.NumberColumn(format="$%,.2f", disabled=True),
+                        "Coeficiente de Utilidad": st.column_config.NumberColumn(format="%.4f", step=0.0001, min_value=0.0, max_value=1.0)
+                    },
+                    hide_index=True,
+                    use_container_width=True
                 )
 
-                utilidad_fiscal = ingresos_isr * coeficiente_utilidad
-                tasa_isr = 0.30
-                pago_provisional = utilidad_fiscal * tasa_isr
+                # Unir el coeficiente editado con los datos contables completos
+                df_merged = pd.merge(df_base_isr.drop(columns=['Coeficiente de Utilidad']), df_edited[['Empresa', 'Coeficiente de Utilidad']], on='Empresa')
+                
+                # Cálculos automáticos
+                df_merged['Utilidad Fiscal Estimada'] = df_merged['Ingresos Nominales ISR'] * df_merged['Coeficiente de Utilidad']
+                df_merged['Tasa ISR'] = 0.30
+                df_merged['Pago Provisional ISR (30%)'] = df_merged['Utilidad Fiscal Estimada'] * 0.30
 
-                st.markdown("#### 🧮 Resultado del Cálculo")
-                col_r1, col_r2, col_r3 = st.columns(3)
-                col_r1.metric("Utilidad Fiscal Estimada", f"${utilidad_fiscal:,.2f}")
-                col_r2.metric("Tasa ISR", "30.00%")
-                col_r3.metric("Pago Provisional Impuesto (ISR)", f"${pago_provisional:,.2f}")
+                # TRANSPONER TABLA PARA MOSTRAR EMPRESAS EN COLUMNAS
+                conceptos_isr = [
+                    'Cuenta 410 (Ventas/Ingresos Obra)',
+                    'Cuenta 411 (Otros Ingresos)',
+                    'Cuenta 423 (-) Dev. y Desc.',
+                    'Ingresos Nominales ISR',
+                    'Coeficiente de Utilidad',
+                    'Utilidad Fiscal Estimada',
+                    'Pago Provisional ISR (30%)'
+                ]
+
+                # Construir DataFrame transpuesto
+                tabla_resumen_isr = pd.DataFrame({'Concepto': conceptos_isr})
+
+                for _, row in df_merged.iterrows():
+                    emp_col = row['Empresa']
+                    tabla_resumen_isr[emp_col] = [
+                        row['Cuenta 410 (Ventas/Ingresos Obra)'],
+                        row['Cuenta 411 (Otros Ingresos)'],
+                        row['Cuenta 423 (-) Dev. y Desc.'],
+                        row['Ingresos Nominales ISR'],
+                        row['Coeficiente de Utilidad'],
+                        row['Utilidad Fiscal Estimada'],
+                        row['Pago Provisional ISR (30%)']
+                    ]
+
+                # Agregar columna de Total Consolidado
+                totales_row = []
+                for concepto in conceptos_isr:
+                    if concepto == 'Coeficiente de Utilidad':
+                        totales_row.append(None)
+                    else:
+                        totales_row.append(df_merged[concepto].sum() if concepto in df_merged.columns else 0.0)
+
+                tabla_resumen_isr['TOTAL CONSOLIDADO'] = totales_row
+
+                st.markdown("---")
+                st.markdown(f"#### 📊 Tabla de Resumen Comparativo ISR — Grupo")
+
+                format_dict_isr = {col: "${:,.2f}" for col in tabla_resumen_isr.columns if col != 'Concepto'}
+                
+                st.dataframe(
+                    tabla_resumen_isr.style.format(format_dict_isr, na_rep="-"),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             else:
-                st.warning("No se pudieron extraer datos de la balanza seleccionada.")
+                st.warning("No se pudieron extraer saldos de la balanza seleccionada.")
         else:
-            st.error(f"No se encontró ninguna balanza para el periodo {nombres_meses[mes_imp-1]} {anio_imp} en la ruta especificada.")
+            st.error(f"No se encontró archivo de balanza en el periodo {nombres_meses[mes_imp-1]} {anio_imp}.")
 
-    # 2. PESTAÑA IVA
+
+    # ---------------------------------------------------------
+    # 2. PESTAÑA IVA (TABLA COMPARATIVA MULTI-EMPRESA)
+    # ---------------------------------------------------------
     with tab_iva:
-        st.markdown(f"### 💵 Determinación de IVA (Cobrado vs Pagado) — {nombres_meses[mes_imp-1]} {anio_imp}")
+        st.markdown(f"### 💵 Resumen General de IVA — {nombres_meses[mes_imp-1]} {anio_imp}")
 
-        if 'ruta_balanza_sel' in locals() and ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
+        if ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
             df_saldos_iva = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos_iva.empty:
-                empresas_unicas_iva = df_saldos_iva['Empresa'].unique()
-                empresa_sel_iva = st.selectbox("Seleccione Empresa:", empresas_unicas_iva, key="emp_iva")
+                empresas_unicas_iva = sorted(df_saldos_iva['Empresa'].unique())
 
-                df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
+                datos_iva = []
+                for emp in empresas_unicas_iva:
+                    df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
 
-                # Cuenta IVA Cobrado: 201-00010-001-0000
-                v_iva_cobrado = df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Saldo Acreedor Final'].sum()
+                    # 201-00010-001-0000 IVA Cobrado
+                    v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Saldo Acreedor Final'].sum())
 
-                # Cuentas IVA Pagado: 101-00011-001-0000 + 101-00011-002-0000
-                v_iva_pag1 = df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Saldo Deudor Final'].sum()
-                v_iva_pag2 = df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Saldo Deudor Final'].sum()
-                v_iva_pagado = float(v_iva_pag1) + float(v_iva_pag2)
+                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado
+                    v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Saldo Deudor Final'].sum())
+                    v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Saldo Deudor Final'].sum())
+                    v_pagado_total = v_pag1 + v_pag2
 
-                diferencia_iva = v_iva_cobrado - v_iva_pagado
+                    diferencia = v_cobrado - v_pagado_total
+                    iva_a_favor = abs(diferencia) if diferencia < 0 else 0.0
+                    iva_a_pagar = diferencia if diferencia > 0 else 0.0
 
-                st.markdown("#### 📊 Cuentas Contables de IVA")
-                col_v1, col_v2 = st.columns(2)
-                
-                with col_v1:
-                    st.subheader("IVA Cobrado / Trasladado")
-                    st.metric("Cuenta 201-00010-001-0000", f"${v_iva_cobrado:,.2f}")
+                    datos_iva.append({
+                        'Empresa': emp,
+                        'IVA Cobrado (Cuenta 201-00010-001-0000)': v_cobrado,
+                        'IVA Pagado Gastos (Cuenta 101-00011-001-0000)': v_pag1,
+                        'IVA Pagado Costos (Cuenta 101-00011-002-0000)': v_pag2,
+                        'Total IVA Pagado / Acreditable': v_pagado_total,
+                        'IVA a Pagar (A Cargo)': iva_a_pagar,
+                        'IVA a Favor': iva_a_favor
+                    })
 
-                with col_v2:
-                    st.subheader("IVA Pagado / Acreditable")
-                    st.write(f"• **101-00011-001-0000:** ${v_iva_pag1:,.2f}")
-                    st.write(f"• **101-00011-002-0000:** ${v_iva_pag2:,.2f}")
-                    st.metric("Total IVA Pagado", f"${v_iva_pagado:,.2f}")
+                df_base_iva = pd.DataFrame(datos_iva)
 
-                st.markdown("---")
-                st.markdown("#### ⚖️ Resumen de Determinación de IVA")
-                col_res1, col_res2 = st.columns(2)
+                conceptos_iva = [
+                    'IVA Cobrado (Cuenta 201-00010-001-0000)',
+                    'IVA Pagado Gastos (Cuenta 101-00011-001-0000)',
+                    'IVA Pagado Costos (Cuenta 101-00011-002-0000)',
+                    'Total IVA Pagado / Acreditable',
+                    'IVA a Pagar (A Cargo)',
+                    'IVA a Favor'
+                ]
 
-                if diferencia_iva > 0:
-                    col_res1.metric("IVA a Cargo (A Pagar)", f"${diferencia_iva:,.2f}")
-                    col_res2.info("El IVA Cobrado fue mayor al IVA Pagado en el periodo.")
-                else:
-                    col_res1.metric("IVA a Favor", f"${abs(diferencia_iva):,.2f}")
-                    col_res2.success("El IVA Pagado fue mayor al IVA Cobrado en el periodo.")
+                # Construir Tabla Transpuesta
+                tabla_resumen_iva = pd.DataFrame({'Concepto': conceptos_iva})
+
+                for _, row in df_base_iva.iterrows():
+                    emp_col = row['Empresa']
+                    tabla_resumen_iva[emp_col] = [
+                        row['IVA Cobrado (Cuenta 201-00010-001-0000)'],
+                        row['IVA Pagado Gastos (Cuenta 101-00011-001-0000)'],
+                        row['IVA Pagado Costos (Cuenta 101-00011-002-0000)'],
+                        row['Total IVA Pagado / Acreditable'],
+                        row['IVA a Pagar (A Cargo)'],
+                        row['IVA a Favor']
+                    ]
+
+                # Fila de Totales
+                tabla_resumen_iva['TOTAL CONSOLIDADO'] = [
+                    df_base_iva[c].sum() for c in conceptos_iva
+                ]
+
+                format_dict_iva = {col: "${:,.2f}" for col in tabla_resumen_iva.columns if col != 'Concepto'}
+
+                st.dataframe(
+                    tabla_resumen_iva.style.format(format_dict_iva),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             else:
-                st.warning("No se encontraron registros de IVA en la balanza.")
+                st.warning("No se encontraron saldos de IVA en la balanza.")
         else:
-            st.error("No se encontró la balanza contable para el periodo seleccionado.")
+            st.error("No se encontró el archivo de balanza especificado.")
 
+
+    # ---------------------------------------------------------
     # 3. PESTAÑA RETENCIONES
+    # ---------------------------------------------------------
     with tab_retenciones:
-        st.markdown(f"### 📋 Detalle de Retenciones de Impuestos — {nombres_meses[mes_imp-1]} {anio_imp}")
-        st.info("Módulo configurado para consultar retenciones de ISR e IVA (Servicios Profesionales, Arrendamiento, Fletes, etc.).")
+        st.markdown(f"### 📋 Resumen General de Retenciones — {nombres_meses[mes_imp-1]} {anio_imp}")
+        st.info("Espacio preparado para consolidar cuentas de Retenciones de ISR/IVA (Fletes, Servicios Profesionales, Arrendamiento) en formato multi-empresa.")
