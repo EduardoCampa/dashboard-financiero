@@ -14,6 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- MENÚ LATERAL DE NAVEGACIÓN ---
 st.sidebar.markdown("### 📑 Módulo SAT")
 submodulo_sat = st.sidebar.radio(
     "Seleccione Submódulo:",
@@ -22,8 +23,7 @@ submodulo_sat = st.sidebar.radio(
 
 nombres_meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-
-# --- FUNCIÓN LECTORA DE BALANZAS CON DETECCIÓN DINÁMICA DE COLUMNAS Y ENCABEZADOS ---
+# --- FUNCIÓN AUXILIAR GENERAL PARA OBTENER SALDOS DE BALANZA POR CUENTA ---
 def obtener_saldos_balanza(ruta_balanza):
     if not ruta_balanza or not os.path.exists(ruta_balanza):
         return pd.DataFrame()
@@ -32,56 +32,41 @@ def obtener_saldos_balanza(ruta_balanza):
     try:
         xls = pd.ExcelFile(ruta_balanza)
         for hoja in xls.sheet_names:
-            hoja_clean = hoja.strip().upper()
-            if hoja_clean in ['HOJA1', 'HOJA 1', 'RESUMEN', 'SHEET1', 'BALANZA']:
+            if hoja.lower() in ['hoja1', 'hoja 1', 'resumen', 'sheet1']:
                 continue
             
-            # Buscar la fila donde inician las cuentas omitiendo títulos institucionales
-            df_raw = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=15)
-            if df_raw.empty:
-                continue
-
-            header_row_idx = 0
-            for r_idx, row in df_raw.iterrows():
-                row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
-                if 'CUENTA' in row_str or 'NOMBRE' in row_str or 'SALDO' in row_str:
-                    header_row_idx = r_idx
-                    break
-
-            df_hoja = pd.read_excel(xls, sheet_name=hoja, skiprows=header_row_idx)
+            nombre_pestana = hoja.strip().upper()
+            df_hoja = pd.read_excel(ruta_balanza, sheet_name=hoja)
             if df_hoja.empty or df_hoja.shape[1] < 4:
                 continue
 
             cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
-
-            # Mapeo exacto por nombre o por índice por defecto (A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7)
-            idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR F' in c or 'DEUDOR FINAL' in c), 6 if len(cols_upper) > 6 else len(cols_upper) - 2)
-            idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), 7 if len(cols_upper) > 7 else len(cols_upper) - 1)
-            idx_col_e = next((i for i, c in enumerate(cols_upper) if 'CARGO' in c or 'DEBITO' in c), 4 if len(cols_upper) > 4 else 0)
-            idx_col_f = next((i for i, c in enumerate(cols_upper) if 'ABONO' in c or 'CREDITO' in c), 5 if len(cols_upper) > 5 else 0)
+            
+            idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), None)
+            if idx_ac_f is None:
+                idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR' in c), df_hoja.shape[1] - 1)
+                
+            idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR F' in c or 'DEUDOR FINAL' in c), None)
+            if idx_de_f is None:
+                idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR' in c), df_hoja.shape[1] - 2)
 
             for _, row in df_hoja.iterrows():
                 cta = str(row.iloc[0]).strip()
-                if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
+                if not cta or cta.lower() in ('nan', 'cuenta', 'none'):
                     continue
                 
-                cta_clean = re.sub(r'[^0-9]', '', cta)
+                cta_limpia = cta.replace(' ', '')
                 nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                 
-                monto_de_f = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_ac_f = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_col_e = float(pd.to_numeric(str(row.iloc[idx_col_e]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_col_f = float(pd.to_numeric(str(row.iloc[idx_col_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                monto_ac = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                monto_de = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
                 detalles.append({
-                    'Empresa': hoja_clean,
-                    'Cuenta_Raw': cta,
-                    'Cuenta_Clean': cta_clean,
+                    'Empresa': nombre_pestana,
+                    'Cuenta': cta_limpia,
                     'Nombre Cuenta': nom,
-                    'Saldo Deudor Final': monto_de_f,
-                    'Saldo Acreedor Final': monto_ac_f,
-                    'Columna E (Cargos)': monto_col_e,
-                    'Columna F (Abonos)': monto_col_f
+                    'Saldo Deudor Final': monto_de,
+                    'Saldo Acreedor Final': monto_ac
                 })
     except Exception:
         pass
@@ -89,70 +74,201 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- EXPORTADOR A EXCEL PARA IVA ---
-def generar_excel_iva(df_transpuesto, periodo_str):
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA DE NÓMINA ---
+def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Resumen IVA"
-    ws.views.sheetView[0].showGridLines = True
+    wb.remove(wb.active)
 
     font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
     fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    
     font_normal = Font(name="Calibri", size=10, color="000000")
-    font_total_col = Font(name="Calibri", size=10, bold=True, color="000000")
-    fill_total_col = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    font_total = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_total = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
 
     borde_delgado = Border(
-        left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
-        top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    borde_total = Border(
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='double', color='000000')
     )
 
-    total_cols = len(df_transpuesto.columns)
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
-    cell_t = ws.cell(row=1, column=1, value=f"REPORTE EJECUTIVO DE DETERMINACIÓN DE IVA — ({periodo_str.upper()})")
-    cell_t.font = font_titulo
-    cell_t.fill = fill_titulo
-    cell_t.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 32
+    headers = ["Concepto SAT", "Monto SAT", "Cuenta Contable", "Monto Contabilidad", "Diferencia (SAT - Contab)"]
 
-    for col_num, col_name in enumerate(df_transpuesto.columns, 1):
-        c = ws.cell(row=3, column=col_num, value=col_name)
+    # 1. PESTAÑA CONSOLIDADO GLOBAL
+    ws_cons = wb.create_sheet(title="CONSOLIDADO")
+    ws_cons.views.sheetView[0].showGridLines = True
+
+    ws_cons.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
+    cell_t_c = ws_cons.cell(row=1, column=1, value=f"REPORTE CONSOLIDADO DE AMARRE DE NÓMINA — GRUPO ({periodo_str.upper()})")
+    cell_t_c.font = font_titulo
+    cell_t_c.fill = fill_titulo
+    cell_t_c.alignment = Alignment(horizontal="center", vertical="center")
+    ws_cons.row_dimensions[1].height = 32
+
+    for col_num, h in enumerate(headers, 1):
+        c = ws_cons.cell(row=3, column=col_num, value=h)
         c.font = font_header
         c.fill = fill_header
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = borde_delgado
-    ws.row_dimensions[3].height = 25
+    ws_cons.row_dimensions[3].height = 25
 
-    for idx_f, (_, r) in enumerate(df_transpuesto.iterrows(), start=4):
-        for col_num, col_name in enumerate(df_transpuesto.columns, 1):
-            val = r[col_name]
-            c = ws.cell(row=idx_f, column=col_num)
+    df_first = list(dict_dfs_empresas.values())[0] if dict_dfs_empresas else pd.DataFrame()
+    if not df_first.empty:
+        df_cons_data = df_first[['Concepto SAT', 'Cuenta Contable']].copy()
+        df_cons_data['Monto SAT'] = 0.0
+        df_cons_data['Monto Contabilidad'] = 0.0
+        df_cons_data['Diferencia (SAT - Contab)'] = 0.0
 
-            if col_num == 1:
-                c.value = str(val)
-                c.alignment = Alignment(horizontal="left", vertical="center")
-                c.font = Font(name="Calibri", size=10, bold=True)
-            else:
-                c.value = float(val) if pd.notnull(val) else 0.0
-                c.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-                c.alignment = Alignment(horizontal="right", vertical="center")
-                c.font = font_total_col if col_name == 'TOTAL CONSOLIDADO' else font_normal
+        for df_emp in dict_dfs_empresas.values():
+            if not df_emp.empty:
+                df_cons_data['Monto SAT'] += df_emp['Monto SAT']
+                df_cons_data['Monto Contabilidad'] += df_emp['Monto Contabilidad']
+                df_cons_data['Diferencia (SAT - Contab)'] += df_emp['Diferencia (SAT - Contab)']
 
+        row_idx_c = 4
+        for idx_f, (_, r) in enumerate(df_cons_data.iterrows()):
+            ws_cons.cell(row=row_idx_c, column=1, value=str(r.get('Concepto SAT', ''))).alignment = Alignment(horizontal="left", vertical="center")
+            
+            c1 = ws_cons.cell(row=row_idx_c, column=2, value=float(r.get('Monto SAT', 0.0)))
+            c1.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c1.alignment = Alignment(horizontal="right", vertical="center")
+
+            ws_cons.cell(row=row_idx_c, column=3, value=str(r.get('Cuenta Contable', ''))).alignment = Alignment(horizontal="center", vertical="center")
+
+            c2 = ws_cons.cell(row=row_idx_c, column=4, value=float(r.get('Monto Contabilidad', 0.0)))
+            c2.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c2.alignment = Alignment(horizontal="right", vertical="center")
+
+            c3 = ws_cons.cell(row=row_idx_c, column=5, value=float(r.get('Diferencia (SAT - Contab)', 0.0)))
+            c3.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c3.alignment = Alignment(horizontal="right", vertical="center")
+
+            fill_row = fill_zebra if idx_f % 2 == 1 else None
+            for c_num in range(1, 6):
+                cell_curr = ws_cons.cell(row=row_idx_c, column=c_num)
+                cell_curr.font = font_normal
+                cell_curr.border = borde_delgado
+                if fill_row:
+                    cell_curr.fill = fill_row
+            ws_cons.row_dimensions[row_idx_c].height = 20
+            row_idx_c += 1
+
+        ws_cons.cell(row=row_idx_c, column=1, value="TOTALES").font = font_total
+        ws_cons.cell(row=row_idx_c, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+        for col_i, col_key in [(2, 'Monto SAT'), (4, 'Monto Contabilidad'), (5, 'Diferencia (SAT - Contab)')]:
+            c_t = ws_cons.cell(row=row_idx_c, column=col_i, value=df_cons_data[col_key].sum())
+            c_t.font = font_total
+            c_t.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_t.alignment = Alignment(horizontal="right", vertical="center")
+
+        for col_num in range(1, 6):
+            c_tot_item = ws_cons.cell(row=row_idx_c, column=col_num)
+            c_tot_item.fill = fill_total
+            c_tot_item.border = borde_total
+        ws_cons.row_dimensions[row_idx_c].height = 24
+
+        for col in ws_cons.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws_cons.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+    # 2. PESTAÑAS INDIVIDUALES POR EMPRESA
+    for emp_nombre, df_datos in dict_dfs_empresas.items():
+        ws = wb.create_sheet(title=f"Amarre {emp_nombre}"[:31])
+        ws.views.sheetView[0].showGridLines = True
+
+        row_idx = 1
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+        cell_t = ws.cell(row=row_idx, column=1, value=f"REPORTE EJECUTIVO DE AMARRE DE NÓMINA — {emp_nombre.upper()} ({periodo_str.upper()})")
+        cell_t.font = font_titulo
+        cell_t.fill = fill_titulo
+        cell_t.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[row_idx].height = 32
+        row_idx += 2
+
+        for col_num, h in enumerate(headers, 1):
+            c = ws.cell(row=row_idx, column=col_num, value=h)
+            c.font = font_header
+            c.fill = fill_header
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             c.border = borde_delgado
-            if col_name == 'TOTAL CONSOLIDADO':
-                c.fill = fill_total_col
-            elif idx_f % 2 == 1:
-                c.fill = fill_zebra
+        ws.row_dimensions[row_idx].height = 25
+        row_idx += 1
 
-        ws.row_dimensions[idx_f].height = 20
+        for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+            ws.cell(row=row_idx, column=1, value=str(r.get('Concepto SAT', ''))).alignment = Alignment(horizontal="left", vertical="center")
+            
+            c_m_sat = ws.cell(row=row_idx, column=2, value=float(r.get('Monto SAT', 0.0)))
+            c_m_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_m_sat.alignment = Alignment(horizontal="right", vertical="center")
 
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 16)
+            ws.cell(row=row_idx, column=3, value=str(r.get('Cuenta Contable', ''))).alignment = Alignment(horizontal="center", vertical="center")
+
+            c_m_cont = ws.cell(row=row_idx, column=4, value=float(r.get('Monto Contabilidad', 0.0)))
+            c_m_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_m_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+            c_dif = ws.cell(row=row_idx, column=5, value=float(r.get('Diferencia (SAT - Contab)', 0.0)))
+            c_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+            fill_row = fill_zebra if idx_f % 2 == 1 else None
+            for c_num in range(1, 6):
+                cell_curr = ws.cell(row=row_idx, column=c_num)
+                cell_curr.font = font_normal
+                cell_curr.border = borde_delgado
+                if fill_row:
+                    cell_curr.fill = fill_row
+
+            ws.row_dimensions[row_idx].height = 20
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
+        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        
+        tot_sat = df_datos['Monto SAT'].sum() if 'Monto SAT' in df_datos.columns else 0.0
+        tot_cont = df_datos['Monto Contabilidad'].sum() if 'Monto Contabilidad' in df_datos.columns else 0.0
+        tot_dif = df_datos['Diferencia (SAT - Contab)'].sum() if 'Diferencia (SAT - Contab)' in df_datos.columns else 0.0
+
+        c_tot_sat = ws.cell(row=row_idx, column=2, value=tot_sat)
+        c_tot_sat.font = font_total
+        c_tot_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_sat.alignment = Alignment(horizontal="right", vertical="center")
+
+        ws.cell(row=row_idx, column=3, value="").font = font_total
+
+        c_tot_cont = ws.cell(row=row_idx, column=4, value=tot_cont)
+        c_tot_cont.font = font_total
+        c_tot_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+        c_tot_dif = ws.cell(row=row_idx, column=5, value=tot_dif)
+        c_tot_dif.font = font_total
+        c_tot_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+        for col_num in range(1, 6):
+            c_tot_item = ws.cell(row=row_idx, column=col_num)
+            c_tot_item.fill = fill_total
+            c_tot_item.border = borde_total
+
+        ws.row_dimensions[row_idx].height = 24
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
     output = io.BytesIO()
     wb.save(output)
@@ -161,12 +277,13 @@ def generar_excel_iva(df_transpuesto, periodo_str):
 
 
 # ==========================================
-# 1. AMARRE INGRESOS (USAR ARCHIVO "Balanza.xlsx" Y SALDOS FINALES DEUDOR/ACREEDOR)
+# 1. SUBMÓDULO: AMARRE INGRESOS
 # ==========================================
 if submodulo_sat == "📊 Amarre Ingresos":
 
     st.title("📑 Módulo SAT - Comparativos, Conciliación y Reporte Ejecutivo")
 
+    # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
     def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
         archivos_excel = (
             glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
@@ -174,7 +291,9 @@ if submodulo_sat == "📊 Amarre Ingresos":
             glob.glob("*.xlsx")
         )
         archivos_excel = list(set(archivos_excel))
-        registros_ingresos, registros_egresos = [], []
+        
+        registros_ingresos = []
+        registros_egresos = []
         
         for archivo in archivos_excel:
             if any(x in archivo for x in ["Consolidado", "Balanza", "FORMATO"]):
@@ -237,10 +356,12 @@ if submodulo_sat == "📊 Amarre Ingresos":
                             if val_razon and val_razon.upper() != 'NAN':
                                 razon_emisor = val_razon.upper()
                                 break
+                    
                     if not razon_emisor:
                         razon_emisor = "SIN RAZÓN EMISOR"
 
-                    subtotal, descuento = 0.0, 0.0
+                    subtotal = 0.0
+                    descuento = 0.0
                     for col in df_sat.columns:
                         c_low = col.lower()
                         if c_low == 'subtotal' or c_low == 'sub total':
@@ -250,10 +371,14 @@ if submodulo_sat == "📊 Amarre Ingresos":
                             val = str(row.get(col, 0)).replace('$', '').replace(',', '').strip()
                             descuento = float(val) if val and val.lower() != 'nan' else 0.0
 
+                    subtotal_neto = subtotal - descuento
+
                     registro = {
-                        'Empresa': razon_emisor, 'UUID': uuid,
-                        'Fecha emision': fecha_emision_str, 'Estado_SAT': estado,
-                        'SubTotal': subtotal - descuento
+                        'Empresa': razon_emisor,
+                        'UUID': uuid,
+                        'Fecha emision': fecha_emision_str,
+                        'Estado_SAT': estado,
+                        'SubTotal': subtotal_neto
                     }
 
                     if 'I - Ingreso' in tipo_doc or tipo_doc.startswith('I'):
@@ -266,6 +391,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
         return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
 
+
+    # --- FUNCIONES DE PROCESAMIENTO CONSOLIDADO MASTER ---
     def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(ruta_master):
             return pd.DataFrame(), pd.DataFrame()
@@ -273,10 +400,13 @@ if submodulo_sat == "📊 Amarre Ingresos":
         def procesar_hoja(nombre_hoja, es_egreso=False):
             try:
                 df = pd.read_excel(ruta_master, sheet_name=nombre_hoja)
-                if df.empty or 'UUID' not in df.columns:
+                if df.empty:
                     return pd.DataFrame()
 
-                df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '') & (df['UUID'].astype(str).str.upper() != 'NAN')].copy()
+                if 'UUID' in df.columns:
+                    df = df[df['UUID'].notnull() & (df['UUID'].astype(str).str.strip() != '') & (df['UUID'].astype(str).str.upper() != 'NAN')].copy()
+                else:
+                    return pd.DataFrame()
 
                 if 'CFDStatusCancelledName' in df.columns:
                     df = df[df['CFDStatusCancelledName'].astype(str).str.strip().str.upper().str.contains('VIGENTE|ERROR', na=False)].copy()
@@ -296,32 +426,43 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 subtotal = pd.to_numeric(df.get('SubTotal', 0), errors='coerce').fillna(0.0)
                 descuento = pd.to_numeric(df.get('TotalDiscount', 0), errors='coerce').fillna(0.0)
                 subtotal_neto = subtotal - descuento
+
                 if es_egreso:
                     subtotal_neto = subtotal_neto.abs() * -1
 
                 empresa_raw = df['EmpresaOrigen'] if 'EmpresaOrigen' in df.columns else 'SIN EMPRESA'
                 df['Empresa'] = empresa_raw.astype(str).str.strip().str.upper()
 
-                return pd.DataFrame({
-                    'Empresa': df['Empresa'], 'UUID': df['UUID'],
+                estado_master = df['CFDStatusCancelledName'] if 'CFDStatusCancelledName' in df.columns else 'VIGENTE'
+
+                df_final = pd.DataFrame({
+                    'Empresa': df['Empresa'],
+                    'UUID': df['UUID'],
                     'CFDIFechaCertificacion': df['Fecha_Doc'],
-                    'Estado_Master': df['CFDStatusCancelledName'] if 'CFDStatusCancelledName' in df.columns else 'VIGENTE',
+                    'Estado_Master': estado_master,
                     'SubTotal': subtotal_neto
                 })
+
+                return df_final
             except Exception:
                 return pd.DataFrame()
 
-        return procesar_hoja("FacturaCliente", es_egreso=False), procesar_hoja("NotaCreditoCliente", es_egreso=True)
+        df_ingresos_master = procesar_hoja("FacturaCliente", es_egreso=False)
+        df_egresos_master = procesar_hoja("NotaCreditoCliente", es_egreso=True)
 
-    def cargar_balanzas_por_mes(anio=2026, mes=9, ruta_base="Balanzas"):
+        return df_ingresos_master, df_egresos_master
+
+
+    # --- CARGAR BALANZAS Y DETALLE POR MES ---
+    def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
         
-        # Búsqueda estricta de "Balanza.xlsx" excluyendo "Balanza RH.xlsx"
-        posibles = glob.glob(os.path.join(ruta_base, "**", mes_str, "Balanza.xlsx"), recursive=True) + glob.glob(os.path.join(ruta_base, str(anio), mes_str, "Balanza.xlsx"), recursive=True)
-        if not posibles:
-            posibles = [f for f in glob.glob(os.path.join(ruta_base, "**", "*.xlsx"), recursive=True) if os.path.basename(f).lower() == "balanza.xlsx"]
-
-        ruta_balanza = posibles[0] if posibles else None
+        posibles = (
+            glob.glob(os.path.join(ruta_base, str(anio), mes_str, "*.xlsx"), recursive=True) +
+            glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
+        )
+        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
+        ruta_balanza = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
         
         if not ruta_balanza or not os.path.exists(ruta_balanza):
             return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
@@ -331,20 +472,20 @@ if submodulo_sat == "📊 Amarre Ingresos":
             return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
 
         res_list = []
-        for empresa in df_det['Empresa'].unique():
+        empresas_unicas = df_det['Empresa'].unique()
+        for empresa in empresas_unicas:
             df_emp = df_det[df_det['Empresa'] == empresa]
             
-            # Tomar Saldo Acreedor Final para Ingresos (410, 411)
-            v_410 = df_emp[df_emp['Cuenta_Clean'].str.startswith('410')]['Saldo Acreedor Final'].sum()
-            v_411 = df_emp[df_emp['Cuenta_Clean'].str.startswith('411')]['Saldo Acreedor Final'].sum()
+            v_410 = df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum()
+            v_411 = df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum()
             
-            # Devoluciones (423) -> Saldo Deudor Final o Acreedor Final
-            df_423 = df_emp[df_emp['Cuenta_Clean'].str.startswith('423')]
-            v_423 = df_423['Saldo Deudor Final'].sum() if df_423['Saldo Deudor Final'].sum() > 0 else df_423['Saldo Acreedor Final'].sum()
+            df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
+            v_423_ac = df_423['Saldo Acreedor Final'].sum()
+            v_423_de = df_423['Saldo Deudor Final'].sum()
+            v_423 = v_423_ac if v_423_ac > 0 else v_423_de
             
-            # Egresos (420, 421) -> Saldo Deudor Final
-            v_420 = df_emp[df_emp['Cuenta_Clean'].str.startswith('420')]['Saldo Deudor Final'].sum()
-            v_421 = df_emp[df_emp['Cuenta_Clean'].str.startswith('421')]['Saldo Deudor Final'].sum()
+            v_420 = df_emp[df_emp['Cuenta'].str.startswith('420-00000-000-0000')]['Saldo Deudor Final'].sum()
+            v_421 = df_emp[df_emp['Cuenta'].str.startswith('421-00000-000-0000')]['Saldo Deudor Final'].sum()
             
             ingresos_cont = float(v_410) + float(v_411) - float(v_423)
             egresos_cont = -1 * (float(v_420) + float(v_421))
@@ -357,7 +498,10 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
         return pd.DataFrame(res_list), df_det
 
+
+    # --- CONTROLES DE FILTRO POR PERIODOS ---
     col_a, col_mini, col_mfin = st.columns([1, 1, 1])
+
     with col_a:
         anio_sel = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0)
     with col_mini:
@@ -379,8 +523,11 @@ if submodulo_sat == "📊 Amarre Ingresos":
             st.success("✅ Procesamiento completado con éxito.")
 
             tab_comp, tab_xml, tab_master, tab_conc, tab_cont = st.tabs([
-                "⚖ 1.- Comparativos", "📑 2.- Ingresos y Egresos de los XML", 
-                "📁 3.- Ingresos y Egresos Master", "🔍 4.- Conciliacion por UUID", "📊 5.- Contabilidad"
+                "⚖ 1.- Comparativos", 
+                "📑 2.- Ingresos y Egresos de los XML", 
+                "📁 3.- Ingresos y Egresos Master",
+                "🔍 4.- Conciliacion por UUID",
+                "📊 5.- Contabilidad"
             ])
 
             with tab_comp:
@@ -407,38 +554,24 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
                 agg_xml_ing = df_ingresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_xml_ing.columns = ['XML', 'XML_Ingresos']
-                
                 agg_xml_eg = df_egresos_sat.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_sat.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_xml_eg.columns = ['XML', 'XML_Egresos']
 
                 agg_mas_ing = df_ingresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_ingresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_mas_ing.columns = ['MASTER', 'Master_Ingresos']
-                
                 agg_mas_eg = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_mas_eg.columns = ['MASTER', 'Master_Egresos']
+
+                if not df_balanzas.empty:
+                    df_bal_ren = df_balanzas.rename(columns={'Empresa': 'CONTABILIDAD', 'Contabilidad Ingresos': 'Cont_Ingresos', 'Contabilidad Egresos': 'Cont_Egresos'})
+                else:
+                    df_bal_ren = pd.DataFrame(columns=['CONTABILIDAD', 'Cont_Ingresos', 'Cont_Egresos'])
 
                 df_res = pd.merge(df_map, agg_xml_ing, on='XML', how='left')
                 df_res = pd.merge(df_res, agg_xml_eg, on='XML', how='left')
                 df_res = pd.merge(df_res, agg_mas_ing, on='MASTER', how='left')
                 df_res = pd.merge(df_res, agg_mas_eg, on='MASTER', how='left')
-                
-                if not df_balanzas.empty:
-                    res_cont_ing, res_cont_eg = [], []
-                    for _, r_map in df_res.iterrows():
-                        target = str(r_map['CONTABILIDAD']).strip().upper()
-                        match = df_balanzas[df_balanzas['Empresa'].str.contains(target, na=False)]
-                        if not match.empty:
-                            res_cont_ing.append(match['Contabilidad Ingresos'].sum())
-                            res_cont_eg.append(match['Contabilidad Egresos'].sum())
-                        else:
-                            res_cont_ing.append(0.0)
-                            res_cont_eg.append(0.0)
-                    df_res['Cont_Ingresos'] = res_cont_ing
-                    df_res['Cont_Egresos'] = res_cont_eg
-                else:
-                    df_res['Cont_Ingresos'] = 0.0
-                    df_res['Cont_Egresos'] = 0.0
-
+                df_res = pd.merge(df_res, df_bal_ren, on='CONTABILIDAD', how='left')
                 df_res = df_res.fillna(0.0)
 
                 st.markdown("#### 📈 1. Tabla de Resumen - Ingresos")
@@ -450,9 +583,21 @@ if submodulo_sat == "📊 Amarre Ingresos":
                     'Dif. (XML vs Master)': df_res['XML_Ingresos'] - df_res['Master_Ingresos'],
                     'Dif. (XML vs Contab)': df_res['XML_Ingresos'] - df_res['Cont_Ingresos']
                 })
-                st.dataframe(df_ingresos_final.style.format({'XML Ingresos': '${:,.2f}', 'Master Ingresos': '${:,.2f}', 'Contabilidad Ingresos': '${:,.2f}', 'Dif. (XML vs Master)': '${:,.2f}', 'Dif. (XML vs Contab)': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                
+                st.dataframe(
+                    df_ingresos_final.style.format({
+                        'XML Ingresos': '${:,.2f}',
+                        'Master Ingresos': '${:,.2f}', 
+                        'Contabilidad Ingresos': '${:,.2f}',
+                        'Dif. (XML vs Master)': '${:,.2f}', 
+                        'Dif. (XML vs Contab)': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
                 st.markdown("---")
+
                 st.markdown("#### 📉 2. Tabla de Resumen - Egresos")
                 df_egresos_final = pd.DataFrame({
                     'Empresa (XML / Master / Contab)': df_res['XML'] + " / " + df_res['MASTER'] + " / " + df_res['CONTABILIDAD'],
@@ -462,36 +607,67 @@ if submodulo_sat == "📊 Amarre Ingresos":
                     'Dif. (XML vs Master)': df_res['XML_Egresos'] - df_res['Master_Egresos'],
                     'Dif. (XML vs Contab)': df_res['XML_Egresos'] - df_res['Cont_Egresos']
                 })
-                st.dataframe(df_egresos_final.style.format({'XML Egresos': '${:,.2f}', 'Master Egresos': '${:,.2f}', 'Contabilidad Egresos': '${:,.2f}', 'Dif. (XML vs Master)': '${:,.2f}', 'Dif. (XML vs Contab)': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                
+                st.dataframe(
+                    df_egresos_final.style.format({
+                        'XML Egresos': '${:,.2f}',
+                        'Master Egresos': '${:,.2f}', 
+                        'Contabilidad Egresos': '${:,.2f}',
+                        'Dif. (XML vs Master)': '${:,.2f}', 
+                        'Dif. (XML vs Contab)': '${:,.2f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             with tab_xml:
-                st.markdown("### 📑 Ingresos y Egresos XML")
+                st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes y Error)")
                 if not df_ingresos_sat.empty:
                     st.dataframe(df_ingresos_sat.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
 
             with tab_master:
-                st.markdown("### 📁 Ingresos y Egresos Master")
+                st.markdown(f"### 📁 Ingresos y Egresos Master")
                 if not df_ingresos_master.empty:
                     st.dataframe(df_ingresos_master.style.format({'SubTotal': '${:,.2f}'}), use_container_width=True, hide_index=True)
 
             with tab_conc:
-                st.markdown("### 🔍 Conciliación por UUID")
-                st.info("Visualización por UUID disponible.")
+                st.markdown(f"### 🔍 Conciliación por UUID")
+                st.info("Visualización de conciliación por UUID.")
 
             with tab_cont:
-                st.markdown("### 📊 Contabilidad y Balanzas Detalle")
+                st.markdown(f"### 📊 Contabilidad y Balanzas")
                 if not df_balanzas.empty:
                     st.dataframe(df_balanzas.style.format({'Contabilidad Ingresos': '${:,.2f}', 'Contabilidad Egresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
 
 
 # ==========================================
-# 2. AMARRE NÓMINAS (USAR ARCHIVO "Balanza RH.xlsx" Y CARGOS/ABONOS)
+# 2. SUBMÓDULO: AMARRE NÓMINAS
 # ==========================================
 elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
+    MAPEO_EQUIVALENCIAS = [
+        {"Conceptos SAT": ["001/001/Sueldo"], "Cuenta Contable": "-001-0001 Sueldo"},
+        {"Conceptos SAT": ["001/019/Vacaciones a tiempo"], "Cuenta Contable": "-001-0009 Vacaciones"},
+        {"Conceptos SAT": ["002/024/Aguinaldo"], "Cuenta Contable": "-001-0011 Aguinaldo"},
+        {"Conceptos SAT": ["010/033/Premio Puntualidad"], "Cuenta Contable": "-001-0006 Premio Puntualidad"},
+        {"Conceptos SAT": ["021/020/Prima de vacaciones a tiempo", "021/022/Prima de vacaciones reportada"], "Cuenta Contable": "-001-0010 Prima Vacacional"},
+        {"Conceptos SAT": ["029/032/Vales Despensa"], "Cuenta Contable": "-001-0002 Despensa"},
+        {"Conceptos SAT": ["038/012/Gratificación", "038/013/Compensación"], "Cuenta Contable": "-001-0004 Compensación"},
+        {"Conceptos SAT": ["046/002/Asimilados a Salarios"], "Cuenta Contable": "-029-0000 Asimilados"},
+        {"Conceptos SAT": ["049/034/Premio Asistencia"], "Cuenta Contable": "-001-0005 Premio Asistencia"}
+    ]
+
+    MAPEO_RFC_EMPRESA = {
+        'CIV141222JD5': 'CIVLAT',
+        'EFC840210UI4': 'EFCO',
+        'GFE811209FZ2': 'FERVIC',
+        'SER970728JN8': 'SERVYRE'
+    }
+
     col_a_nom, col_mini_nom, col_mfin_nom = st.columns([1, 1, 1])
+
     with col_a_nom:
         anio_sel_nom = st.selectbox("Año de Filtro:", [2026, 2025, 2024], index=0, key="nom_anio")
     with col_mini_nom:
@@ -504,27 +680,18 @@ elif submodulo_sat == "👥 Amarre Nóminas":
     ruta_balanzas_nom_input = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="nom_bal_dir")
     archivo_balanza_rh_input = st.text_input("Nombre del archivo de Balanza RH:", value="Balanza RH.xlsx", key="nom_bal_rh_file")
 
-    if st.button("🚀 Ejecutar Amarre Nóminas"):
-        with st.spinner("Procesando Balanza RH.xlsx (Cargos y Abonos)..."):
-            mes_str = f"{int(mes_final_nom):02d}"
-            posibles = glob.glob(os.path.join(ruta_balanzas_nom_input, "**", mes_str, archivo_balanza_rh_input), recursive=True) + glob.glob(os.path.join(ruta_balanzas_nom_input, str(anio_sel_nom), mes_str, archivo_balanza_rh_input), recursive=True)
-            
-            if posibles and os.path.exists(posibles[0]):
-                df_rh = obtener_saldos_balanza(posibles[0])
-                st.success("✅ Archivo Balanza RH.xlsx procesado con éxito.")
-                st.dataframe(df_rh[['Empresa', 'Cuenta_Raw', 'Nombre Cuenta', 'Columna E (Cargos)', 'Columna F (Abonos)']].style.format({'Columna E (Cargos)': '${:,.2f}', 'Columna F (Abonos)': '${:,.2f}'}), use_container_width=True)
-            else:
-                st.error(f"No se encontró el archivo {archivo_balanza_rh_input} en la ruta {ruta_balanzas_nom_input}/{anio_sel_nom}/{mes_str}/")
+    st.info("Seleccione las opciones e inicie el proceso para consultar la nómina.")
 
 
 # ==========================================
-# 3. IMPUESTOS (USAR ARCHIVO "Balanza.xlsx" Y CARGOS/ABONOS)
+# 3. SUBMÓDULO: IMPUESTOS (RESUMEN MULTI-EMPRESA)
 # ==========================================
 elif submodulo_sat == "🏛️ Impuestos":
 
     st.title("🏛️ Módulo de Cálculos de Impuestos — Resumen Ejecutivo")
 
     col_a_imp, col_m_imp = st.columns([1, 1])
+
     with col_a_imp:
         anio_imp = st.selectbox("Año de Consulta:", [2026, 2025, 2024], index=0, key="imp_anio")
     with col_m_imp:
@@ -533,15 +700,25 @@ elif submodulo_sat == "🏛️ Impuestos":
     st.markdown("---")
     ruta_balanzas_imp = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="imp_bal_dir")
 
+    # Buscar Balanza
     mes_str = f"{int(mes_imp):02d}"
-    posibles = glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "Balanza.xlsx"), recursive=True) + glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "Balanza.xlsx"), recursive=True)
-    if not posibles:
-        posibles = [f for f in glob.glob(os.path.join(ruta_balanzas_imp, "**", "*.xlsx"), recursive=True) if os.path.basename(f).lower() == "balanza.xlsx"]
+    posibles = (
+        glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
+        glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True)
+    )
+    posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
+    ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
 
-    ruta_balanza_sel = posibles[0] if posibles else None
+    # PESTAÑAS PRINCIPALES DEL SUBMÓDULO DE IMPUESTOS
+    tab_isr, tab_iva, tab_retenciones = st.tabs([
+        "📈 ISR (Pagos Provisionales)", 
+        "💵 IVA (Cobrado vs Pagado)", 
+        "📋 RETENCIONES"
+    ])
 
-    tab_isr, tab_iva, tab_retenciones = st.tabs(["📈 ISR (Pagos Provisionales)", "💵 IVA (Cobrado vs Pagado)", "📋 RETENCIONES"])
-
+    # ---------------------------------------------------------
+    # 1. PESTAÑA ISR (TABLA COMPARATIVA MULTI-EMPRESA)
+    # ---------------------------------------------------------
     with tab_isr:
         st.markdown(f"### 📈 Resumen General de ISR — {nombres_meses[mes_imp-1]} {anio_imp}")
 
@@ -549,21 +726,20 @@ elif submodulo_sat == "🏛️ Impuestos":
             df_saldos = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos.empty:
+                empresas_unicas = sorted(df_saldos['Empresa'].unique())
+                
+                # Construir datos base por empresa
                 datos_isr = []
-                for emp in sorted(df_saldos['Empresa'].unique()):
+                for emp in empresas_unicas:
                     df_emp = df_saldos[df_saldos['Empresa'] == emp]
 
-                    # En ISR usando Abonos (Columna F) para la cuenta 410 y 411
-                    v_410 = float(df_emp[df_emp['Cuenta_Clean'].str.startswith('410')]['Columna F (Abonos)'].sum())
-                    if v_410 == 0:
-                        v_410 = float(df_emp[df_emp['Cuenta_Clean'].str.startswith('410')]['Saldo Acreedor Final'].sum())
+                    v_410 = float(df_emp[df_emp['Cuenta'].str.startswith('410-00000-000-0000')]['Saldo Acreedor Final'].sum())
+                    v_411 = float(df_emp[df_emp['Cuenta'].str.startswith('411-00000-000-0000')]['Saldo Acreedor Final'].sum())
 
-                    v_411 = float(df_emp[df_emp['Cuenta_Clean'].str.startswith('411')]['Columna F (Abonos)'].sum())
-                    if v_411 == 0:
-                        v_411 = float(df_emp[df_emp['Cuenta_Clean'].str.startswith('411')]['Saldo Acreedor Final'].sum())
-
-                    df_423 = df_emp[df_emp['Cuenta_Clean'].str.startswith('423')]
-                    v_423 = float(df_423['Columna E (Cargos)'].sum()) if df_423['Columna E (Cargos)'].sum() > 0 else float(df_423['Saldo Deudor Final'].sum())
+                    df_423 = df_emp[df_emp['Cuenta'].str.startswith('423-00000-000-0000')]
+                    v_423_ac = float(df_423['Saldo Acreedor Final'].sum())
+                    v_423_de = float(df_423['Saldo Deudor Final'].sum())
+                    v_423 = v_423_ac if v_423_ac > 0 else v_423_de
 
                     ingresos_isr = v_410 + v_411 - v_423
 
@@ -573,11 +749,14 @@ elif submodulo_sat == "🏛️ Impuestos":
                         'Cuenta 411 (Otros Ingresos)': v_411,
                         'Cuenta 423 (-) Dev. y Desc.': v_423,
                         'Ingresos Nominales ISR': ingresos_isr,
-                        'Coeficiente de Utilidad': 0.0500
+                        'Coeficiente de Utilidad': 0.0500  # Coeficiente inicial editable
                     })
 
                 df_base_isr = pd.DataFrame(datos_isr)
+
                 st.markdown("#### ✏️ Capture o Modifique el Coeficiente de Utilidad por Empresa:")
+                
+                # Tabla editable para ingresar los Coeficientes de Utilidad
                 df_edited = st.data_editor(
                     df_base_isr[['Empresa', 'Ingresos Nominales ISR', 'Coeficiente de Utilidad']],
                     column_config={
@@ -585,33 +764,74 @@ elif submodulo_sat == "🏛️ Impuestos":
                         "Ingresos Nominales ISR": st.column_config.NumberColumn(format="$%,.2f", disabled=True),
                         "Coeficiente de Utilidad": st.column_config.NumberColumn(format="%.4f", step=0.0001, min_value=0.0, max_value=1.0)
                     },
-                    hide_index=True, use_container_width=True
+                    hide_index=True,
+                    use_container_width=True
                 )
 
+                # Unir el coeficiente editado con los datos contables completos
                 df_merged = pd.merge(df_base_isr.drop(columns=['Coeficiente de Utilidad']), df_edited[['Empresa', 'Coeficiente de Utilidad']], on='Empresa')
+                
+                # Cálculos automáticos
                 df_merged['Utilidad Fiscal Estimada'] = df_merged['Ingresos Nominales ISR'] * df_merged['Coeficiente de Utilidad']
+                df_merged['Tasa ISR'] = 0.30
                 df_merged['Pago Provisional ISR (30%)'] = df_merged['Utilidad Fiscal Estimada'] * 0.30
 
+                # TRANSPONER TABLA PARA MOSTRAR EMPRESAS EN COLUMNAS
                 conceptos_isr = [
-                    'Cuenta 410 (Ventas/Ingresos Obra)', 'Cuenta 411 (Otros Ingresos)',
-                    'Cuenta 423 (-) Dev. y Desc.', 'Ingresos Nominales ISR',
-                    'Coeficiente de Utilidad', 'Utilidad Fiscal Estimada', 'Pago Provisional ISR (30%)'
+                    'Cuenta 410 (Ventas/Ingresos Obra)',
+                    'Cuenta 411 (Otros Ingresos)',
+                    'Cuenta 423 (-) Dev. y Desc.',
+                    'Ingresos Nominales ISR',
+                    'Coeficiente de Utilidad',
+                    'Utilidad Fiscal Estimada',
+                    'Pago Provisional ISR (30%)'
                 ]
 
+                # Construir DataFrame transpuesto
                 tabla_resumen_isr = pd.DataFrame({'Concepto': conceptos_isr})
-                for _, row in df_merged.iterrows():
-                    tabla_resumen_isr[row['Empresa']] = [row[c] for c in conceptos_isr]
 
-                tabla_resumen_isr['TOTAL CONSOLIDADO'] = [None if c == 'Coeficiente de Utilidad' else df_merged[c].sum() for c in conceptos_isr]
+                for _, row in df_merged.iterrows():
+                    emp_col = row['Empresa']
+                    tabla_resumen_isr[emp_col] = [
+                        row['Cuenta 410 (Ventas/Ingresos Obra)'],
+                        row['Cuenta 411 (Otros Ingresos)'],
+                        row['Cuenta 423 (-) Dev. y Desc.'],
+                        row['Ingresos Nominales ISR'],
+                        row['Coeficiente de Utilidad'],
+                        row['Utilidad Fiscal Estimada'],
+                        row['Pago Provisional ISR (30%)']
+                    ]
+
+                # Agregar columna de Total Consolidado
+                totales_row = []
+                for concepto in conceptos_isr:
+                    if concepto == 'Coeficiente de Utilidad':
+                        totales_row.append(None)
+                    else:
+                        totales_row.append(df_merged[concepto].sum() if concepto in df_merged.columns else 0.0)
+
+                tabla_resumen_isr['TOTAL CONSOLIDADO'] = totales_row
 
                 st.markdown("---")
-                st.markdown("#### 📊 Tabla de Resumen Comparativo ISR — Grupo")
-                st.dataframe(tabla_resumen_isr.style.format({col: "${:,.2f}" for col in tabla_resumen_isr.columns if col != 'Concepto'}, na_rep="-"), use_container_width=True, hide_index=True)
-            else:
-                st.warning("No se pudieron extraer saldos del archivo Balanza.xlsx.")
-        else:
-            st.error(f"No se encontró archivo Balanza.xlsx en la ruta {ruta_balanzas_imp}/{anio_imp}/{mes_str}/")
+                st.markdown(f"#### 📊 Tabla de Resumen Comparativo ISR — Grupo")
 
+                format_dict_isr = {col: "${:,.2f}" for col in tabla_resumen_isr.columns if col != 'Concepto'}
+                
+                st.dataframe(
+                    tabla_resumen_isr.style.format(format_dict_isr, na_rep="-"),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            else:
+                st.warning("No se pudieron extraer saldos de la balanza seleccionada.")
+        else:
+            st.error(f"No se encontró archivo de balanza en el periodo {nombres_meses[mes_imp-1]} {anio_imp}.")
+
+
+    # ---------------------------------------------------------
+    # 2. PESTAÑA IVA (TABLA COMPARATIVA MULTI-EMPRESA)
+    # ---------------------------------------------------------
     with tab_iva:
         st.markdown(f"### 💵 Resumen General de IVA — {nombres_meses[mes_imp-1]} {anio_imp}")
 
@@ -619,67 +839,81 @@ elif submodulo_sat == "🏛️ Impuestos":
             df_saldos_iva = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos_iva.empty:
+                empresas_unicas_iva = sorted(df_saldos_iva['Empresa'].unique())
+
                 datos_iva = []
-                for emp in sorted(df_saldos_iva['Empresa'].unique()):
+                for emp in empresas_unicas_iva:
                     df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
 
-                    # IVA Cobrado -> Columna F (Abonos) de la cuenta 201-00010
-                    v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('20100010001')]['Columna F (Abonos)'].sum())
-                    if v_cobrado == 0:
-                        v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('201') & df_emp_iva['Nombre Cuenta'].str.contains('COBRADO|TRASLADADO', case=False, na=False)]['Columna F (Abonos)'].sum())
+                    # 201-00010-001-0000 IVA Cobrado
+                    v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Saldo Acreedor Final'].sum())
 
-                    # IVA Pagado -> Columna E (Cargos) de las cuentas 101-00011-001 y 101-00011-002
-                    v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('10100011001')]['Columna E (Cargos)'].sum())
-                    v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('10100011002')]['Columna E (Cargos)'].sum())
-                    if (v_pag1 + v_pag2) == 0:
-                        v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta_Clean'].str.startswith('101') & df_emp_iva['Nombre Cuenta'].str.contains('PAGADO|ACREDITABLE', case=False, na=False)]['Columna E (Cargos)'].sum())
-
+                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado
+                    v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Saldo Deudor Final'].sum())
+                    v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Saldo Deudor Final'].sum())
                     v_pagado_total = v_pag1 + v_pag2
+
                     diferencia = v_cobrado - v_pagado_total
+                    iva_a_favor = abs(diferencia) if diferencia < 0 else 0.0
+                    iva_a_pagar = diferencia if diferencia > 0 else 0.0
 
                     datos_iva.append({
                         'Empresa': emp,
-                        'IVA Cobrado (Cuenta 201-00010-001-0000) [Col. F]': v_cobrado,
-                        'IVA Pagado Gastos (Cuenta 101-00011-001-0000) [Col. E]': v_pag1,
-                        'IVA Pagado Costos (Cuenta 101-00011-002-0000) [Col. E]': v_pag2,
+                        'IVA Cobrado (Cuenta 201-00010-001-0000)': v_cobrado,
+                        'IVA Pagado Gastos (Cuenta 101-00011-001-0000)': v_pag1,
+                        'IVA Pagado Costos (Cuenta 101-00011-002-0000)': v_pag2,
                         'Total IVA Pagado / Acreditable': v_pagado_total,
-                        'IVA a Pagar (A Cargo)': diferencia if diferencia > 0 else 0.0,
-                        'IVA a Favor': abs(diferencia) if diferencia < 0 else 0.0
+                        'IVA a Pagar (A Cargo)': iva_a_pagar,
+                        'IVA a Favor': iva_a_favor
                     })
 
                 df_base_iva = pd.DataFrame(datos_iva)
 
                 conceptos_iva = [
-                    'IVA Cobrado (Cuenta 201-00010-001-0000) [Col. F]',
-                    'IVA Pagado Gastos (Cuenta 101-00011-001-0000) [Col. E]',
-                    'IVA Pagado Costos (Cuenta 101-00011-002-0000) [Col. E]',
+                    'IVA Cobrado (Cuenta 201-00010-001-0000)',
+                    'IVA Pagado Gastos (Cuenta 101-00011-001-0000)',
+                    'IVA Pagado Costos (Cuenta 101-00011-002-0000)',
                     'Total IVA Pagado / Acreditable',
                     'IVA a Pagar (A Cargo)',
                     'IVA a Favor'
                 ]
 
+                # Construir Tabla Transpuesta
                 tabla_resumen_iva = pd.DataFrame({'Concepto': conceptos_iva})
+
                 for _, row in df_base_iva.iterrows():
-                    tabla_resumen_iva[row['Empresa']] = [row[c] for c in conceptos_iva]
+                    emp_col = row['Empresa']
+                    tabla_resumen_iva[emp_col] = [
+                        row['IVA Cobrado (Cuenta 201-00010-001-0000)'],
+                        row['IVA Pagado Gastos (Cuenta 101-00011-001-0000)'],
+                        row['IVA Pagado Costos (Cuenta 101-00011-002-0000)'],
+                        row['Total IVA Pagado / Acreditable'],
+                        row['IVA a Pagar (A Cargo)'],
+                        row['IVA a Favor']
+                    ]
 
-                tabla_resumen_iva['TOTAL CONSOLIDADO'] = [df_base_iva[c].sum() for c in conceptos_iva]
+                # Fila de Totales
+                tabla_resumen_iva['TOTAL CONSOLIDADO'] = [
+                    df_base_iva[c].sum() for c in conceptos_iva
+                ]
 
-                st.dataframe(tabla_resumen_iva.style.format({col: "${:,.2f}" for col in tabla_resumen_iva.columns if col != 'Concepto'}), use_container_width=True, hide_index=True)
-                st.markdown("---")
+                format_dict_iva = {col: "${:,.2f}" for col in tabla_resumen_iva.columns if col != 'Concepto'}
 
-                excel_iva_bytes = generar_excel_iva(tabla_resumen_iva, f"{nombres_meses[mes_imp-1]} {anio_imp}")
-                st.download_button(
-                    label="📥 Descargar Reporte Ejecutivo de IVA en Excel",
-                    data=excel_iva_bytes,
-                    file_name=f"Reporte_Ejecutivo_IVA_{nombres_meses[mes_imp-1]}_{anio_imp}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="btn_dl_iva", use_container_width=True
+                st.dataframe(
+                    tabla_resumen_iva.style.format(format_dict_iva),
+                    use_container_width=True,
+                    hide_index=True
                 )
-            else:
-                st.warning("No se encontraron saldos de IVA en el archivo Balanza.xlsx.")
-        else:
-            st.error("No se encontró el archivo Balanza.xlsx.")
 
+            else:
+                st.warning("No se encontraron saldos de IVA en la balanza.")
+        else:
+            st.error("No se encontró el archivo de balanza especificado.")
+
+
+    # ---------------------------------------------------------
+    # 3. PESTAÑA RETENCIONES
+    # ---------------------------------------------------------
     with tab_retenciones:
         st.markdown(f"### 📋 Resumen General de Retenciones — {nombres_meses[mes_imp-1]} {anio_imp}")
-        st.info("Espacio para consolidar cuentas de Retenciones.")
+        st.info("Espacio preparado para consolidar cuentas de Retenciones de ISR/IVA (Fletes, Servicios Profesionales, Arrendamiento) en formato multi-empresa.")
