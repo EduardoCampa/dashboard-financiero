@@ -42,7 +42,6 @@ def obtener_saldos_balanza(ruta_balanza):
 
             cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
             
-            # Buscar dinámicamente índices de Deudor Final y Acreedor Final (Normalmente Cols G y H)
             idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), None)
             if idx_ac_f is None:
                 idx_ac_f = df_hoja.shape[1] - 1
@@ -51,9 +50,7 @@ def obtener_saldos_balanza(ruta_balanza):
             if idx_de_f is None:
                 idx_de_f = df_hoja.shape[1] - 2
 
-            # Columna E (Movimiento Deudor / Cargo del Periodo) -> Índice 4 (A=0, B=1, C=2, D=3, E=4, F=5)
             idx_col_e = 4 if df_hoja.shape[1] > 4 else 0
-            # Columna F (Movimiento Acreedor / Abono del Periodo) -> Índice 5
             idx_col_f = 5 if df_hoja.shape[1] > 5 else 0
 
             for _, row in df_hoja.iterrows():
@@ -64,11 +61,9 @@ def obtener_saldos_balanza(ruta_balanza):
                 cta_limpia = cta.replace(' ', '')
                 nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                 
-                # Extracción con limpieza de $, comas y conversión numérica
                 monto_de_f = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
                 monto_ac_f = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
                 
-                # Mapeo explicito de Columna E y F
                 monto_col_e = float(pd.to_numeric(str(row.iloc[idx_col_e]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
                 monto_col_f = float(pd.to_numeric(str(row.iloc[idx_col_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
@@ -85,6 +80,86 @@ def obtener_saldos_balanza(ruta_balanza):
         pass
 
     return pd.DataFrame(detalles)
+
+
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO DE IVA ---
+def generar_excel_iva(df_transpuesto, periodo_str):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Resumen IVA"
+    ws.views.sheetView[0].showGridLines = True
+
+    font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    
+    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    
+    font_normal = Font(name="Calibri", size=10, color="000000")
+    font_total_col = Font(name="Calibri", size=10, bold=True, color="000000")
+    fill_total_col = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+
+    borde_delgado = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+
+    total_cols = len(df_transpuesto.columns)
+    
+    # Encabezado Principal
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+    cell_t = ws.cell(row=1, column=1, value=f"REPORTE EJECUTIVO DE DETERMINACIÓN DE IVA — ({periodo_str.upper()})")
+    cell_t.font = font_titulo
+    cell_t.fill = fill_titulo
+    cell_t.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 32
+
+    # Columnas / Empresas
+    for col_num, col_name in enumerate(df_transpuesto.columns, 1):
+        c = ws.cell(row=3, column=col_num, value=col_name)
+        c.font = font_header
+        c.fill = fill_header
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = borde_delgado
+    ws.row_dimensions[3].height = 25
+
+    # Filas / Conceptos
+    for idx_f, (_, r) in enumerate(df_transpuesto.iterrows(), start=4):
+        for col_num, col_name in enumerate(df_transpuesto.columns, 1):
+            val = r[col_name]
+            c = ws.cell(row=idx_f, column=col_num)
+
+            if col_num == 1:
+                c.value = str(val)
+                c.alignment = Alignment(horizontal="left", vertical="center")
+                c.font = Font(name="Calibri", size=10, bold=True)
+            else:
+                c.value = float(val) if pd.notnull(val) else 0.0
+                c.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.font = font_total_col if col_name == 'TOTAL CONSOLIDADO' else font_normal
+
+            c.border = borde_delgado
+            if col_name == 'TOTAL CONSOLIDADO':
+                c.fill = fill_total_col
+            elif idx_f % 2 == 1:
+                c.fill = fill_zebra
+
+        ws.row_dimensions[idx_f].height = 20
+
+    # Auto-ajustar anchos
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 16)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
 
 
 # --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA DE NÓMINA ---
@@ -116,7 +191,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
 
     headers = ["Concepto SAT", "Monto SAT", "Cuenta Contable", "Monto Contabilidad", "Diferencia (SAT - Contab)"]
 
-    # 1. PESTAÑA CONSOLIDADO GLOBAL
     ws_cons = wb.create_sheet(title="CONSOLIDADO")
     ws_cons.views.sheetView[0].showGridLines = True
 
@@ -196,7 +270,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             col_letter = get_column_letter(col[0].column)
             ws_cons.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
-    # 2. PESTAÑAS INDIVIDUALES POR EMPRESA
     for emp_nombre, df_datos in dict_dfs_empresas.items():
         ws = wb.create_sheet(title=f"Amarre {emp_nombre}"[:31])
         ws.views.sheetView[0].showGridLines = True
@@ -296,7 +369,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
     st.title("📑 Módulo SAT - Comparativos, Conciliación y Reporte Ejecutivo")
 
-    # --- FUNCIONES DE PROCESAMIENTO SAT (XMLs) ---
     def cargar_y_procesar_sat(carpeta_xmls="XML", anio_filtro=None, mes_ini=None, mes_fin=None):
         archivos_excel = (
             glob.glob(os.path.join(carpeta_xmls, "**", "*.xlsx"), recursive=True) + 
@@ -405,7 +477,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return pd.DataFrame(registros_ingresos), pd.DataFrame(registros_egresos)
 
 
-    # --- FUNCIONES DE PROCESAMIENTO CONSOLIDADO MASTER ---
     def cargar_y_procesar_master(ruta_master="Consolidado_Master.xlsx", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(ruta_master):
             return pd.DataFrame(), pd.DataFrame()
@@ -466,7 +537,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return df_ingresos_master, df_egresos_master
 
 
-    # --- CARGAR BALANZAS Y DETALLE POR MES ---
     def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
         
@@ -512,7 +582,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         return pd.DataFrame(res_list), df_det
 
 
-    # --- CONTROLES DE FILTRO POR PERIODOS ---
     col_a, col_mini, col_mfin = st.columns([1, 1, 1])
 
     with col_a:
@@ -713,7 +782,6 @@ elif submodulo_sat == "🏛️ Impuestos":
     st.markdown("---")
     ruta_balanzas_imp = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="imp_bal_dir")
 
-    # Buscar Balanza
     mes_str = f"{int(mes_imp):02d}"
     posibles = (
         glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
@@ -722,7 +790,6 @@ elif submodulo_sat == "🏛️ Impuestos":
     posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
     ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
 
-    # PESTAÑAS PRINCIPALES DEL SUBMÓDULO DE IMPUESTOS
     tab_isr, tab_iva, tab_retenciones = st.tabs([
         "📈 ISR (Pagos Provisionales)", 
         "💵 IVA (Cobrado vs Pagado)", 
@@ -741,7 +808,6 @@ elif submodulo_sat == "🏛️ Impuestos":
             if not df_saldos.empty:
                 empresas_unicas = sorted(df_saldos['Empresa'].unique())
                 
-                # Construir datos base por empresa
                 datos_isr = []
                 for emp in empresas_unicas:
                     df_emp = df_saldos[df_saldos['Empresa'] == emp]
@@ -762,14 +828,13 @@ elif submodulo_sat == "🏛️ Impuestos":
                         'Cuenta 411 (Otros Ingresos)': v_411,
                         'Cuenta 423 (-) Dev. y Desc.': v_423,
                         'Ingresos Nominales ISR': ingresos_isr,
-                        'Coeficiente de Utilidad': 0.0500  # Coeficiente inicial editable
+                        'Coeficiente de Utilidad': 0.0500
                     })
 
                 df_base_isr = pd.DataFrame(datos_isr)
 
                 st.markdown("#### ✏️ Capture o Modifique el Coeficiente de Utilidad por Empresa:")
                 
-                # Tabla editable para ingresar los Coeficientes de Utilidad
                 df_edited = st.data_editor(
                     df_base_isr[['Empresa', 'Ingresos Nominales ISR', 'Coeficiente de Utilidad']],
                     column_config={
@@ -781,15 +846,12 @@ elif submodulo_sat == "🏛️ Impuestos":
                     use_container_width=True
                 )
 
-                # Unir el coeficiente editado con los datos contables completos
                 df_merged = pd.merge(df_base_isr.drop(columns=['Coeficiente de Utilidad']), df_edited[['Empresa', 'Coeficiente de Utilidad']], on='Empresa')
                 
-                # Cálculos automáticos
                 df_merged['Utilidad Fiscal Estimada'] = df_merged['Ingresos Nominales ISR'] * df_merged['Coeficiente de Utilidad']
                 df_merged['Tasa ISR'] = 0.30
                 df_merged['Pago Provisional ISR (30%)'] = df_merged['Utilidad Fiscal Estimada'] * 0.30
 
-                # TRANSPONER TABLA PARA MOSTRAR EMPRESAS EN COLUMNAS
                 conceptos_isr = [
                     'Cuenta 410 (Ventas/Ingresos Obra)',
                     'Cuenta 411 (Otros Ingresos)',
@@ -800,7 +862,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                     'Pago Provisional ISR (30%)'
                 ]
 
-                # Construir DataFrame transpuesto
                 tabla_resumen_isr = pd.DataFrame({'Concepto': conceptos_isr})
 
                 for _, row in df_merged.iterrows():
@@ -815,7 +876,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                         row['Pago Provisional ISR (30%)']
                     ]
 
-                # Agregar columna de Total Consolidado
                 totales_row = []
                 for concepto in conceptos_isr:
                     if concepto == 'Coeficiente de Utilidad':
@@ -843,7 +903,7 @@ elif submodulo_sat == "🏛️ Impuestos":
 
 
     # ---------------------------------------------------------
-    # 2. PESTAÑA IVA (AJUSTADO A COLUMNA E Y COLUMNA F)
+    # 2. PESTAÑA IVA (CON BOTÓN DE DESCARGA DE REPORTE EJECUTIVO)
     # ---------------------------------------------------------
     with tab_iva:
         st.markdown(f"### 💵 Resumen General de IVA — {nombres_meses[mes_imp-1]} {anio_imp}")
@@ -858,10 +918,10 @@ elif submodulo_sat == "🏛️ Impuestos":
                 for emp in empresas_unicas_iva:
                     df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
 
-                    # 201-00010-001-0000 IVA Cobrado -> Tomar COLUMNA F (Abonos del periodo)
+                    # 201-00010-001-0000 IVA Cobrado -> Columna F (Abonos)
                     v_cobrado = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201-00010-001-0000')]['Columna F (Abonos)'].sum())
 
-                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado -> Tomar COLUMNA E (Cargos del periodo)
+                    # 101-00011-001-0000 + 101-00011-002-0000 IVA Pagado -> Columna E (Cargos)
                     v_pag1 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-001-0000')]['Columna E (Cargos)'].sum())
                     v_pag2 = float(df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101-00011-002-0000')]['Columna E (Cargos)'].sum())
                     v_pagado_total = v_pag1 + v_pag2
@@ -916,6 +976,21 @@ elif submodulo_sat == "🏛️ Impuestos":
                     tabla_resumen_iva.style.format(format_dict_iva),
                     use_container_width=True,
                     hide_index=True
+                )
+
+                st.markdown("---")
+
+                # BOTÓN DE DESCARGA EN EXCEL
+                periodo_texto_iva = f"{nombres_meses[mes_imp-1]} {anio_imp}"
+                excel_iva_bytes = generar_excel_iva(tabla_resumen_iva, periodo_texto_iva)
+
+                st.download_button(
+                    label="📥 Descargar Reporte Ejecutivo de IVA en Excel",
+                    data=excel_iva_bytes,
+                    file_name=f"Reporte_Ejecutivo_IVA_{nombres_meses[mes_imp-1]}_{anio_imp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_dl_iva",
+                    use_container_width=True
                 )
 
             else:
