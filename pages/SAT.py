@@ -211,45 +211,48 @@ def generar_excel_impuestos_completo(empresa_isr, anio_val, mes_nombre, df_isr, 
     font_header_g = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     fill_header_g = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
 
-    ws_iva.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_iva.columns))
-    t_iva = ws_iva.cell(row=1, column=1, value=f"DETERMINACIÓN DE IVA — {mes_nombre.upper()} {anio_val}")
-    t_iva.font = font_titulo_g
-    t_iva.fill = fill_titulo_g
-    t_iva.alignment = Alignment(horizontal="center", vertical="center")
-    ws_iva.row_dimensions[1].height = 32
+    if df_iva is not None and not df_iva.empty:
+        ws_iva.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_iva.columns))
+        t_iva = ws_iva.cell(row=1, column=1, value=f"DETERMINACIÓN DE IVA — {mes_nombre.upper()} {anio_val}")
+        t_iva.font = font_titulo_g
+        t_iva.fill = fill_titulo_g
+        t_iva.alignment = Alignment(horizontal="center", vertical="center")
+        ws_iva.row_dimensions[1].height = 32
 
-    headers_iva = list(df_iva.columns)
-    for c_idx, h in enumerate(headers_iva, 1):
-        cell_h = ws_iva.cell(row=3, column=c_idx, value=h)
-        cell_h.font = font_header_g
-        cell_h.fill = fill_header_g
-        cell_h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell_h.border = borde_delgado
-    ws_iva.row_dimensions[3].height = 25
+        headers_iva = list(df_iva.columns)
+        for c_idx, h in enumerate(headers_iva, 1):
+            cell_h = ws_iva.cell(row=3, column=c_idx, value=h)
+            cell_h.font = font_header_g
+            cell_h.fill = fill_header_g
+            cell_h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_h.border = borde_delgado
+        ws_iva.row_dimensions[3].height = 25
 
-    row_idx_iva = 4
-    for idx_f, (_, r) in enumerate(df_iva.iterrows()):
-        fill_row = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid") if idx_f % 2 == 1 else None
-        for c_idx, val in enumerate(r, 1):
-            cell = ws_iva.cell(row=row_idx_iva, column=c_idx)
-            if c_idx == 1:
-                cell.value = str(val)
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            else:
-                cell.value = float(val) if pd.notnull(val) else 0.0
-                cell.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-            cell.font = font_normal
-            cell.border = borde_delgado
-            if fill_row:
-                cell.fill = fill_row
-        ws_iva.row_dimensions[row_idx_iva].height = 20
-        row_idx_iva += 1
+        row_idx_iva = 4
+        for idx_f, (_, r) in enumerate(df_iva.iterrows()):
+            fill_row = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid") if idx_f % 2 == 1 else None
+            for c_idx, val in enumerate(r, 1):
+                cell = ws_iva.cell(row=row_idx_iva, column=c_idx)
+                if c_idx == 1:
+                    cell.value = str(val)
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.value = float(val) if pd.notnull(val) else 0.0
+                    cell.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.font = font_normal
+                cell.border = borde_delgado
+                if fill_row:
+                    cell.fill = fill_row
+            ws_iva.row_dimensions[row_idx_iva].height = 20
+            row_idx_iva += 1
 
-    for col in ws_iva.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws_iva.column_dimensions[col_letter].width = max(max_len + 4, 18)
+        for col in ws_iva.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws_iva.column_dimensions[col_letter].width = max(max_len + 4, 18)
+    else:
+        ws_iva.cell(row=1, column=1, value="Sin datos de IVA disponibles para el periodo.")
 
     # 3. PESTAÑA: Retenciones
     ws_ret = wb.create_sheet(title="Retenciones")
@@ -1510,7 +1513,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
                 empresas_unicas = df_saldos['Empresa'].unique()
 
-                # Generar IVA global para exportación conjunta
                 def extraer_movimientos_iva(df_sub):
                     mask_cobrado = (
                         df_sub['Cuenta_Original'].str.startswith('201-00010-001') | 
@@ -1547,7 +1549,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                             matriz_final_dict[emp] = pd.Series({'IVA COBRADO': cob, 'IVA PAGADO': pag, label_neto: val_neto})
                     df_pivot_iva_global = pd.DataFrame(matriz_final_dict).fillna(0.0).reset_index().rename(columns={'index': 'Concepto / Empresa'})
 
-                # Selector de empresa para la cédula ISR
                 empresa_sel_isr = st.selectbox("Seleccione Empresa para Cédula de ISR:", empresas_unicas, key="emp_isr_cedula")
                 df_emp_isr = df_saldos[df_saldos['Empresa'] == empresa_sel_isr]
 
@@ -1639,9 +1640,8 @@ elif submodulo_sat == "🏛️ Impuestos":
 
                 st.markdown("---")
                 
-                # Botón único para exportar las 3 pestañas de impuestos
                 excel_completo_impuestos = generar_excel_impuestos_completo(
-                    empresa_nombre=empresa_sel_isr,
+                    empresa_isr=empresa_sel_isr,
                     anio_val=anio_imp,
                     mes_nombre=nombres_meses[mes_imp-1],
                     df_isr=df_cedula_isr,
