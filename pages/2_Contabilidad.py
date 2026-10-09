@@ -165,12 +165,42 @@ def extraer_registros_balanza(ruta, nombre_hoja):
     if df_b.empty:
         return []
 
-    num_cols = df_b.shape[1]
+    cols_lower = [str(c).strip().lower() for c in df_b.columns]
+
     col_cta = 0
-    col_cargos_m = num_cols - 4
-    col_abonos_m = num_cols - 3
-    col_deudor_f = num_cols - 2
-    col_acreedor_f = num_cols - 1
+    col_cargos_m, col_abonos_m, col_deudor_f, col_acreedor_f = -1, -1, -1, -1
+
+    for idx, col_name in enumerate(cols_lower):
+        if "cuenta" in col_name:
+            col_cta = idx
+        elif (
+            "cargo" in col_name
+            and "mov" in col_name
+            or col_name in ["cargos", "cargo"]
+        ):
+            col_cargos_m = idx
+        elif "abono" in col_name and "mov" in col_name or col_name in ["abonos"]:
+            col_abonos_m = idx
+        elif (
+            "deudor" in col_name
+            and ("f" in col_name or "final" in col_name or "saldo" in col_name)
+        ) or col_name == "deudor f":
+            col_deudor_f = idx
+        elif (
+            "acreedor" in col_name
+            and ("f" in col_name or "final" in col_name or "saldo" in col_name)
+        ) or col_name == "acreedor f":
+            col_acreedor_f = idx
+
+    num_cols = df_b.shape[1]
+    if col_cargos_m == -1:
+        col_cargos_m = num_cols - 4
+    if col_abonos_m == -1:
+        col_abonos_m = num_cols - 3
+    if col_deudor_f == -1:
+        col_deudor_f = num_cols - 2
+    if col_acreedor_f == -1:
+        col_acreedor_f = num_cols - 1
 
     balanza_records = []
     for idx, row in df_b.iterrows():
@@ -350,7 +380,7 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL (CORREGIDO CON SIGNO POSITIVO PARA VENTAS/INGRESOS) ---
+# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL ---
 def obtener_monto_cuenta_balanza(
     patron_template,
     balanza_records,
@@ -1061,7 +1091,6 @@ if estructura:
 
         st.markdown("---")
 
-        # NAVEGACIÓN PRINCIPAL DEL MÓDULO CONTABLE
         seccion_contable = st.radio(
             "📌 **Selecciona la Vista Contable:**",
             ["📊 Estados de Resultados", "🔗 Amarres Contables"],
@@ -1083,7 +1112,7 @@ if estructura:
             opciones_plantillas = [
                 "📊 Resumen Ejecutivo",
                 "🔍 Detalle Completo",
-                "✏️️ Personalizada",
+                "✏ Personalizada",
             ] + [k for k in vistas_disponibles.keys() if k.startswith("⭐ ")]
 
             with col_v1:
@@ -1308,10 +1337,19 @@ if estructura:
                     datos_empresas_recs = {}
                     for emp in todas_empresas_balanza:
                         df_b_raw = cargar_hoja_balanza(ruta_balanza, emp)
-                        num_cols = df_b_raw.shape[1]
+                        cols_lower_raw = [str(c).strip().lower() for c in df_b_raw.columns]
+                        
                         col_cta = 0
-                        col_deudor_f = 6 if num_cols > 6 else num_cols - 2
-                        col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+                        col_deudor_f, col_acreedor_f = -1, -1
+                        for idx, c_name in enumerate(cols_lower_raw):
+                            if "deudor" in c_name and ("f" in c_name or "final" in c_name or "saldo" in c_name):
+                                col_deudor_f = idx
+                            elif "acreedor" in c_name and ("f" in c_name or "final" in c_name or "saldo" in c_name):
+                                col_acreedor_f = idx
+                        
+                        num_cols = df_b_raw.shape[1]
+                        if col_deudor_f == -1: col_deudor_f = 6 if num_cols > 6 else num_cols - 2
+                        if col_acreedor_f == -1: col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
 
                         recs_list = []
                         for _, row in df_b_raw.iterrows():
@@ -1414,10 +1452,19 @@ if estructura:
                     datos_empresas_recs = {}
                     for emp in todas_empresas_balanza:
                         df_b_raw = cargar_hoja_balanza(ruta_balanza, emp)
-                        num_cols = df_b_raw.shape[1]
+                        cols_lower_raw = [str(c).strip().lower() for c in df_b_raw.columns]
+                        
                         col_cta = 0
-                        col_deudor_f = 6 if num_cols > 6 else num_cols - 2
-                        col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
+                        col_deudor_f, col_acreedor_f = -1, -1
+                        for idx, c_name in enumerate(cols_lower_raw):
+                            if "deudor" in c_name and ("f" in c_name or "final" in c_name or "saldo" in c_name):
+                                col_deudor_f = idx
+                            elif "acreedor" in c_name and ("f" in c_name or "final" in c_name or "saldo" in c_name):
+                                col_acreedor_f = idx
+                        
+                        num_cols = df_b_raw.shape[1]
+                        if col_deudor_f == -1: col_deudor_f = 6 if num_cols > 6 else num_cols - 2
+                        if col_acreedor_f == -1: col_acreedor_f = 7 if num_cols > 7 else num_cols - 1
 
                         recs_list = []
                         for _, row in df_b_raw.iterrows():
