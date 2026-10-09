@@ -1308,7 +1308,7 @@ elif submodulo_sat == "🏛️ Impuestos":
     ])
 
     with tab_isr:
-        st.markdown(f"### 📈 Cálculo de Pago Provisional de ISR — {nombres_meses[mes_imp-1]} {anio_imp}")
+        st.markdown(f"### 📈 Cálculo de Pago Provisional de ISR (Concentrado por Empresa) — {nombres_meses[mes_imp-1]} {anio_imp}")
 
         mes_str = f"{int(mes_imp):02d}"
         posibles = (
@@ -1325,10 +1325,19 @@ elif submodulo_sat == "🏛️ Impuestos":
             if not df_saldos.empty:
                 df_saldos['Cuenta_Original'] = df_saldos['Cuenta_Original'].astype(str)
                 df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
-                empresas_unicas = df_saldos['Empresa'].unique()
-                empresa_sel = st.selectbox("Seleccione Empresa:", empresas_unicas, key="emp_isr")
+                
+                st.markdown("#### ⚙️ Parámetros de Cálculo ISR")
+                coeficiente_utilidad = st.number_input(
+                    "Coeficiente de Utilidad (Manual):", 
+                    min_value=0.0000, 
+                    max_value=1.0000, 
+                    value=0.0500, 
+                    step=0.0001, 
+                    format="%.4f"
+                )
 
-                df_emp = df_saldos[df_saldos['Empresa'] == empresa_sel]
+                empresas_unicas = df_saldos['Empresa'].unique()
+                lista_resultados_isr = []
 
                 def obtener_saldo_exacto(df_sub, prefijo_cta):
                     match = df_sub[
@@ -1344,43 +1353,72 @@ elif submodulo_sat == "🏛️ Impuestos":
                     ]
                     return match['Saldo Deudor Final'].sum() if not match.empty else 0.0
 
-                v_410 = obtener_saldo_exacto(df_emp, "410")
-                v_411 = obtener_saldo_exacto(df_emp, "411")
-                
-                v_423_ac = obtener_saldo_exacto(df_emp, "423")
-                v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
-                v_423 = v_423_ac if v_423_ac > 0 else v_423_de
+                for empresa_sel in empresas_unicas:
+                    df_emp = df_saldos[df_saldos['Empresa'] == empresa_sel]
 
-                ingresos_isr = float(v_410) + float(v_411) - float(v_423)
+                    v_410 = obtener_saldo_exacto(df_emp, "410")
+                    v_411 = obtener_saldo_exacto(df_emp, "411")
+                    
+                    v_423_ac = obtener_saldo_exacto(df_emp, "423")
+                    v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
+                    v_423 = v_423_ac if v_423_ac > 0 else v_423_de
 
-                st.markdown("#### 📊 Detalle de Cuentas Contables para Ingresos")
-                col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-                col_i1.metric("Cuenta 410 (Ingresos Obra)", f"${v_410:,.2f}")
-                col_i2.metric("Cuenta 411 (Otros Ingresos)", f"${v_411:,.2f}")
-                col_i3.metric("Cuenta 423 (Devoluciones/Descuentos)", f"${v_423:,.2f}")
-                col_i4.metric("Ingresos Nominales ISR", f"${ingresos_isr:,.2f}")
+                    ingresos_isr = float(v_410) + float(v_411) - float(v_423)
+                    utilidad_fiscal = ingresos_isr * coeficiente_utilidad
+                    tasa_isr = 0.30
+                    pago_provisional = utilidad_fiscal * tasa_isr
+
+                    if pago_provisional >= 0:
+                        etiqueta_isr = "ISR a cargo"
+                        monto_isr_mostrar = pago_provisional
+                    else:
+                        etiqueta_isr = "ISR a favor"
+                        monto_isr_mostrar = abs(pago_provisional)
+
+                    lista_resultados_isr.append({
+                        'Empresa': empresa_sel,
+                        'Ingresos Nominales ISR': ingresos_isr,
+                        'Utilidad Fiscal Estimada': utilidad_fiscal,
+                        'Tasa ISR': 0.30,
+                        etiqueta_isr: monto_isr_mostrar
+                    })
+
+                # Generar matriz concentrada por empresa similar al módulo de IVA
+                matriz_isr_dict = {}
+                for emp in empresas_unicas:
+                    df_emp_reg = pd.DataFrame(lista_resultados_isr)
+                    df_emp_reg = df_emp_reg[df_emp_reg['Empresa'] == emp]
+                    if not df_emp_reg.empty:
+                        ing = df_emp_reg['Ingresos Nominales ISR'].values[0]
+                        util = df_emp_reg['Utilidad Fiscal Estimada'].values[0]
+                        tasa = 0.30
+                        
+                        # Determinar etiqueta activa para la fila de impuesto
+                        val_pago = util * tasa
+                        if val_pago >= 0:
+                            label_isr = "ISR a cargo"
+                            val_isr = val_pago
+                        else:
+                            label_isr = "ISR a favor"
+                            val_isr = abs(val_pago)
+
+                        matriz_isr_dict[emp] = pd.Series({
+                            'Ingresos Nominales': ing,
+                            'Utilidad Fiscal': util,
+                            'Tasa ISR': tasa,
+                            label_isr: val_isr
+                        })
+
+                df_pivot_isr = pd.DataFrame(matriz_isr_dict).fillna(0.0)
 
                 st.markdown("---")
-                st.markdown("#### ⚙️ Parámetros de Cálculo ISR")
-                
-                coeficiente_utilidad = st.number_input(
-                    "Coeficiente de Utilidad (Manual):", 
-                    min_value=0.0000, 
-                    max_value=1.0000, 
-                    value=0.0500, 
-                    step=0.0001, 
-                    format="%.4f"
+                st.markdown("#### 📋 Concentrado de ISR por Empresa (Pagos Provisionales)")
+                st.dataframe(
+                    df_pivot_isr.style.format({
+                        col: ('{:.2%}' if col == 'Tasa ISR' else '${:,.2f}') for col in df_pivot_isr.columns
+                    }),
+                    use_container_width=True
                 )
-
-                utilidad_fiscal = ingresos_isr * coeficiente_utilidad
-                tasa_isr = 0.30
-                pago_provisional = utilidad_fiscal * tasa_isr
-
-                st.markdown("#### 🧮 Resultado del Cálculo")
-                col_r1, col_r2, col_r3 = st.columns(3)
-                col_r1.metric("Utilidad Fiscal Estimada", f"${utilidad_fiscal:,.2f}")
-                col_r2.metric("Tasa ISR", "30.00%")
-                col_r3.metric("Pago Provisional Impuesto (ISR)", f"${pago_provisional:,.2f}")
 
             else:
                 st.warning("No se pudieron extraer datos de la balanza seleccionada.")
@@ -1441,27 +1479,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_matriz_iva = pd.DataFrame(lista_resultados_iva)
 
                 if not df_matriz_iva.empty:
-                    # Consolidar columnas dinámicas de IVA a cargo / a favor en una sola estructura limpia para la tabla
-                    filas_pivot_iva = []
-                    for emp in empresas_lista:
-                        df_emp_reg = df_matriz_iva[df_matriz_iva['Empresa'] == emp]
-                        if not df_emp_reg.empty:
-                            cob = df_emp_reg['IVA COBRADO'].values[0]
-                            pag = df_emp_reg['IVA PAGADO'].values[0]
-                            neto_val = cob - pag
-                            tipo_neto = "IVA a cargo" if neto_val >= 0 else "IVA a favor"
-                            val_neto_fmt = abs(neto_val)
-                            
-                            filas_pivot_iva.append({
-                                'Empresa': emp,
-                                'IVA COBRADO': cob,
-                                'IVA PAGADO': pag,
-                                'Tipo': tipo_neto,
-                                'Monto': val_neto_fmt
-                            })
-
-                    # Creamos un DataFrame pivoteado por filas de conceptos (Cobrado, Pagado, IVA a cargo/favor)
-                    # O más sencillo, una tabla índice (Concepto) vs Columnas (Empresas) como estaba originalmente:
                     matriz_final_dict = {}
                     for emp in empresas_lista:
                         df_emp_reg = df_matriz_iva[df_matriz_iva['Empresa'] == emp]
