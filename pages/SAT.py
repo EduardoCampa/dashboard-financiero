@@ -101,37 +101,56 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
     registros_sat = []
 
     for archivo in archivos_nom:
-        if "Balanza" in os.path.basename(archivo):
+        nombre_archivo = os.path.basename(archivo)
+        if "Balanza" in nombre_archivo:
             continue
+        
+        rfc_match = re.search(r'([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})', nombre_archivo.upper())
+        rfc_filename = rfc_match.group(1) if rfc_match else ""
+
         try:
             xls = pd.ExcelFile(archivo)
             for sheet in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet)
+                df_raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=15)
+                if df_raw.empty:
+                    continue
+                
+                header_row_idx = 0
+                for r_idx, row in df_raw.iterrows():
+                    row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
+                    if any(k in row_str for k in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'IMPORTE', 'CLAVE']):
+                        header_row_idx = r_idx
+                        break
+
+                df = pd.read_excel(xls, sheet_name=sheet, skiprows=header_row_idx)
                 if df.empty:
                     continue
                 
-                cols = {str(c).strip().lower(): c for c in df.columns}
+                cols = {str(c).strip().lower(): i for i, c in enumerate(df.columns)}
                 
-                col_rfc_e = next((cols[k] for k in cols if 'rfc' in k or 'emisor' in k), None)
-                col_concepto = next((cols[k] for k in cols if 'concepto' in k or 'descripcion' in k or 'tipo' in k or 'clave' in k), None)
-                col_importe = next((cols[k] for k in cols if 'importe' in k or 'monto' in k or 'total' in k or 'subtotal' in k), None)
-                col_fecha = next((cols[k] for k in cols if 'fecha' in k or 'pago' in k or 'emision' in k), None)
+                col_rfc_idx = next((i for k, i in cols.items() if 'rfc' in k or 'emisor' in k), None)
+                col_concepto_idx = next((i for k, i in cols.items() if any(x in k for x in ['concepto', 'descripcion', 'percepcion', 'tipo', 'clave'])), 0)
+                col_importe_idx = next((i for k, i in cols.items() if any(x in k for x in ['importe', 'monto', 'total', 'subtotal', 'gravado', 'exento'])), df.shape[1] - 1)
+                col_fecha_idx = next((i for k, i in cols.items() if 'fecha' in k or 'pago' in k or 'emision' in k), None)
 
                 for _, row in df.iterrows():
-                    if col_fecha and pd.notnull(row[col_fecha]):
-                        dt = pd.to_datetime(row[col_fecha], errors='coerce')
+                    if col_fecha_idx is not None and pd.notnull(row.iloc[col_fecha_idx]):
+                        dt = pd.to_datetime(row.iloc[col_fecha_idx], errors='coerce')
                         if pd.notnull(dt):
                             if anio_filtro and dt.year != int(anio_filtro):
                                 continue
                             if mes_ini and mes_fin and (dt.month < int(mes_ini) or dt.month > int(mes_fin)):
                                 continue
 
-                    rfc_val = str(row[col_rfc_e]).strip().upper() if col_rfc_e and pd.notnull(row[col_rfc_e]) else ""
-                    conc_val = str(row[col_concepto]).strip().upper() if col_concepto and pd.notnull(row[col_concepto]) else ""
-                    imp_val = float(pd.to_numeric(str(row[col_importe]).replace('$', '').replace(',', ''), errors='coerce') or 0.0) if col_importe else 0.0
+                    rfc_val = str(row.iloc[col_rfc_idx]).strip().upper() if col_rfc_idx is not None and pd.notnull(row.iloc[col_rfc_idx]) else rfc_filename
+                    if not rfc_val:
+                        rfc_val = rfc_filename
+
+                    conc_val = str(row.iloc[col_concepto_idx]).strip().upper() if pd.notnull(row.iloc[col_concepto_idx]) else ""
+                    imp_val = float(pd.to_numeric(str(row.iloc[col_importe_idx]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
                     registros_sat.append({
-                        'Archivo': os.path.basename(archivo),
+                        'Archivo': nombre_archivo,
                         'RFC Emisor': rfc_val,
                         'Concepto SAT': conc_val,
                         'Importe SAT': imp_val
@@ -621,16 +640,28 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 agg_mas_eg = df_egresos_master.groupby('Empresa', as_index=False)['SubTotal'].sum() if not df_egresos_master.empty else pd.DataFrame(columns=['Empresa', 'SubTotal'])
                 agg_mas_eg.columns = ['MASTER', 'Master_Egresos']
 
-                if not df_balanzas.empty:
-                    df_bal_ren = df_balanzas.rename(columns={'Empresa': 'CONTABILIDAD', 'Contabilidad Ingresos': 'Cont_Ingresos', 'Contabilidad Egresos': 'Cont_Egresos'})
-                else:
-                    df_bal_ren = pd.DataFrame(columns=['CONTABILIDAD', 'Cont_Ingresos', 'Cont_Egresos'])
-
                 df_res = pd.merge(df_map, agg_xml_ing, on='XML', how='left')
                 df_res = pd.merge(df_res, agg_xml_eg, on='XML', how='left')
                 df_res = pd.merge(df_res, agg_mas_ing, on='MASTER', how='left')
                 df_res = pd.merge(df_res, agg_mas_eg, on='MASTER', how='left')
-                df_res = pd.merge(df_res, df_bal_ren, on='CONTABILIDAD', how='left')
+
+                if not df_balanzas.empty:
+                    res_cont_ing, res_cont_eg = [], []
+                    for _, r_map in df_res.iterrows():
+                        target = str(r_map['CONTABILIDAD']).strip().upper()
+                        match = df_balanzas[df_balanzas['Empresa'].str.contains(target, na=False)]
+                        if not match.empty:
+                            res_cont_ing.append(match['Contabilidad Ingresos'].sum())
+                            res_cont_eg.append(match['Contabilidad Egresos'].sum())
+                        else:
+                            res_cont_ing.append(0.0)
+                            res_cont_eg.append(0.0)
+                    df_res['Cont_Ingresos'] = res_cont_ing
+                    df_res['Cont_Egresos'] = res_cont_eg
+                else:
+                    df_res['Cont_Ingresos'] = 0.0
+                    df_res['Cont_Egresos'] = 0.0
+
                 df_res = df_res.fillna(0.0)
 
                 st.markdown("#### 📈 1. Tabla de Resumen - Ingresos")
