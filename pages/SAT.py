@@ -101,7 +101,7 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - RESTAURADA ORIGINAL ---
+# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - ORIGINAL CONSOLIDADA ---
 def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
     if not os.path.exists(carpeta_nomina):
         return pd.DataFrame()
@@ -132,7 +132,7 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
                 header_row_idx = 0
                 for r_idx, row in df_raw.iterrows():
                     row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
-                    if any(k in row_str for k in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'IMPORTE', 'CLAVE']):
+                    if any(k in row_str for k in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'IMPORTE', 'CLAVE', 'RFC']):
                         header_row_idx = r_idx
                         break
 
@@ -157,18 +157,24 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
                                 continue
 
                     rfc_val = str(row.iloc[col_rfc_idx]).strip().upper() if col_rfc_idx is not None and pd.notnull(row.iloc[col_rfc_idx]) else rfc_filename
-                    if not rfc_val:
+                    if not rfc_val or rfc_val == 'NAN':
                         rfc_val = rfc_filename
 
                     conc_val = str(row.iloc[col_concepto_idx]).strip().upper() if pd.notnull(row.iloc[col_concepto_idx]) else ""
-                    imp_val = float(pd.to_numeric(str(row.iloc[col_importe_idx]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
+                    
+                    val_raw = row.iloc[col_importe_idx] if col_importe_idx < len(row) else 0
+                    try:
+                        imp_val = float(pd.to_numeric(str(val_raw).replace('$', '').replace(',', '').strip(), errors='coerce') or 0.0)
+                    except:
+                        imp_val = 0.0
 
-                    registros_sat.append({
-                        'Archivo': nombre_archivo,
-                        'RFC Emisor': rfc_val,
-                        'Concepto SAT': conc_val,
-                        'Importe SAT': imp_val
-                    })
+                    if conc_val and conc_val != 'NAN':
+                        registros_sat.append({
+                            'Archivo': nombre_archivo,
+                            'RFC Emisor': rfc_val,
+                            'Concepto SAT': conc_val,
+                            'Importe SAT': imp_val
+                        })
         except Exception:
             continue
 
@@ -782,7 +788,7 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
 
 # ==========================================
-# 2. SUBMÓDULO: AMARRE NÓMINAS
+# 2. SUBMÓDULO: AMARRE NÓMINAS (CON PESTAÑAS DE RESUMEN, SAT Y CONTABILIDAD)
 # ==========================================
 elif submodulo_sat == "👥 Amarre Nóminas":
 
@@ -880,19 +886,52 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
                         dict_resultados_emp[emp] = pd.DataFrame(filas_emp)
 
+                    # Estructura original de pestañas por empresa y sub-pestañas de detalle / resumen
                     tabs_empresas = st.tabs([f"🏢 {emp}" for emp in dict_resultados_emp.keys()])
                     
                     for (emp, df_res_emp), tab_e in zip(dict_resultados_emp.items(), tabs_empresas):
                         with tab_e:
                             st.markdown(f"#### 📋 Resumen de Amarre de Nómina — {emp}")
-                            st.dataframe(
-                                df_res_emp.style.format({
-                                    'Monto SAT': '${:,.2f}',
-                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
-                                }),
-                                use_container_width=True,
-                                hide_index=True
-                            )
+                            
+                            # Sub-pestañas detalladas (Resumen General, Conceptos SAT, Contabilidad)
+                            sub_t1, sub_t2, sub_t3 = st.tabs(["📊 Resumen Comparativo", "📑 Conceptos SAT", "📊 Contabilidad (Balanza RH)"])
+                            
+                            with sub_t1:
+                                st.dataframe(
+                                    df_res_emp.style.format({
+                                        'Monto SAT': '${:,.2f}',
+                                        'Monto Contabilidad': '${:,.2f}',                                         'Diferencia (SAT - Contab)': '${:,.2f}'
+                                    }),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            
+                            with sub_t2:
+                                st.markdown(f"**Desglose de Conceptos de Nómina leídos del SAT para {emp}:**")
+                                if not df_sat_nom.empty:
+                                    rfcs = [k for k, v in MAPEO_RFC_EMPRESA.items() if v == emp]
+                                    df_det_sat = df_sat_nom[df_sat_nom['RFC Emisor'].str.contains(rfcs[0], na=False)] if rfcs else df_sat_nom
+                                    if not df_det_sat.empty:
+                                        st.dataframe(df_det_sat.style.format({'Importe SAT': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.info("No se encontraron registros de SAT para esta empresa con el RFC configurado.")
+                                else:
+                                    st.warning("La carpeta de nóminas está vacía o no se pudieron leer los archivos.")
+
+                            with sub_t3:
+                                st.markdown(f"**Saldos de la Balanza RH para {emp}:**")
+                                df_det_rh = df_rh[df_rh['Empresa'] == emp]
+                                if not df_det_rh.empty:
+                                    st.dataframe(
+                                        df_det_rh.style.format({
+                                            'Saldo Deudor Final': '${:,.2f}',                                             'Saldo Acreedor Final': '${:,.2f}',
+                                            'Columna E (Cargos)': '${:,.2f}',                                             'Columna F (Abonos)': '${:,.2f}'
+                                        }),
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                else:
+                                    st.info("No se encontraron cuentas de Balanza RH para esta empresa.")
 
                     st.markdown("---")
                     excel_bytes_nom = generar_excel_ejecutivo_completo_nomina(
