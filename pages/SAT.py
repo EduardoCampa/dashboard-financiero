@@ -106,6 +106,110 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
+# --- FUNCIÓN PARA GENERAR EXCEL DE CÉDULA ISR ---
+def generar_excel_cedula_isr(empresa_nombre, anio_val, mes_nombre, df_datos):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ISR Pagos Provisionales"
+    ws.views.sheetView[0].showGridLines = True
+
+    font_titulo_empresa = Font(name="Calibri", size=12, bold=True, color="000000")
+    font_titulo_rep = Font(name="Calibri", size=11, bold=True, color="000000")
+    font_ejercicio = Font(name="Calibri", size=11, bold=True, color="000000")
+    
+    font_header = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_header = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+    
+    font_normal = Font(name="Calibri", size=10, color="000000")
+    font_total = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_total = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+
+    borde_delgado = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    borde_total = Border(
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='double', color='000000'),
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9')
+    )
+
+    ws.merge_cells('A1:B1')
+    ws.cell(row=1, column=1, value=f"{empresa_nombre} SA DE CV").font = font_titulo_empresa
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.merge_cells('A2:B2')
+    ws.cell(row=2, column=1, value="PAGOS PROVISIONALES").font = font_titulo_rep
+    ws.cell(row=2, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.merge_cells('A3:B3')
+    ws.cell(row=3, column=1, value=f"EJERCICIO {anio_val}").font = font_ejercicio
+    ws.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+    # Cabecera de tabla
+    ws.cell(row=5, column=1, value="OBLIGACIONES").font = font_header
+    ws.cell(row=5, column=1).fill = fill_header
+    ws.cell(row=5, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=5, column=1).border = borde_delgado
+
+    col_mes_abr = mes_nombre.upper()[:3]
+    ws.cell(row=5, column=2, value=col_mes_abr).font = font_header
+    ws.cell(row=5, column=2).fill = fill_header
+    ws.cell(row=5, column=2).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=5, column=2).border = borde_delgado
+    ws.row_dimensions[5].height = 25
+
+    row_idx = 6
+    for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+        concepto = r['OBLIGACIONES']
+        valor = r[col_mes_abr]
+
+        cell_c = ws.cell(row=row_idx, column=1, value=concepto)
+        cell_v = ws.cell(row=row_idx, column=2)
+
+        is_total_row = (concepto == "TOTAL ISR A PAGAR")
+
+        if is_total_row:
+            cell_c.font = font_total
+            cell_v.font = font_total
+            cell_c.fill = fill_total
+            cell_v.fill = fill_total
+            cell_c.border = borde_total
+            cell_v.border = borde_total
+        else:
+            cell_c.font = font_normal
+            cell_v.font = font_normal
+            cell_c.border = borde_delgado
+            cell_v.border = borde_delgado
+
+        cell_c.alignment = Alignment(horizontal="left", vertical="center")
+
+        if concepto == "C.U.":
+            cell_v.value = float(valor)
+            cell_v.number_format = '0.00%'
+        elif concepto == "TASA DE IMPTO":
+            cell_v.value = float(valor)
+            cell_v.number_format = '0.00%'
+        else:
+            cell_v.value = float(valor) if pd.notnull(valor) else 0.0
+            cell_v.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+
+        cell_v.alignment = Alignment(horizontal="right", vertical="center")
+        ws.row_dimensions[row_idx].height = 20
+        row_idx += 1
+
+    ws.column_dimensions['A'].width = 50
+    ws.column_dimensions['B'].width = 20
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
 # --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO DE AMARRE DE INGRESOS ---
 def generar_excel_ejecutivo_ingresos(df_ingresos_final, df_egresos_final, periodo_str):
     wb = Workbook()
@@ -313,92 +417,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = get_column_letter(col[0].column)
             ws_cons.column_dimensions[col_letter].width = max(max_len + 4, 18)
-
-    for emp_nombre, df_datos in dict_dfs_empresas.items():
-        ws = wb.create_sheet(title=f"Amarre {emp_nombre}"[:31])
-        ws.views.sheetView[0].showGridLines = True
-
-        row_idx = 1
-        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
-        cell_t = ws.cell(row=row_idx, column=1, value=f"REPORTE EJECUTIVO DE AMARRE DE NÓMINA — {emp_nombre.upper()} ({periodo_str.upper()})")
-        cell_t.font = font_titulo
-        cell_t.fill = fill_titulo
-        cell_t.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[row_idx].height = 32
-        row_idx += 2
-
-        for col_num, h in enumerate(headers, 1):
-            c = ws.cell(row=row_idx, column=col_num, value=h)
-            c.font = font_header
-            c.fill = fill_header
-            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            c.border = borde_delgado
-        ws.row_dimensions[row_idx].height = 25
-        row_idx += 1
-
-        for idx_f, (_, r) in enumerate(df_datos.iterrows()):
-            ws.cell(row=row_idx, column=1, value=str(r.get('Concepto SAT', ''))).alignment = Alignment(horizontal="left", vertical="center")
-            
-            c_m_sat = ws.cell(row=row_idx, column=2, value=float(r.get('Monto SAT', 0.0)))
-            c_m_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-            c_m_sat.alignment = Alignment(horizontal="right", vertical="center")
-
-            ws.cell(row=row_idx, column=3, value=str(r.get('Cuenta Contable', ''))).alignment = Alignment(horizontal="center", vertical="center")
-
-            c_m_cont = ws.cell(row=row_idx, column=4, value=float(r.get('Monto Contabilidad', 0.0)))
-            c_m_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-            c_m_cont.alignment = Alignment(horizontal="right", vertical="center")
-
-            c_dif = ws.cell(row=row_idx, column=5, value=float(r.get('Diferencia (SAT - Contab)', 0.0)))
-            c_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-            c_dif.alignment = Alignment(horizontal="right", vertical="center")
-
-            fill_row = fill_zebra if idx_f % 2 == 1 else None
-            for c_num in range(1, 6):
-                cell_curr = ws.cell(row=row_idx, column=c_num)
-                cell_curr.font = font_normal
-                cell_curr.border = borde_delgado
-                if fill_row:
-                    cell_curr.fill = fill_row
-
-            ws.row_dimensions[row_idx].height = 20
-            row_idx += 1
-
-        ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
-        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
-        
-        tot_sat = df_datos['Monto SAT'].sum() if 'Monto SAT' in df_datos.columns else 0.0
-        tot_cont = df_datos['Monto Contabilidad'].sum() if 'Monto Contabilidad' in df_datos.columns else 0.0
-        tot_dif = df_datos['Diferencia (SAT - Contab)'].sum() if 'Diferencia (SAT - Contab)' in df_datos.columns else 0.0
-
-        c_tot_sat = ws.cell(row=row_idx, column=2, value=tot_sat)
-        c_tot_sat.font = font_total
-        c_tot_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-        c_tot_sat.alignment = Alignment(horizontal="right", vertical="center")
-
-        ws.cell(row=row_idx, column=3, value="").font = font_total
-
-        c_tot_cont = ws.cell(row=row_idx, column=4, value=tot_cont)
-        c_tot_cont.font = font_total
-        c_tot_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-        c_tot_cont.alignment = Alignment(horizontal="right", vertical="center")
-
-        c_tot_dif = ws.cell(row=row_idx, column=5, value=tot_dif)
-        c_tot_dif.font = font_total
-        c_tot_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
-        c_tot_dif.alignment = Alignment(horizontal="right", vertical="center")
-
-        for col_num in range(1, 6):
-            c_tot_item = ws.cell(row=row_idx, column=col_num)
-            c_tot_item.fill = fill_total
-            c_tot_item.border = borde_total
-
-        ws.row_dimensions[row_idx].height = 24
-
-        for col in ws.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
-            col_letter = get_column_letter(col[0].column)
-            ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
     output = io.BytesIO()
     wb.save(output)
@@ -1407,14 +1425,32 @@ elif submodulo_sat == "🏛️ Impuestos":
                     ("TOTAL ISR A PAGAR", total_isr_pagar)
                 ]
 
-                df_cedula_isr = pd.DataFrame(datos_cedula, columns=["OBLIGACIONES", nombres_meses[mes_imp-1].upper()[:3]])
+                col_mes_key = nombres_meses[mes_imp-1].upper()[:3]
+                df_cedula_isr = pd.DataFrame(datos_cedula, columns=["OBLIGACIONES", col_mes_key])
 
                 st.dataframe(
                     df_cedula_isr.style.format({
-                        nombres_meses[mes_imp-1].upper()[:3]: lambda x: f"{x:.2%}" if isinstance(x, float) and x < 1.0 and x > 0 and 'C.U.' in str(df_cedula_isr.loc[df_cedula_isr[nombres_meses[mes_imp-1].upper()[:3]] == x, 'OBLIGACIONES'].values) else f"${x:,.2f}"
+                        col_mes_key: lambda x: f"{x:.2%}" if isinstance(x, float) and x < 1.0 and x > 0 and 'C.U.' in str(df_cedula_isr.loc[df_cedula_isr[col_mes_key] == x, 'OBLIGACIONES'].values) else f"${x:,.2f}"
                     }),
                     use_container_width=True,
                     hide_index=True
+                )
+
+                st.markdown("---")
+                excel_cedula_bytes = generar_excel_cedula_isr(
+                    empresa_nombre=empresa_sel_isr,
+                    anio_val=anio_imp,
+                    mes_nombre=nombres_meses[mes_imp-1],
+                    df_datos=df_cedula_isr
+                )
+
+                st.download_button(
+                    label="📥 Descargar Cédula de ISR en Excel",
+                    data=excel_cedula_bytes,
+                    file_name=f"Cedula_ISR_{empresa_sel_isr}_{nombres_meses[mes_imp-1]}_{anio_imp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_dl_cedula_isr",
+                    use_container_width=True
                 )
 
             else:
