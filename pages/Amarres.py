@@ -255,7 +255,7 @@ if estructura:
 
     with subtab_intercos:
         st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-        st.info(f"Cálculo estricto con saldos netos consolidados por contraparte: `{ruta_balanza}`.")
+        st.info(f"Cálculo estricto con saldos netos consolidados por contraparte (Deudor - Acreedor): `{ruta_balanza}`.")
 
         if todas_empresas_balanza:
             datos_empresas_recs = {}
@@ -275,9 +275,12 @@ if estructura:
                         continue
                     d_f = parse_monto_robusto(row.iloc[col_deudor_f])
                     a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+                    
+                    saldo_neto = d_f - a_f
+
                     recs_list.append({
                         'cta_raw': cta_raw,
-                        'saldo_final': d_f - a_f
+                        'saldo_final': saldo_neto
                     })
                 datos_empresas_recs[emp] = recs_list
 
@@ -297,8 +300,8 @@ if estructura:
 
                         if emp_origen and emp_origen in todas_empresas_balanza and emp_origen != emp_receptora:
                             monto = r['saldo_final']
-                            if cta.startswith("201-"):
-                                monto = -monto
+                            # CORRECCIÓN: Se mantiene el saldo neto con su signo natural (Deudor - Acreedor)
+                            # para que las cuentas acreedoras (Proveedores 201-) resten correctamente en lugar de sumarse.
                             matriz_fact.loc[emp_receptora, emp_origen] += monto
 
             matriz_fact['TOTAL'] = matriz_fact.sum(axis=1)
@@ -413,7 +416,6 @@ if estructura:
                                 if any(seg.strip() == cod_destino for seg in segs):
                                     ingresos_facturados_a_emp += (r.get('acreedor_f', 0.0) - r.get('deudor_f', 0.0))
 
-                # Cálculo de Ingresos Contabilidad (Cuentas 410, 411, 423 menos NC 420, 421)
                 ingresos_contables_emp = 0.0
                 cuentas_ing_proc = set()
 
