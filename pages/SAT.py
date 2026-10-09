@@ -104,7 +104,7 @@ def obtener_saldos_balanza(ruta_balanza):
 # --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO DE AMARRE DE INGRESOS ---
 def generar_excel_ejecutivo_ingresos(df_ingresos_final, df_egresos_final, periodo_str):
     wb = Workbook()
-    wb.remove(wb.active)  # Eliminar hoja por defecto
+    wb.remove(wb.active)
 
     font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
     fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
@@ -201,7 +201,7 @@ def generar_excel_ejecutivo_ingresos(df_ingresos_final, df_egresos_final, period
     return output.getvalue()
 
 
-# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA CON LAS EMPRESAS Y CONSOLIDADO (NÓMINAS) ---
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA (NÓMINAS) ---
 def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
     wb = Workbook()
     wb.remove(wb.active)
@@ -779,7 +779,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
 
                 st.markdown("---")
 
-                # --- BOTÓN DE DESCARGA EJECUTIVA DE INGRESOS ---
                 periodo_str_ing = f"{nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} {anio_sel}"
                 excel_ingresos_bytes = generar_excel_ejecutivo_ingresos(
                     df_ingresos_final=df_ingresos_final,
@@ -1298,7 +1297,7 @@ elif submodulo_sat == "🏛️ Impuestos":
     ruta_balanzas_imp = st.text_input("Carpeta Raíz de Balanzas:", value="Balanzas", key="imp_bal_dir")
 
     tab_isr, tab_iva, tab_retenciones = st.tabs([
-        "📈 ISR (Pagos Provicionales)", 
+        "📈 ISR (Pagos Provisionales)", 
         "💵 IVA (Cobrado vs Pagado)", 
         "📋 RETENCIONES"
     ])
@@ -1384,60 +1383,83 @@ elif submodulo_sat == "🏛️ Impuestos":
             st.error(f"No se encontró ninguna balanza para el periodo {nombres_meses[mes_imp-1]} {anio_imp} en la ruta especificada.")
 
     with tab_iva:
-        st.markdown(f"### 💵 Determinación de IVA (Cobrado vs Pagado) — {nombres_meses[mes_imp-1]} {anio_imp}")
+        st.markdown(f"### 💵 Determinación de IVA por Movimientos del Mes (Cargos y Abonos) — {nombres_meses[mes_imp-1]} {anio_imp}")
 
-        if 'ruta_balanza_sel' in locals() and ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
+        if ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
             df_saldos_iva = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos_iva.empty:
                 df_saldos_iva['Cuenta_Original'] = df_saldos_iva['Cuenta_Original'].astype(str)
                 df_saldos_iva['Cuenta'] = df_saldos_iva['Cuenta'].astype(str)
-                empresas_unicas_iva = df_saldos_iva['Empresa'].unique()
-                empresa_sel_iva = st.selectbox("Seleccione Empresa:", empresas_unicas_iva, key="emp_iva")
 
-                df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
+                def extraer_movimientos_iva(df_sub):
+                    mask_cobrado = df_sub['Cuenta_Original'].str.startswith('201') | df_sub['Cuenta'].str.startswith('201')
+                    mask_pagado = df_sub['Cuenta_Original'].str.startswith('101') | df_sub['Cuenta'].str.startswith('101')
+                    
+                    mask_nombre_cob = df_sub['Nombre Cuenta'].str.upper().str.contains('IVA.*COBRADO|IVA.*TRASLADADO', na=False)
+                    mask_nombre_pag = df_sub['Nombre Cuenta'].str.upper().str.contains('IVA.*PAGADO|IVA.*ACREDITABLE', na=False)
 
-                def obtener_saldo_exacto_iva(df_sub, prefijo_cta, columna_monto):
-                    match = df_sub[
-                        (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00010-001-0000") | 
-                        (df_sub['Cuenta'] == f"{prefijo_cta}000100010000") |
-                        (df_sub['Cuenta_Original'].str.startswith(f"{prefijo_cta}"))
-                    ]
-                    return match[columna_monto].sum() if not match.empty else 0.0
+                    df_cob = df_sub[mask_cobrado | mask_nombre_cob]
+                    df_pag = df_sub[mask_pagado | mask_nombre_pag]
 
-                v_iva_cobrado = obtener_saldo_exacto_iva(df_emp_iva, "201", 'Columna F (Abonos)')
-                v_iva_pag1 = obtener_saldo_exacto_iva(df_emp_iva, "101", 'Columna E (Cargos)')
-                v_iva_pagado = float(v_iva_pag1)
+                    tot_cobrado = df_cob['Columna F (Abonos)'].sum() - df_cob['Columna E (Cargos)'].sum()
+                    tot_pagado = df_pag['Columna E (Cargos)'].sum() - df_pag['Columna F (Abonos)'].sum()
 
-                diferencia_iva = v_iva_cobrado - v_iva_pagado
+                    return max(tot_cobrado, 0.0), max(tot_pagado, 0.0)
 
-                st.markdown("#### 📊 Cuentas Contables de IVA")
-                col_v1, col_v2 = st.columns(2)
-                
-                with col_v1:
-                    st.subheader("IVA Cobrado / Trasladado")
-                    st.metric("Cuenta 201-00010-001-0000", f"${v_iva_cobrado:,.2f}")
+                empresas_lista = df_saldos_iva['Empresa'].unique()
+                lista_resultados_iva = []
 
-                with col_v2:
-                    st.subheader("IVA Pagado / Acreditable")
-                    st.metric("Total IVA Pagado", f"${v_iva_pagado:,.2f}")
+                for emp in empresas_lista:
+                    df_emp_sub = df_saldos_iva[df_saldos_iva['Empresa'] == emp]
+                    iva_cob, iva_pag = extraer_movimientos_iva(df_emp_sub)
+                    iva_neto = iva_cob - iva_pag
 
-                st.markdown("---")
-                st.markdown("#### ⚖️ Resumen de Determinación de IVA")
-                col_res1, col_res2 = st.columns(2)
+                    lista_resultados_iva.append({
+                        'Empresa': emp,
+                        'IVA COBRADO': iva_cob,
+                        'IVA PAGADO': iva_pag,
+                        'IVA NETO (Cargo/Favor)': iva_neto
+                    })
 
-                if diferencia_iva > 0:
-                    col_res1.metric("IVA a Cargo (A Pagar)", f"${diferencia_iva:,.2f}")
-                    col_res2.info("El IVA Cobrado fue mayor al IVA Pagado en el periodo.")
+                df_matriz_iva = pd.DataFrame(lista_resultados_iva)
+
+                if not df_matriz_iva.empty:
+                    df_pivot_iva = df_matriz_iva.set_index('Empresa')[['IVA COBRADO', 'IVA PAGADO', 'IVA NETO (Cargo/Favor)']].T
+                    
+                    st.markdown("#### 📋 Concentrado de IVA por Empresa (Movimientos del Mes)")
+                    st.dataframe(
+                        df_pivot_iva.style.format('${:,.2f}'),
+                        use_container_width=True
+                    )
+
+                    st.markdown("---")
+                    st.markdown("#### 🔍 Detalle Analítico por Empresa Seleccionada")
+                    empresa_sel_iva = st.selectbox("Seleccione Empresa para detalle:", empresas_lista, key="emp_iva_det")
+                    df_emp_detalle_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
+
+                    mask_iva_all = (
+                        df_emp_detalle_iva['Cuenta_Original'].str.startswith(('201', '101')) |
+                        df_emp_detalle_iva['Nombre Cuenta'].str.upper().str.contains('IVA', na=False)
+                    )
+                    df_cuentas_iva = df_emp_detalle_iva[mask_iva_all][['Cuenta_Original', 'Nombre Cuenta', 'Columna E (Cargos)', 'Columna F (Abonos)', 'Saldo Deudor Final', 'Saldo Acreedor Final']]
+                    
+                    st.dataframe(
+                        df_cuentas_iva.style.format({
+                            'Columna E (Cargos)': '${:,.2f}',                             'Columna F (Abonos)': '${:,.2f}',
+                            'Saldo Deudor Final': '${:,.2f}',                             'Saldo Acreedor Final': '${:,.2f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 else:
-                    col_res1.metric("IVA a Favor", f"${abs(diferencia_iva):,.2f}")
-                    col_res2.success("El IVA Pagado fue mayor al IVA Cobrado en el periodo.")
+                    st.warning("No se pudieron procesar los importes de IVA para las empresas.")
 
             else:
-                st.warning("No se encontraron registros de IVA en la balanza.")
+                st.warning("No se encontraron registros en la balanza del mes.")
         else:
             st.error("No se encontró la balanza contable para el periodo seleccionado.")
 
     with tab_retenciones:
         st.markdown(f"### 📋 Detalle de Retenciones de Impuestos — {nombres_meses[mes_imp-1]} {anio_imp}")
-        st.info("Módulo configurado para consultar retenciones de ISR e IVA (Servicios Profesionales, Arrendamiento, Fletes, etc.).")
+        st.info("Módulo configurado para consultar retenciones de ISR e IVA basadas en los movimientos del periodo.")
