@@ -101,7 +101,7 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - ACTUALIZADA ---
+# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - CORREGIDA ---
 def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
     if not os.path.exists(carpeta_nomina):
         return pd.DataFrame()
@@ -125,14 +125,14 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
         try:
             xls = pd.ExcelFile(archivo)
             for sheet in xls.sheet_names:
-                df_raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=25)
+                df_raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=10)
                 if df_raw.empty:
                     continue
                 
                 header_row_idx = 0
                 for r_idx, row in df_raw.iterrows():
                     row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
-                    if any(k in row_str for k in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'IMPORTE', 'CLAVE', 'TOTAL', 'VALOR']):
+                    if any(k in row_str for k in ['RFC EMISOR', 'DESCRIPCION', 'CONCEPTO', 'IMPORTE', 'TOTAL']):
                         header_row_idx = r_idx
                         break
 
@@ -143,13 +143,16 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
                 df.columns = [str(c).strip() for c in df.columns]
                 cols_upper = [str(c).strip().upper() for c in df.columns]
 
-                col_rfc_idx = next((i for i, c in enumerate(cols_upper) if 'RFC' in c or 'EMISOR' in c), None)
+                # Identificar columnas por nombre exacto o parcial visto en tus archivos
+                col_rfc_idx = next((i for i, c in enumerate(cols_upper) if 'RFC' in c and 'EMISOR' in c), None)
                 
-                col_concepto_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'TIPO', 'CLAVE', 'NOMBRE'])), None)
+                # Buscar columna de concepto/descripción (como en tu imagen: 'Descripción')
+                col_concepto_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['DESCRIPCION', 'CONCEPTO', 'PERCEPCION', 'CLAVE', 'NOMBRE'])), None)
                 if col_concepto_idx is None:
                     col_concepto_idx = 0
 
-                col_importe_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['IMPORTE', 'MONTO', 'TOTAL', 'SUBTOTAL', 'GRAVADO', 'EXENTO', 'VALOR'])), None)
+                # Buscar columna de importe (ej. 'Importe', 'Total', o columnas numéricas al final)
+                col_importe_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['IMPORTE', 'MONTO', 'TOTAL', 'SUBTOTAL', 'GRAVADO', 'EXENTO'])), None)
                 if col_importe_idx is None:
                     col_importe_idx = df.shape[1] - 1
 
