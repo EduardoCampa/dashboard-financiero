@@ -1308,7 +1308,7 @@ elif submodulo_sat == "🏛️ Impuestos":
     ])
 
     with tab_isr:
-        st.markdown(f"### 📈 Cálculo de Pago Provisional de ISR (Concentrado por Empresa) — {nombres_meses[mes_imp-1]} {anio_imp}")
+        st.markdown(f"### 📈 Determinación de ISR (Pagos Provisionales) — {nombres_meses[mes_imp-1]} {anio_imp}")
 
         mes_str = f"{int(mes_imp):02d}"
         posibles = (
@@ -1325,19 +1325,11 @@ elif submodulo_sat == "🏛️ Impuestos":
             if not df_saldos.empty:
                 df_saldos['Cuenta_Original'] = df_saldos['Cuenta_Original'].astype(str)
                 df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
-                
-                st.markdown("#### ⚙️ Parámetros de Cálculo ISR")
-                coeficiente_utilidad = st.number_input(
-                    "Coeficiente de Utilidad (Manual):", 
-                    min_value=0.0000, 
-                    max_value=1.0000, 
-                    value=0.0500, 
-                    step=0.0001, 
-                    format="%.4f"
-                )
-
                 empresas_unicas = df_saldos['Empresa'].unique()
-                lista_resultados_isr = []
+
+                # Selector de empresa para mostrar el formato detallado tipo cédula
+                empresa_sel_isr = st.selectbox("Seleccione Empresa para Cédula de ISR:", empresas_unicas, key="emp_isr_cedula")
+                df_emp_isr = df_saldos[df_saldos['Empresa'] == empresa_sel_isr]
 
                 def obtener_saldo_exacto(df_sub, prefijo_cta):
                     match = df_sub[
@@ -1353,71 +1345,76 @@ elif submodulo_sat == "🏛️ Impuestos":
                     ]
                     return match['Saldo Deudor Final'].sum() if not match.empty else 0.0
 
-                for empresa_sel in empresas_unicas:
-                    df_emp = df_saldos[df_saldos['Empresa'] == empresa_sel]
+                v_410 = obtener_saldo_exacto(df_emp_isr, "410")
+                v_411 = obtener_saldo_exacto(df_emp_isr, "411")
+                
+                v_423_ac = obtener_saldo_exacto(df_emp_isr, "423")
+                v_423_de = obtener_saldo_deudor_exacto(df_emp_isr, "423")
+                v_423 = v_423_ac if v_423_ac > 0 else v_423_de
 
-                    v_410 = obtener_saldo_exacto(df_emp, "410")
-                    v_411 = obtener_saldo_exacto(df_emp, "411")
-                    
-                    v_423_ac = obtener_saldo_exacto(df_emp, "423")
-                    v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
-                    v_423 = v_423_ac if v_423_ac > 0 else v_423_de
-
-                    ingresos_isr = float(v_410) + float(v_411) - float(v_423)
-                    utilidad_fiscal = ingresos_isr * coeficiente_utilidad
-                    tasa_isr = 0.30
-                    pago_provisional = utilidad_fiscal * tasa_isr
-
-                    if pago_provisional >= 0:
-                        etiqueta_isr = "ISR a cargo"
-                        monto_isr_mostrar = pago_provisional
-                    else:
-                        etiqueta_isr = "ISR a favor"
-                        monto_isr_mostrar = abs(pago_provisional)
-
-                    lista_resultados_isr.append({
-                        'Empresa': empresa_sel,
-                        'Ingresos Nominales ISR': ingresos_isr,
-                        'Utilidad Fiscal Estimada': utilidad_fiscal,
-                        'Tasa ISR': 0.30,
-                        etiqueta_isr: monto_isr_mostrar
-                    })
-
-                # Generar matriz concentrada por empresa similar al módulo de IVA
-                matriz_isr_dict = {}
-                for emp in empresas_unicas:
-                    df_emp_reg = pd.DataFrame(lista_resultados_isr)
-                    df_emp_reg = df_emp_reg[df_emp_reg['Empresa'] == emp]
-                    if not df_emp_reg.empty:
-                        ing = df_emp_reg['Ingresos Nominales ISR'].values[0]
-                        util = df_emp_reg['Utilidad Fiscal Estimada'].values[0]
-                        tasa = 0.30
-                        
-                        # Determinar etiqueta activa para la fila de impuesto
-                        val_pago = util * tasa
-                        if val_pago >= 0:
-                            label_isr = "ISR a cargo"
-                            val_isr = val_pago
-                        else:
-                            label_isr = "ISR a favor"
-                            val_isr = abs(val_pago)
-
-                        matriz_isr_dict[emp] = pd.Series({
-                            'Ingresos Nominales': ing,
-                            'Utilidad Fiscal': util,
-                            'Tasa ISR': tasa,
-                            label_isr: val_isr
-                        })
-
-                df_pivot_isr = pd.DataFrame(matriz_isr_dict).fillna(0.0)
+                ingresos_mes = float(v_410) + float(v_411) - float(v_423)
 
                 st.markdown("---")
-                st.markdown("#### 📋 Concentrado de ISR por Empresa (Pagos Provisionales)")
+                st.markdown(f"#### 🏢 {empresa_sel_isr} — PAGOS PROVISIONALES EJERCICIO {anio_imp}")
+
+                col_cu, col_acum = st.columns(2)
+                with col_cu:
+                    cu_manual = st.number_input("C.U. (Coeficiente de Utilidad Manual):", min_value=0.0000, max_value=1.0000, value=0.0500, step=0.0001, format="%.4f")
+                with col_acum:
+                    ingresos_acum = st.number_input("Ingresos Acumulados:", min_value=0.0, value=ingresos_mes * int(mes_imp), step=1000.0, format="%.2f")
+
+                otros_ingresos = 0.0
+                productos_financieros = 0.0
+                ganancia_cambiaria = 0.0
+                total_ingresos_mes = ingresos_mes + otros_ingresos + productos_financieros + ganancia_cambiaria
+
+                desc_s_vta = 0.0
+                utilidad_fiscal = ingresos_acum * cu_manual
+                ptu = 0.0
+                perdidas_ejercicios = 0.0
+                utilidad_fiscal_pp = utilidad_fiscal - ptu - perdidas_ejercicios
+                tasa_impto = 0.30
+                importe_pp = utilidad_fiscal_pp * tasa_impto
+                isr_retenido = 0.0
+                isr_retenido_acum = 0.0
+                pago_provisional_mes = 0.0
+                pago_provisional_acum = 0.0
+                compensacion_isr = 0.0
+
+                total_isr_pagar = max(0.0, importe_pp - isr_retenido - isr_retenido_acum - pago_provisional_acum - compensacion_isr)
+
+                # Construcción de la tabla de formato cédula solicitado
+                datos_cedula = [
+                    ("INGRESOS DEL MES", ingresos_mes),
+                    ("OTROS INGRESOS", otros_ingresos),
+                    ("PRODUCTOS FINANCIEROS", productos_financieros),
+                    ("GANANCIA CAMBIARIA", ganancia_cambiaria),
+                    ("INGRESOS DEL MES (TOTAL)", total_ingresos_mes),
+                    ("INGRESOS ACUMULADOS", ingresos_acum),
+                    ("DESC. S. VTA", desc_s_vta),
+                    ("C.U.", cu_manual),
+                    ("UTILIDAD FISCAL", utilidad_fiscal),
+                    ("PTU", ptu),
+                    ("PERDIDAS DE EJERCICIOS ANTERIORES", perdidas_ejercicios),
+                    ("UTILIDAD FISCAL PARA PAGO PROVISIONAL", utilidad_fiscal_pp),
+                    ("TASA DE IMPTO", tasa_impto),
+                    ("IMPORTE P.P.", importe_pp),
+                    ("ISR RETENIDO", isr_retenido),
+                    ("ISR RETENIDO ACUMULADO", isr_retenido_acum),
+                    ("PAGO PROVISIONAL", pago_provisional_mes),
+                    ("PAGO PROVISIONAL ACUMULADO", pago_provisional_acum),
+                    ("COMPENSACIÓN DE ISR A FAVOR DE PERIODOS ANTERIORES", compensacion_isr),
+                    ("TOTAL ISR A PAGAR", total_isr_pagar)
+                ]
+
+                df_cedula_isr = pd.DataFrame(datos_cedula, columns=["OBLIGACIONES", nombres_meses[mes_imp-1].upper()[:3]])
+
                 st.dataframe(
-                    df_pivot_isr.style.format({
-                        col: ('{:.2%}' if col == 'Tasa ISR' else '${:,.2f}') for col in df_pivot_isr.columns
+                    df_cedula_isr.style.format({
+                        nombres_meses[mes_imp-1].upper()[:3]: lambda x: f"{x:.2%}" if isinstance(x, float) and x < 1.0 and x > 0 and 'C.U.' in str(df_cedula_isr.loc[df_cedula_isr[nombres_meses[mes_imp-1].upper()[:3]] == x, 'OBLIGACIONES'].values) else f"${x:,.2f}"
                     }),
-                    use_container_width=True
+                    use_container_width=True,
+                    hide_index=True
                 )
 
             else:
