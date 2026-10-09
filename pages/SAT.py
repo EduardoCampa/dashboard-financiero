@@ -95,9 +95,9 @@ def obtener_saldos_balanza(ruta_balanza):
                         'Columna E (Cargos)': monto_col_e,
                         'Columna F (Abonos)': monto_col_f
                     })
-            except Exception as e:
+            except Exception:
                 continue
-    except Exception as e:
+    except Exception:
         pass
 
     return pd.DataFrame(detalles)
@@ -564,13 +564,13 @@ if submodulo_sat == "📊 Amarre Ingresos":
         ruta_balanza = posibles_gen[0] if posibles_gen else None
         
         if not ruta_balanza or not os.path.exists(ruta_balanza):
-            return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame()
 
         df_det = obtener_saldos_balanza(ruta_balanza)
         if df_det.empty:
-            return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
+            return pd.DataFrame(), df_det
 
-        # IMPORTANTE: Forzamos el formato texto para evitar que las cuentas (ej. 41000000) se lean como números y omitan la suma
+        # Forzamos formato texto para asegurar la búsqueda correcta
         df_det['Cuenta'] = df_det['Cuenta'].astype(str)
 
         res_list = []
@@ -590,11 +590,19 @@ if submodulo_sat == "📊 Amarre Ingresos":
             v_421 = df_emp[df_emp['Cuenta'].str.startswith('421')]['Saldo Deudor Final'].sum()
             
             ingresos_cont = float(v_410) + float(v_411) - float(v_423)
+            
+            # NOTA: Los egresos de contabilidad se envían negativos al resumen general para que cuadre
+            # con Master y XML, pero en la tabla "5.- Contabilidad" verás las sumas positivas naturales de 420 y 421.
             egresos_cont = -1 * (float(v_420) + float(v_421))
             
             res_list.append({
                 'Empresa': empresa,
+                'Cuenta 410': float(v_410),
+                'Cuenta 411': float(v_411),
+                'Cuenta 423': float(v_423),
                 'Contabilidad Ingresos': ingresos_cont,
+                'Cuenta 420': float(v_420),
+                'Cuenta 421': float(v_421),
                 'Contabilidad Egresos': egresos_cont
             })
 
@@ -750,7 +758,18 @@ if submodulo_sat == "📊 Amarre Ingresos":
             with tab_cont:
                 st.markdown(f"### 📊 Contabilidad y Balanzas")
                 if not df_balanzas.empty:
-                    st.dataframe(df_balanzas.style.format({'Contabilidad Ingresos': '${:,.2f}', 'Contabilidad Egresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                    st.markdown("**Detalle de Integración de Cuentas:**")
+                    st.markdown("`Ingresos = 410 + 411 - 423`  |  `Egresos = 420 + 421`")
+                    st.dataframe(
+                        df_balanzas.style.format({
+                            'Cuenta 410': '${:,.2f}',
+                            'Cuenta 411': '${:,.2f}',                             'Cuenta 423': '${:,.2f}',
+                            'Contabilidad Ingresos': '${:,.2f}',                             'Cuenta 420': '${:,.2f}',
+                            'Cuenta 421': '${:,.2f}',                             'Contabilidad Egresos': '${:,.2f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 else:
                     st.warning("⚠️ No se encontraron saldos en la Balanza o las cuentas no coinciden. Asegúrate de que el archivo Balanza.xlsx tenga el formato esperado.")
 
@@ -862,8 +881,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             st.dataframe(
                                 df_res_emp.style.format({
                                     'Monto SAT': '${:,.2f}',
-                                    'Monto Contabilidad': '${:,.2f}',
-                                    'Diferencia (SAT - Contab)': '${:,.2f}'
+                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
                                 }),
                                 use_container_width=True,
                                 hide_index=True
