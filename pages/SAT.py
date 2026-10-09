@@ -101,12 +101,111 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA CON LAS EMPRESAS Y CONSOLIDADO ---
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO DE AMARRE DE INGRESOS ---
+def generar_excel_ejecutivo_ingresos(df_ingresos_final, df_egresos_final, periodo_str):
+    wb = Workbook()
+    wb.remove(wb.active)  # Eliminar hoja por defecto
+
+    font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    fill_header = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    
+    font_normal = Font(name="Calibri", size=10, color="000000")
+    font_total = Font(name="Calibri", size=11, bold=True, color="000000")
+    fill_total = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+
+    borde_delgado = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    borde_total = Border(
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='double', color='000000')
+    )
+
+    def estilizar_hoja(ws, titulo_texto, df_datos):
+        ws.views.sheetView[0].showGridLines = True
+        
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_datos.columns))
+        cell_t = ws.cell(row=1, column=1, value=titulo_texto)
+        cell_t.font = font_titulo
+        cell_t.fill = fill_titulo
+        cell_t.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 32
+
+        headers = list(df_datos.columns)
+        for col_num, h in enumerate(headers, 1):
+            c = ws.cell(row=3, column=col_num, value=h)
+            c.font = font_header
+            c.fill = fill_header
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = borde_delgado
+        ws.row_dimensions[3].height = 25
+
+        row_idx = 4
+        for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+            fill_row = fill_zebra if idx_f % 2 == 1 else None
+            for c_idx, val in enumerate(r, 1):
+                cell = ws.cell(row=row_idx, column=c_idx)
+                if c_idx == 1:
+                    cell.value = str(val)
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.value = float(val) if pd.notnull(val) else 0.0
+                    cell.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+
+                cell.font = font_normal
+                cell.border = borde_delgado
+                if fill_row:
+                    cell.fill = fill_row
+
+            ws.row_dimensions[row_idx].height = 20
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
+        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(row=row_idx, column=1).border = borde_total
+        ws.cell(row=row_idx, column=1).fill = fill_total
+
+        for c_idx in range(2, len(headers) + 1):
+            col_letter = get_column_letter(c_idx)
+            cell_tot = ws.cell(row=row_idx, column=c_idx, value=f"=SUM({col_letter}4:{col_letter}{row_idx-1})")
+            cell_tot.font = font_total
+            cell_tot.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            cell_tot.alignment = Alignment(horizontal="right", vertical="center")
+            cell_tot.border = borde_total
+            cell_tot.fill = fill_total
+
+        ws.row_dimensions[row_idx].height = 24
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+    ws_ing = wb.create_sheet(title="Resumen Ingresos")
+    estilizar_hoja(ws_ing, f"REPORTE EJECUTIVO DE AMARRE DE INGRESOS — ({periodo_str.upper()})", df_ingresos_final)
+
+    ws_eg = wb.create_sheet(title="Resumen Egresos")
+    estilizar_hoja(ws_eg, f"REPORTE EJECUTIVO DE AMARRE DE EGRESOS — ({periodo_str.upper()})", df_egresos_final)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+# --- FUNCIÓN PARA GENERAR EXCEL EJECUTIVO MULTI-PESTAÑA CON LAS EMPRESAS Y CONSOLIDADO (NÓMINAS) ---
 def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
     wb = Workbook()
-    wb.remove(wb.active)  # Eliminar la hoja por defecto
+    wb.remove(wb.active)
 
-    # Estilos Ejecutivos
     font_titulo = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
     fill_titulo = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
     
@@ -131,7 +230,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
 
     headers = ["Concepto SAT", "Monto SAT", "Cuenta Contable", "Monto Contabilidad", "Diferencia (SAT - Contab)"]
 
-    # 1. PESTAÑA CONSOLIDADO GLOBAL
     ws_cons = wb.create_sheet(title="CONSOLIDADO")
     ws_cons.views.sheetView[0].showGridLines = True
 
@@ -150,7 +248,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
         c.border = borde_delgado
     ws_cons.row_dimensions[3].height = 25
 
-    # Sumar dataframe consolidado
     df_first = list(dict_dfs_empresas.values())[0] if dict_dfs_empresas else pd.DataFrame()
     if not df_first.empty:
         df_cons_data = df_first[['Concepto SAT', 'Cuenta Contable']].copy()
@@ -192,7 +289,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             ws_cons.row_dimensions[row_idx_c].height = 20
             row_idx_c += 1
 
-        # Totales Consolidado
         ws_cons.cell(row=row_idx_c, column=1, value="TOTALES").font = font_total
         ws_cons.cell(row=row_idx_c, column=1).alignment = Alignment(horizontal="center", vertical="center")
 
@@ -213,7 +309,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             col_letter = get_column_letter(col[0].column)
             ws_cons.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
-    # 2. PESTAÑAS INDIVIDUALES POR EMPRESA
     for emp_nombre, df_datos in dict_dfs_empresas.items():
         ws = wb.create_sheet(title=f"Amarre {emp_nombre}"[:31])
         ws.views.sheetView[0].showGridLines = True
@@ -264,7 +359,6 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             ws.row_dimensions[row_idx].height = 20
             row_idx += 1
 
-        # Totales Empresa
         ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
         ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
         
@@ -683,6 +777,25 @@ if submodulo_sat == "📊 Amarre Ingresos":
                     hide_index=True
                 )
 
+                st.markdown("---")
+
+                # --- BOTÓN DE DESCARGA EJECUTIVA DE INGRESOS ---
+                periodo_str_ing = f"{nombres_meses[mes_inicial-1]} a {nombres_meses[mes_final-1]} {anio_sel}"
+                excel_ingresos_bytes = generar_excel_ejecutivo_ingresos(
+                    df_ingresos_final=df_ingresos_final,
+                    df_egresos_final=df_egresos_final,
+                    periodo_str=periodo_str_ing
+                )
+
+                st.download_button(
+                    label="📥 Descargar Reporte Ejecutivo de Ingresos y Egresos en Excel",
+                    data=excel_ingresos_bytes,
+                    file_name=f"Amarre_Ingresos_Egresos_Ejecutivo_{nombres_meses[mes_final-1]}_{anio_sel}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_dl_ejecutivo_ingresos",
+                    use_container_width=True
+                )
+
             with tab_xml:
                 st.markdown(f"### 📑 Ingresos y Egresos de los XML (Vigentes y Error)")
                 if not df_ingresos_sat.empty:
@@ -726,7 +839,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
 
     st.title("👥 Módulo SAT - Amarre de Nómina vs Contabilidad")
 
-    # MAPEO CONSOLIDADO DE EQUIVALENCIAS (Agrupado por Cuenta Contable)
     MAPEO_EQUIVALENCIAS = [
         {"Conceptos SAT": ["001/001/Sueldo"], "Cuenta Contable": "-001-0001 Sueldo"},
         {"Conceptos SAT": ["001/019/Vacaciones a tiempo"], "Cuenta Contable": "-001-0009 Vacaciones"},
@@ -739,7 +851,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         {"Conceptos SAT": ["049/034/Premio Asistencia"], "Cuenta Contable": "-001-0005 Premio Asistencia"}
     ]
 
-    # MAPEO DE RFCS A EMPRESAS DE CONTABILIDAD
     MAPEO_RFC_EMPRESA = {
         'CIV141222JD5': 'CIVLAT',
         'EFC840210UI4': 'EFCO',
@@ -747,7 +858,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         'SER970728JN8': 'SERVYRE'
     }
 
-    # --- 1. PROCESAMIENTO SAT NÓMINAS ---
     def cargar_y_procesar_nomina_sat(carpeta_nomina="Nomina", anio_filtro=None, mes_ini=None, mes_fin=None):
         if not os.path.exists(carpeta_nomina):
             return pd.DataFrame()
@@ -852,7 +962,6 @@ elif submodulo_sat == "👥 Amarre Nóminas":
         return df_final
 
 
-    # --- 2. PROCESAMIENTO CONTABILIDAD NÓMINAS (EXCLUSIVO BALANZA RH) ---
     def cargar_y_procesar_nomina_contabilidad(ruta_base="Balanzas", archivo_balanza_rh="Balanza RH.xlsx", anio_filtro=2026, mes_ini=1, mes_fin=9):
         registros_contables = []
 
@@ -1080,7 +1189,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                             st.dataframe(
                                 df_comp_final.style.format({
                                     'Monto SAT': '${:,.2f}',
-                                    'Monto Contabilidad': '${:,.2f}',                                   'Diferencia (SAT - Contab)': '${:,.2f}'
+                                    'Monto Contabilidad': '${:,.2f}',                                     'Diferencia (SAT - Contab)': '${:,.2f}'
                                 }),
                                 use_container_width=True,
                                 hide_index=True
