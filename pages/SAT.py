@@ -35,7 +35,6 @@ def obtener_saldos_balanza(ruta_balanza):
             nombre_pestana = str(hoja).strip().upper()
             
             try:
-                # Se lee hasta 20 filas para asegurar que encontramos el encabezado
                 df_raw = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=20)
                 if df_raw.empty:
                     continue
@@ -53,13 +52,11 @@ def obtener_saldos_balanza(ruta_balanza):
 
                 cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
 
-                # Detección dinámica de columnas por nombre
                 idx_de_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['DEUDOR F', 'FINAL D', 'SALDO D'])), None)
                 idx_ac_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['ACREEDOR F', 'FINAL A', 'SALDO A'])), None)
                 idx_col_e = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['CARGO', 'DEBITO'])), None)
                 idx_col_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['ABONO', 'CREDITO'])), None)
 
-                # Valores por defecto basados en estándar de 8 columnas
                 if idx_de_f is None: idx_de_f = min(6, df_hoja.shape[1] - 1)
                 if idx_ac_f is None: idx_ac_f = min(7, df_hoja.shape[1] - 1)
                 if idx_col_e is None: idx_col_e = min(4, df_hoja.shape[1] - 1)
@@ -70,10 +67,11 @@ def obtener_saldos_balanza(ruta_balanza):
                     if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
                         continue
                     
-                    cta_limpia = cta.replace(' ', '')
+                    # Guardar tanto la cuenta original (con guiones) como la limpia
+                    cta_original = cta
+                    cta_limpia = cta.replace(' ', '').replace('-', '')
                     nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
                     
-                    # Función segura para parsear montos
                     def parse_monto(val):
                         try:
                             v = str(val).replace('$', '').replace(',', '')
@@ -88,6 +86,7 @@ def obtener_saldos_balanza(ruta_balanza):
 
                     detalles.append({
                         'Empresa': nombre_pestana,
+                        'Cuenta_Original': cta_original,
                         'Cuenta': cta_limpia,
                         'Nombre Cuenta': nom,
                         'Saldo Deudor Final': monto_de,
@@ -553,7 +552,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
     def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
         
-        # Ignoramos la palabra "rh" y cualquier archivo temporal abierto que empiece con "~$"
         posibles = (
             glob.glob(os.path.join(ruta_base, str(anio), mes_str, "*.xlsx"), recursive=True) +
             glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
@@ -570,7 +568,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
         if df_det.empty:
             return pd.DataFrame(), df_det
 
-        # Forzamos formato texto para asegurar la búsqueda correcta
+        # Forzar que la cuenta original y limpia sean texto
+        df_det['Cuenta_Original'] = df_det['Cuenta_Original'].astype(str)
         df_det['Cuenta'] = df_det['Cuenta'].astype(str)
 
         res_list = []
@@ -578,21 +577,34 @@ if submodulo_sat == "📊 Amarre Ingresos":
         for empresa in empresas_unicas:
             df_emp = df_det[df_det['Empresa'] == empresa]
             
-            v_410 = df_emp[df_emp['Cuenta'].str.startswith('410')]['Saldo Acreedor Final'].sum()
-            v_411 = df_emp[df_emp['Cuenta'].str.startswith('411')]['Saldo Acreedor Final'].sum()
+            # NUEVO FILTRO EXACTO PARA EVITAR TRAER SUBCUENTAS
+            # Busca coincidencia exacta con guiones "410-00000-000-0000" o exacto sin guiones "41000000000000"
+            def obtener_saldo_exacto(df_sub, prefijo_cta):
+                match = df_sub[
+                    (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00000-000-0000") | 
+                    (df_sub['Cuenta'] == f"{prefijo_cta}000000000000")
+                ]
+                return match['Saldo Acreedor Final'].sum() if not match.empty else 0.0
+
+            def obtener_saldo_deudor_exacto(df_sub, prefijo_cta):
+                match = df_sub[
+                    (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00000-000-0000") | 
+                    (df_sub['Cuenta'] == f"{prefijo_cta}000000000000")
+                ]
+                return match['Saldo Deudor Final'].sum() if not match.empty else 0.0
+
+            v_410 = obtener_saldo_exacto(df_emp, "410")
+            v_411 = obtener_saldo_exacto(df_emp, "411")
             
-            df_423 = df_emp[df_emp['Cuenta'].str.startswith('423')]
-            v_423_ac = df_423['Saldo Acreedor Final'].sum()
-            v_423_de = df_423['Saldo Deudor Final'].sum()
+            # Cuenta 423 evalúa Acreedor y luego Deudor por si cambia la naturaleza
+            v_423_ac = obtener_saldo_exacto(df_emp, "423")
+            v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
             v_423 = v_423_ac if v_423_ac > 0 else v_423_de
             
-            v_420 = df_emp[df_emp['Cuenta'].str.startswith('420')]['Saldo Deudor Final'].sum()
-            v_421 = df_emp[df_emp['Cuenta'].str.startswith('421')]['Saldo Deudor Final'].sum()
+            v_420 = obtener_saldo_deudor_exacto(df_emp, "420")
+            v_421 = obtener_saldo_deudor_exacto(df_emp, "421")
             
             ingresos_cont = float(v_410) + float(v_411) - float(v_423)
-            
-            # NOTA: Los egresos de contabilidad se envían negativos al resumen general para que cuadre
-            # con Master y XML, pero en la tabla "5.- Contabilidad" verás las sumas positivas naturales de 420 y 421.
             egresos_cont = -1 * (float(v_420) + float(v_421))
             
             res_list.append({
@@ -944,18 +956,32 @@ elif submodulo_sat == "🏛️ Impuestos":
             df_saldos = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos.empty:
+                df_saldos['Cuenta_Original'] = df_saldos['Cuenta_Original'].astype(str)
                 df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
                 empresas_unicas = df_saldos['Empresa'].unique()
                 empresa_sel = st.selectbox("Seleccione Empresa:", empresas_unicas, key="emp_isr")
 
                 df_emp = df_saldos[df_saldos['Empresa'] == empresa_sel]
 
-                v_410 = df_emp[df_emp['Cuenta'].str.startswith('410')]['Saldo Acreedor Final'].sum()
-                v_411 = df_emp[df_emp['Cuenta'].str.startswith('411')]['Saldo Acreedor Final'].sum()
+                def obtener_saldo_exacto(df_sub, prefijo_cta):
+                    match = df_sub[
+                        (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00000-000-0000") | 
+                        (df_sub['Cuenta'] == f"{prefijo_cta}000000000000")
+                    ]
+                    return match['Saldo Acreedor Final'].sum() if not match.empty else 0.0
 
-                df_423 = df_emp[df_emp['Cuenta'].str.startswith('423')]
-                v_423_ac = df_423['Saldo Acreedor Final'].sum()
-                v_423_de = df_423['Saldo Deudor Final'].sum()
+                def obtener_saldo_deudor_exacto(df_sub, prefijo_cta):
+                    match = df_sub[
+                        (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00000-000-0000") | 
+                        (df_sub['Cuenta'] == f"{prefijo_cta}000000000000")
+                    ]
+                    return match['Saldo Deudor Final'].sum() if not match.empty else 0.0
+
+                v_410 = obtener_saldo_exacto(df_emp, "410")
+                v_411 = obtener_saldo_exacto(df_emp, "411")
+                
+                v_423_ac = obtener_saldo_exacto(df_emp, "423")
+                v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
                 v_423 = v_423_ac if v_423_ac > 0 else v_423_de
 
                 ingresos_isr = float(v_410) + float(v_411) - float(v_423)
@@ -1001,14 +1027,23 @@ elif submodulo_sat == "🏛️ Impuestos":
             df_saldos_iva = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos_iva.empty:
+                df_saldos_iva['Cuenta_Original'] = df_saldos_iva['Cuenta_Original'].astype(str)
                 df_saldos_iva['Cuenta'] = df_saldos_iva['Cuenta'].astype(str)
                 empresas_unicas_iva = df_saldos_iva['Empresa'].unique()
                 empresa_sel_iva = st.selectbox("Seleccione Empresa:", empresas_unicas_iva, key="emp_iva")
 
                 df_emp_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
 
-                v_iva_cobrado = df_emp_iva[df_emp_iva['Cuenta'].str.startswith('201')]['Columna F (Abonos)'].sum()
-                v_iva_pag1 = df_emp_iva[df_emp_iva['Cuenta'].str.startswith('101')]['Columna E (Cargos)'].sum()
+                def obtener_saldo_exacto_iva(df_sub, prefijo_cta, columna_monto):
+                    match = df_sub[
+                        (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00010-001-0000") | 
+                        (df_sub['Cuenta'] == f"{prefijo_cta}000100010000") |
+                        (df_sub['Cuenta_Original'].str.startswith(f"{prefijo_cta}"))
+                    ]
+                    return match[columna_monto].sum() if not match.empty else 0.0
+
+                v_iva_cobrado = obtener_saldo_exacto_iva(df_emp_iva, "201", 'Columna F (Abonos)')
+                v_iva_pag1 = obtener_saldo_exacto_iva(df_emp_iva, "101", 'Columna E (Cargos)')
                 v_iva_pagado = float(v_iva_pag1)
 
                 diferencia_iva = v_iva_cobrado - v_iva_pagado
