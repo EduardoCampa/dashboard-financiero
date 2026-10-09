@@ -1398,7 +1398,6 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_saldos_iva['Cuenta'] = df_saldos_iva['Cuenta'].astype(str)
 
                 def extraer_movimientos_iva(df_sub):
-                    # Filtrar cuentas específicas de IVA Cobrado y Pagado indicadas
                     mask_cobrado = (
                         df_sub['Cuenta_Original'].str.startswith('201-00010-001') | 
                         df_sub['Cuenta'].str.startswith('20100010001')
@@ -1412,10 +1411,7 @@ elif submodulo_sat == "🏛️ Impuestos":
                     df_cob = df_sub[mask_cobrado]
                     df_pag = df_sub[mask_pagado]
 
-                    # IVA Cobrado toma la Columna F (Abonos)
                     tot_cobrado = df_cob['Columna F (Abonos)'].sum()
-                    
-                    # IVA Pagado toma la Columna E (Cargos)
                     tot_pagado = df_pag['Columna E (Cargos)'].sum()
 
                     return float(tot_cobrado), float(tot_pagado)
@@ -1428,42 +1424,70 @@ elif submodulo_sat == "🏛️ Impuestos":
                     iva_cob, iva_pag = extraer_movimientos_iva(df_emp_sub)
                     iva_neto = iva_cob - iva_pag
 
+                    if iva_neto >= 0:
+                        etiqueta_neto = "IVA a cargo"
+                        monto_neto_mostrar = iva_neto
+                    else:
+                        etiqueta_neto = "IVA a favor"
+                        monto_neto_mostrar = abs(iva_neto)
+
                     lista_resultados_iva.append({
                         'Empresa': emp,
                         'IVA COBRADO': iva_cob,
                         'IVA PAGADO': iva_pag,
-                        'IVA NETO (Cargo/Favor)': iva_neto
+                        etiqueta_neto: monto_neto_mostrar
                     })
 
                 df_matriz_iva = pd.DataFrame(lista_resultados_iva)
 
                 if not df_matriz_iva.empty:
-                    df_pivot_iva = df_matriz_iva.set_index('Empresa')[['IVA COBRADO', 'IVA PAGADO', 'IVA NETO (Cargo/Favor)']].T
+                    # Consolidar columnas dinámicas de IVA a cargo / a favor en una sola estructura limpia para la tabla
+                    filas_pivot_iva = []
+                    for emp in empresas_lista:
+                        df_emp_reg = df_matriz_iva[df_matriz_iva['Empresa'] == emp]
+                        if not df_emp_reg.empty:
+                            cob = df_emp_reg['IVA COBRADO'].values[0]
+                            pag = df_emp_reg['IVA PAGADO'].values[0]
+                            neto_val = cob - pag
+                            tipo_neto = "IVA a cargo" if neto_val >= 0 else "IVA a favor"
+                            val_neto_fmt = abs(neto_val)
+                            
+                            filas_pivot_iva.append({
+                                'Empresa': emp,
+                                'IVA COBRADO': cob,
+                                'IVA PAGADO': pag,
+                                'Tipo': tipo_neto,
+                                'Monto': val_neto_fmt
+                            })
+
+                    # Creamos un DataFrame pivoteado por filas de conceptos (Cobrado, Pagado, IVA a cargo/favor)
+                    # O más sencillo, una tabla índice (Concepto) vs Columnas (Empresas) como estaba originalmente:
+                    matriz_final_dict = {}
+                    for emp in empresas_lista:
+                        df_emp_reg = df_matriz_iva[df_matriz_iva['Empresa'] == emp]
+                        if not df_emp_reg.empty:
+                            cob = df_emp_reg['IVA COBRADO'].values[0]
+                            pag = df_emp_reg['IVA PAGADO'].values[0]
+                            neto_val = cob - pag
+                            if neto_val >= 0:
+                                label_neto = "IVA a cargo"
+                                val_neto = neto_val
+                            else:
+                                label_neto = "IVA a favor"
+                                val_neto = abs(neto_val)
+                            
+                            matriz_final_dict[emp] = pd.Series({
+                                'IVA COBRADO': cob,
+                                'IVA PAGADO': pag,
+                                label_neto: val_neto
+                            })
+
+                    df_pivot_iva = pd.DataFrame(matriz_final_dict).fillna(0.0)
                     
                     st.markdown("#### 📋 Concentrado de IVA por Empresa (Movimientos del Mes)")
                     st.dataframe(
                         df_pivot_iva.style.format('${:,.2f}'),
                         use_container_width=True
-                    )
-
-                    st.markdown("---")
-                    st.markdown("#### 🔍 Detalle Analítico por Empresa Seleccionada")
-                    empresa_sel_iva = st.selectbox("Seleccione Empresa para detalle:", empresas_lista, key="emp_iva_det")
-                    df_emp_detalle_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
-
-                    mask_iva_all = (
-                        df_emp_detalle_iva['Cuenta_Original'].str.startswith(('201-00010-001', '101-00011-001', '101-00011-002')) |
-                        df_emp_detalle_iva['Nombre Cuenta'].str.upper().str.contains('IVA', na=False)
-                    )
-                    df_cuentas_iva = df_emp_detalle_iva[mask_iva_all][['Cuenta_Original', 'Nombre Cuenta', 'Columna E (Cargos)', 'Columna F (Abonos)', 'Saldo Deudor Final', 'Saldo Acreedor Final']]
-                    
-                    st.dataframe(
-                        df_cuentas_iva.style.format({
-                            'Columna E (Cargos)': '${:,.2f}',                              'Columna F (Abonos)': '${:,.2f}',
-                            'Saldo Deudor Final': '${:,.2f}',                              'Saldo Acreedor Final': '${:,.2f}'
-                        }),
-                        use_container_width=True,
-                        hide_index=True
                     )
                 else:
                     st.warning("No se pudieron procesar los importes de IVA para las empresas.")
