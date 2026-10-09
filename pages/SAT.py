@@ -1398,28 +1398,27 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_saldos_iva['Cuenta'] = df_saldos_iva['Cuenta'].astype(str)
 
                 def extraer_movimientos_iva(df_sub):
-                    # Filtrado estricto por cuenta de IVA Trasladado Cobrado (201-00010) y nombre como respaldo
+                    # Filtrar cuentas específicas de IVA Cobrado y Pagado indicadas
                     mask_cobrado = (
-                        df_sub['Cuenta_Original'].str.startswith('201-00010') | 
-                        df_sub['Cuenta'].str.startswith('20100010') | 
-                        df_sub['Nombre Cuenta'].str.upper().str.contains('IVA.*COBRADO|IVA.*TRASLADADO', na=False)
+                        df_sub['Cuenta_Original'].str.startswith('201-00010-001') | 
+                        df_sub['Cuenta'].str.startswith('20100010001')
                     )
                     
-                    # Filtrado estricto por cuenta de IVA Acreditable / Pagado (101-00011) y nombre como respaldo
                     mask_pagado = (
-                        df_sub['Cuenta_Original'].str.startswith('101-00011') | 
-                        df_sub['Cuenta'].str.startswith('10100011') | 
-                        df_sub['Nombre Cuenta'].str.upper().str.contains('IVA.*PAGADO|IVA.*ACREDITABLE', na=False)
+                        df_sub['Cuenta_Original'].str.startswith(('101-00011-001', '101-00011-002')) | 
+                        df_sub['Cuenta'].str.startswith(('10100011001', '10100011002'))
                     )
 
                     df_cob = df_sub[mask_cobrado]
                     df_pag = df_sub[mask_pagado]
 
-                    # Operación usando columnas de Abonos (F) y Cargos (E)
-                    tot_cobrado = df_cob['Columna F (Abonos)'].sum() - df_cob['Columna E (Cargos)'].sum()
-                    tot_pagado = df_pag['Columna E (Cargos)'].sum() - df_pag['Columna F (Abonos)'].sum()
+                    # IVA Cobrado toma la Columna F (Abonos)
+                    tot_cobrado = df_cob['Columna F (Abonos)'].sum()
+                    
+                    # IVA Pagado toma la Columna E (Cargos)
+                    tot_pagado = df_pag['Columna E (Cargos)'].sum()
 
-                    return max(tot_cobrado, 0.0), max(tot_pagado, 0.0)
+                    return float(tot_cobrado), float(tot_pagado)
 
                 empresas_lista = df_saldos_iva['Empresa'].unique()
                 lista_resultados_iva = []
@@ -1453,7 +1452,7 @@ elif submodulo_sat == "🏛️ Impuestos":
                     df_emp_detalle_iva = df_saldos_iva[df_saldos_iva['Empresa'] == empresa_sel_iva]
 
                     mask_iva_all = (
-                        df_emp_detalle_iva['Cuenta_Original'].str.startswith(('201-00010', '101-00011')) |
+                        df_emp_detalle_iva['Cuenta_Original'].str.startswith(('201-00010-001', '101-00011-001', '101-00011-002')) |
                         df_emp_detalle_iva['Nombre Cuenta'].str.upper().str.contains('IVA', na=False)
                     )
                     df_cuentas_iva = df_emp_detalle_iva[mask_iva_all][['Cuenta_Original', 'Nombre Cuenta', 'Columna E (Cargos)', 'Columna F (Abonos)', 'Saldo Deudor Final', 'Saldo Acreedor Final']]
