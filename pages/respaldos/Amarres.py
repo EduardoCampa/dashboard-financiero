@@ -255,7 +255,7 @@ if estructura:
 
     with subtab_intercos:
         st.markdown("### 🔄 Amarre Intercompañías (Cuentas de Balance: Clientes, Proveedores y Préstamos)")
-        st.info(f"Cálculo estricto con saldos netos consolidados por contraparte: `{ruta_balanza}`.")
+        st.info(f"Cálculo estricto con saldos netos consolidados por contraparte (Deudor - Acreedor): `{ruta_balanza}`.")
 
         if todas_empresas_balanza:
             datos_empresas_recs = {}
@@ -275,9 +275,13 @@ if estructura:
                         continue
                     d_f = parse_monto_robusto(row.iloc[col_deudor_f])
                     a_f = parse_monto_robusto(row.iloc[col_acreedor_f])
+                    
+                    # Corrección aplicada: Saldo neto restando Deudor Menos Acreedor (d_f - a_f)
+                    saldo_neto = d_f - a_f
+
                     recs_list.append({
                         'cta_raw': cta_raw,
-                        'saldo_final': d_f - a_f
+                        'saldo_final': saldo_neto
                     })
                 datos_empresas_recs[emp] = recs_list
 
