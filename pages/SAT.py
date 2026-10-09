@@ -32,56 +32,72 @@ def obtener_saldos_balanza(ruta_balanza):
     try:
         xls = pd.ExcelFile(ruta_balanza)
         for hoja in xls.sheet_names:
-            if hoja.lower() in ['hoja1', 'hoja 1', 'resumen', 'sheet1']:
-                continue
+            nombre_pestana = str(hoja).strip().upper()
             
-            nombre_pestana = hoja.strip().upper()
-            
-            df_raw = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=15)
-            if df_raw.empty:
-                continue
-
-            header_row_idx = 0
-            for r_idx, row in df_raw.iterrows():
-                row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
-                if 'CUENTA' in row_str or 'NOMBRE' in row_str or 'SALDO' in row_str:
-                    header_row_idx = r_idx
-                    break
-
-            df_hoja = pd.read_excel(xls, sheet_name=hoja, skiprows=header_row_idx)
-            if df_hoja.empty or df_hoja.shape[1] < 4:
-                continue
-
-            cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
-
-            idx_de_f = next((i for i, c in enumerate(cols_upper) if 'DEUDOR F' in c or 'DEUDOR FINAL' in c), 6 if len(cols_upper) > 6 else len(cols_upper) - 2)
-            idx_ac_f = next((i for i, c in enumerate(cols_upper) if 'ACREEDOR F' in c or 'ACREEDOR FINAL' in c), 7 if len(cols_upper) > 7 else len(cols_upper) - 1)
-            idx_col_e = next((i for i, c in enumerate(cols_upper) if 'CARGO' in c or 'DEBITO' in c), 4 if len(cols_upper) > 4 else 0)
-            idx_col_f = next((i for i, c in enumerate(cols_upper) if 'ABONO' in c or 'CREDITO' in c), 5 if len(cols_upper) > 5 else 0)
-
-            for _, row in df_hoja.iterrows():
-                cta = str(row.iloc[0]).strip()
-                if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
+            try:
+                # Se lee hasta 20 filas para asegurar que encontramos el encabezado
+                df_raw = pd.read_excel(xls, sheet_name=hoja, header=None, nrows=20)
+                if df_raw.empty:
                     continue
-                
-                cta_limpia = cta.replace(' ', '')
-                nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
-                
-                monto_ac = float(pd.to_numeric(str(row.iloc[idx_ac_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_de = float(pd.to_numeric(str(row.iloc[idx_de_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_col_e = float(pd.to_numeric(str(row.iloc[idx_col_e]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
-                monto_col_f = float(pd.to_numeric(str(row.iloc[idx_col_f]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
-                detalles.append({
-                    'Empresa': nombre_pestana,
-                    'Cuenta': cta_limpia,
-                    'Nombre Cuenta': nom,
-                    'Saldo Deudor Final': monto_de,
-                    'Saldo Acreedor Final': monto_ac,
-                    'Columna E (Cargos)': monto_col_e,
-                    'Columna F (Abonos)': monto_col_f
-                })
-    except Exception:
+                header_row_idx = 0
+                for r_idx, row in df_raw.iterrows():
+                    row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
+                    if any(k in row_str for k in ['CUENTA', 'CTA', 'NOMBRE', 'DESCRIPCION', 'SALDO', 'CARGO', 'ABONO']):
+                        header_row_idx = r_idx
+                        break
+
+                df_hoja = pd.read_excel(xls, sheet_name=hoja, skiprows=header_row_idx)
+                if df_hoja.empty:
+                    continue
+
+                cols_upper = [str(c).strip().upper() for c in df_hoja.columns]
+
+                # Detección dinámica de columnas por nombre
+                idx_de_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['DEUDOR F', 'FINAL D', 'SALDO D'])), None)
+                idx_ac_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['ACREEDOR F', 'FINAL A', 'SALDO A'])), None)
+                idx_col_e = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['CARGO', 'DEBITO'])), None)
+                idx_col_f = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['ABONO', 'CREDITO'])), None)
+
+                # Valores por defecto basados en estándar de 8 columnas
+                if idx_de_f is None: idx_de_f = min(6, df_hoja.shape[1] - 1)
+                if idx_ac_f is None: idx_ac_f = min(7, df_hoja.shape[1] - 1)
+                if idx_col_e is None: idx_col_e = min(4, df_hoja.shape[1] - 1)
+                if idx_col_f is None: idx_col_f = min(5, df_hoja.shape[1] - 1)
+
+                for _, row in df_hoja.iterrows():
+                    cta = str(row.iloc[0]).strip()
+                    if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
+                        continue
+                    
+                    cta_limpia = cta.replace(' ', '')
+                    nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
+                    
+                    # Función segura para parsear montos
+                    def parse_monto(val):
+                        try:
+                            v = str(val).replace('$', '').replace(',', '')
+                            return float(pd.to_numeric(v, errors='coerce') or 0.0)
+                        except:
+                            return 0.0
+
+                    monto_ac = parse_monto(row.iloc[idx_ac_f])
+                    monto_de = parse_monto(row.iloc[idx_de_f])
+                    monto_col_e = parse_monto(row.iloc[idx_col_e])
+                    monto_col_f = parse_monto(row.iloc[idx_col_f])
+
+                    detalles.append({
+                        'Empresa': nombre_pestana,
+                        'Cuenta': cta_limpia,
+                        'Nombre Cuenta': nom,
+                        'Saldo Deudor Final': monto_de,
+                        'Saldo Acreedor Final': monto_ac,
+                        'Columna E (Cargos)': monto_col_e,
+                        'Columna F (Abonos)': monto_col_f
+                    })
+            except Exception as e:
+                continue
+    except Exception as e:
         pass
 
     return pd.DataFrame(detalles)
@@ -102,7 +118,7 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
 
     for archivo in archivos_nom:
         nombre_archivo = os.path.basename(archivo)
-        if "Balanza" in nombre_archivo:
+        if "Balanza" in nombre_archivo or nombre_archivo.startswith("~$"):
             continue
         
         rfc_match = re.search(r'([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})', nombre_archivo.upper())
@@ -377,7 +393,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
         registros_egresos = []
         
         for archivo in archivos_excel:
-            if any(x in archivo for x in ["Consolidado", "Balanza", "FORMATO"]):
+            nombre_archivo = os.path.basename(archivo)
+            if any(x in nombre_archivo for x in ["Consolidado", "Balanza", "FORMATO"]) or nombre_archivo.startswith("~$"):
                 continue
             try:
                 df_sat = pd.read_excel(archivo)
@@ -536,12 +553,15 @@ if submodulo_sat == "📊 Amarre Ingresos":
     def cargar_balanzas_por_mes(anio=2026, mes=8, ruta_base="Balanzas"):
         mes_str = f"{int(mes):02d}"
         
+        # Ignoramos la palabra "rh" y cualquier archivo temporal abierto que empiece con "~$"
         posibles = (
             glob.glob(os.path.join(ruta_base, str(anio), mes_str, "*.xlsx"), recursive=True) +
             glob.glob(os.path.join(ruta_base, "**", mes_str, "*.xlsx"), recursive=True)
         )
-        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
-        ruta_balanza = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
+        posibles = list(set(posibles))
+        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower() and not os.path.basename(f).startswith("~$")]
+        
+        ruta_balanza = posibles_gen[0] if posibles_gen else None
         
         if not ruta_balanza or not os.path.exists(ruta_balanza):
             return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), pd.DataFrame()
@@ -549,6 +569,9 @@ if submodulo_sat == "📊 Amarre Ingresos":
         df_det = obtener_saldos_balanza(ruta_balanza)
         if df_det.empty:
             return pd.DataFrame(columns=['Empresa', 'Contabilidad Ingresos', 'Contabilidad Egresos']), df_det
+
+        # IMPORTANTE: Forzamos el formato texto para evitar que las cuentas (ej. 41000000) se lean como números y omitan la suma
+        df_det['Cuenta'] = df_det['Cuenta'].astype(str)
 
         res_list = []
         empresas_unicas = df_det['Empresa'].unique()
@@ -728,6 +751,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                 st.markdown(f"### 📊 Contabilidad y Balanzas")
                 if not df_balanzas.empty:
                     st.dataframe(df_balanzas.style.format({'Contabilidad Ingresos': '${:,.2f}', 'Contabilidad Egresos': '${:,.2f}'}), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("⚠️ No se encontraron saldos en la Balanza o las cuentas no coinciden. Asegúrate de que el archivo Balanza.xlsx tenga el formato esperado.")
 
 
 # ==========================================
@@ -780,6 +805,7 @@ elif submodulo_sat == "👥 Amarre Nóminas":
                 glob.glob(os.path.join(ruta_balanzas_nom_input, "**", mes_str, archivo_balanza_rh_input), recursive=True) +
                 glob.glob(os.path.join(ruta_balanzas_nom_input, str(anio_sel_nom), mes_str, archivo_balanza_rh_input), recursive=True)
             )
+            posibles_rh = [f for f in posibles_rh if not os.path.basename(f).startswith("~$")]
 
             if posibles_rh and os.path.exists(posibles_rh[0]):
                 df_rh = obtener_saldos_balanza(posibles_rh[0])
@@ -892,13 +918,15 @@ elif submodulo_sat == "🏛️ Impuestos":
             glob.glob(os.path.join(ruta_balanzas_imp, str(anio_imp), mes_str, "*.xlsx"), recursive=True) +
             glob.glob(os.path.join(ruta_balanzas_imp, "**", mes_str, "*.xlsx"), recursive=True)
         )
-        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower()]
-        ruta_balanza_sel = posibles_gen[0] if posibles_gen else (posibles[0] if posibles else None)
+        posibles = list(set(posibles))
+        posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower() and not os.path.basename(f).startswith("~$")]
+        ruta_balanza_sel = posibles_gen[0] if posibles_gen else None
 
         if ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
             df_saldos = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos.empty:
+                df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
                 empresas_unicas = df_saldos['Empresa'].unique()
                 empresa_sel = st.selectbox("Seleccione Empresa:", empresas_unicas, key="emp_isr")
 
@@ -955,6 +983,7 @@ elif submodulo_sat == "🏛️ Impuestos":
             df_saldos_iva = obtener_saldos_balanza(ruta_balanza_sel)
 
             if not df_saldos_iva.empty:
+                df_saldos_iva['Cuenta'] = df_saldos_iva['Cuenta'].astype(str)
                 empresas_unicas_iva = df_saldos_iva['Empresa'].unique()
                 empresa_sel_iva = st.selectbox("Seleccione Empresa:", empresas_unicas_iva, key="emp_iva")
 
