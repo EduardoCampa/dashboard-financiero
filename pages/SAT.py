@@ -14,6 +14,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- VALIDACIÓN DE SESIÓN ---
+if "autenticado" not in st.session_state or not st.session_state.autenticado:
+    st.warning("⚠️ Debes iniciar sesión en la página principal para acceder a este módulo.")
+    st.stop()
+
 # --- MENÚ LATERAL DE NAVEGACIÓN ---
 st.sidebar.markdown("### 📑 Módulo SAT")
 submodulo_sat = st.sidebar.radio(

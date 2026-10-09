@@ -8,6 +8,11 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Finanzas - Grupo SERVYRE", layout="wide")
 
+# --- VALIDACIÓN DE SESIÓN ---
+if "autenticado" not in st.session_state or not st.session_state.autenticado:
+    st.warning("⚠️ Debes iniciar sesión en la página principal para acceder a este módulo.")
+    st.stop()
+
 # --- FORMATO DE MONEDA REGIÓN MÉXICO ($1,234,567.89) ---
 def formato_mx(val):
     if pd.isnull(val):
@@ -15,7 +20,7 @@ def formato_mx(val):
     try:
         num = float(val)
         partes = f"{num:,.2f}".split(".")
-        decimales = partes[1] if len(partes) > 1 else "00"
+        spartes[1] if len(partes) > 1 else "00"
         prefix = "-$" if num < 0 else "$"
         return f"{prefix}{abs(int(partes[0].replace(',', ''))):,}.{decimales}"
     except (ValueError, TypeError):
