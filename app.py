@@ -6,9 +6,9 @@ st.set_page_config(page_title="Facturación - Grupo SERVYRE", layout="wide")
 
 # --- SISTEMA DE CREDENCIALES Y ROLES ---
 USUARIOS = {
-    "admin": {"password": "123", "rol": "Administrador", "modulos": ["Facturación y Cobranza", "Módulo SAT & Amarres"]},
-    "contador": {"password": "456", "rol": "Contabilidad", "modulos": ["Módulo SAT & Amarres"]},
-    "finanzas": {"password": "789", "rol": "Finanzas", "modulos": ["Facturación y Cobranza"]}
+    "admin": {"password": "123", "rol": "Administrador", "modulos": ["📊 Facturación y Cobranza", "📑 Módulo SAT & Amarres"]},
+    "contador": {"password": "456", "rol": "Contabilidad", "modulos": ["📑 Módulo SAT & Amarres"]},
+    "finanzas": {"password": "789", "rol": "Finanzas", "modulos": ["📊 Facturación y Cobranza"]}
 }
 
 def verificar_login():
@@ -60,8 +60,8 @@ if st.sidebar.button("🧹 Borrar Caché General"):
 
 st.sidebar.markdown("---")
 
-# Selector de Módulos permitidos exclusivamente para este usuario[cite: 7]
-modulo_seleccionado = st.sidebar.selectbox("Selecciona el Módulo:", st.session_state.modulos)
+# Selector de Módulos permitidos exclusivamente para este usuario con iconos vistosos[cite: 7]
+modulo_seleccionado = st.sidebar.selectbox("📂 Selecciona el Módulo:", st.session_state.modulos)
 
 # --- CARGA DE DATOS ---
 def formato_mx(val):
@@ -115,7 +115,7 @@ def cargar_datos_facturacion(path):
 df_facturacion_raw, df_edocuenta_raw = cargar_datos_facturacion(ruta_archivo)
 
 # --- ENRUTAMIENTO DE MÓDULOS SEGÚN PERMISOS ---
-if modulo_seleccionado == "Facturación y Cobranza":
+if modulo_seleccionado == "📊 Facturación y Cobranza":
     columnas_requeridas = [
         'DateDocument', 'EmpresaOrigen', 'DocFolio', 'UUID', 'TIPO DOC',
         'CFDStatusCancelledName', 'BusinessEntityName', 'TotalRetention',
@@ -173,18 +173,18 @@ if modulo_seleccionado == "Facturación y Cobranza":
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             if 'EmpresaOrigen' in df_f.columns:
-                e_sel = st.multiselect("Empresa Origen:", sorted(df_f['EmpresaOrigen'].dropna().unique()), key="fac_emp")
+                e_sel = st.multiselect("🏢 Empresa Origen:", sorted(df_f['EmpresaOrigen'].dropna().unique()), key="fac_emp")
                 if e_sel: df_f = df_f[df_f['EmpresaOrigen'].isin(e_sel)]
         with c2:
             if 'BusinessEntityName' in df_f.columns:
-                cli_sel = st.multiselect("Cliente:", sorted(df_f['BusinessEntityName'].dropna().unique()), key="fac_cli")
+                cli_sel = st.multiselect("👥 Cliente:", sorted(df_f['BusinessEntityName'].dropna().unique()), key="fac_cli")
                 if cli_sel: df_f = df_f[df_f['BusinessEntityName'].isin(cli_sel)]
         with c3:
             if 'TIPO DOC' in df_f.columns:
-                tipo_sel = st.multiselect("Tipo Doc (F/NC):", sorted(df_f['TIPO DOC'].dropna().unique()), key="fac_tipo")
+                tipo_sel = st.multiselect("📄 Tipo Doc (F/NC):", sorted(df_f['TIPO DOC'].dropna().unique()), key="fac_tipo")
                 if tipo_sel: df_f = df_f[df_f['TIPO DOC'].isin(tipo_sel)]
         with c4:
-            a_sel = st.multiselect("Año:", sorted([int(a) for a in df_f['Año'].unique() if a > 0], reverse=True), key="fac_anio")
+            a_sel = st.multiselect("📅 Año:", sorted([int(a) for a in df_f['Año'].unique() if a > 0], reverse=True), key="fac_anio")
             if a_sel: df_f = df_f[df_f['Año'].isin(a_sel)]
 
         st.markdown("---")
@@ -192,11 +192,11 @@ if modulo_seleccionado == "Facturación y Cobranza":
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             df_unicos = df_f.drop_duplicates(subset=['EmpresaOrigen', 'DocumentID'] if 'EmpresaOrigen' in df_f.columns and 'DocumentID' in df_f.columns else ['DocFolio'])
-            st.metric("Total Subtotal2", formato_mx(df_unicos['Subtotal2'].sum()))
+            st.metric("💵 Total Subtotal2", formato_mx(df_unicos['Subtotal2'].sum()))
         with col_m2:
-            st.metric("Total Facturado", formato_mx(df_unicos['Total'].sum()))
+            st.metric("📈 Total Facturado", formato_mx(df_unicos['Total'].sum()))
         with col_m3:
-            st.metric("Saldo Factura Pendiente", formato_mx(df_unicos['SaldoFactura'].sum()))
+            st.metric("⏳ Saldo Factura Pendiente", formato_mx(df_unicos['SaldoFactura'].sum()))
 
         df_view = df_f.copy()
         for col_m in ['TotalRetention', 'SubTotal', 'TotalDiscount', 'Subtotal2', 'TotalTax', 'Total', 'Amount', 'SaldoFactura']:
@@ -208,6 +208,6 @@ if modulo_seleccionado == "Facturación y Cobranza":
     else:
         st.warning("No hay registros disponibles de Facturas ni Notas de Crédito.")
 
-elif modulo_seleccionado == "Módulo SAT & Amarres":
+elif modulo_seleccionado == "📑 Módulo SAT & Amarres":
     st.title("📑 Módulo SAT & Amarres")
     st.info("Aquí puedes integrar la lógica completa de amarre de ingresos que construimos anteriormente.")
