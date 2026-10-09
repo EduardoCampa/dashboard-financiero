@@ -380,7 +380,7 @@ def coincide_cuenta_robusta(cta_balanza, patron_template):
     return bool(re.match(regex_str, cb))
 
 
-# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL (ACTUALIZADO) ---
+# --- BUSCADOR DE MONTO EN BALANZA ORIGINAL ---
 def obtener_monto_cuenta_balanza(
     patron_template,
     balanza_records,
@@ -431,29 +431,19 @@ def obtener_monto_cuenta_balanza(
     monto = 0.0
     for b in records_a_sumar:
         if tipo == 'mes':
-            cargos = b['cargos_m']
-            abonos = b['abonos_m']
-            # Cuentas de Ingresos / Ventas (Naturaleza Acreedora)
-            if p_prefix.startswith(('4', '720', '730')):
-                val = abonos - cargos
-                monto += abs(val) if val < 0 else val
-            # Cuentas de Costos y Gastos (Naturaleza Deudora)
-            elif p_prefix.startswith(('5', '6')):
-                val = cargos - abonos
-                monto += abs(val) if val < 0 else val
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['abonos_m'] - b['cargos_m'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['abonos_m'] - b['cargos_m']
             else:
-                monto += cargos - abonos
+                monto += b['cargos_m'] - b['abonos_m']
         else:
-            deudor = b['deudor_f']
-            acreedor = b['acreedor_f']
-            if p_prefix.startswith(('4', '720', '730')):
-                val = acreedor - deudor
-                monto += abs(val) if val < 0 else val
-            elif p_prefix.startswith(('5', '6')):
-                val = deudor - acreedor
-                monto += abs(val) if val < 0 else val
+            if p_prefix.startswith(('420', '421', '422', '423', '450', '451')):
+                monto += abs(b['acreedor_f'] - b['deudor_f'])
+            elif p_prefix.startswith(('4', '720', '730')):
+                monto += b['acreedor_f'] - b['deudor_f']
             else:
-                monto += deudor - acreedor
+                monto += b['deudor_f'] - b['acreedor_f']
 
     return monto
 
