@@ -20,7 +20,7 @@ def formato_mx(val):
     try:
         num = float(val)
         partes = f"{num:,.2f}".split(".")
-        spartes[1] if len(partes) > 1 else "00"
+        decimales = partes[1] if len(partes) > 1 else "00"
         prefix = "-$" if num < 0 else "$"
         return f"{prefix}{abs(int(partes[0].replace(',', ''))):,}.{decimales}"
     except (ValueError, TypeError):
@@ -418,10 +418,6 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
 # ============================================================
 # CONFIGURACIÓN ROBUSTA DEL MASTER
 # ============================================================
-# Siempre toma el Master desde la misma carpeta donde está este script.
-# Esto evita que Streamlit termine leyendo otra copia del archivo.
-# En Streamlit Cloud este archivo está dentro de /pages, mientras que el Master
-# normalmente está en la raíz del repositorio. Buscamos primero en la raíz del repo.
 DIRECTORIO_SCRIPT = os.path.dirname(os.path.abspath(__file__))
 DIRECTORIO_REPO = os.path.dirname(DIRECTORIO_SCRIPT)
 CANDIDATOS_MASTER = [
@@ -432,7 +428,6 @@ CANDIDATOS_MASTER = [
 ruta_archivo = next((p for p in CANDIDATOS_MASTER if os.path.exists(p)), CANDIDATOS_MASTER[0])
 
 def normalizar_folio(valor):
-    """Normaliza folios como SP3133, sp3133, SP3133.0, 3133, etc."""
     if pd.isna(valor):
         return ""
     texto = str(valor).strip().upper()
@@ -441,7 +436,6 @@ def normalizar_folio(valor):
     return texto.strip()
 
 def folio_clave(valor):
-    """Obtiene la clave numérica/limpia del folio para comparar SP/OC."""
     texto = normalizar_folio(valor)
     if texto.startswith('SP') or texto.startswith('OC'):
         texto = texto[2:]
@@ -502,14 +496,8 @@ def cargar_datos_finanzas(path, archivo_mtime, archivo_size):
         st.error(f"Error al cargar datos de finanzas: {e}")
         return None, None, None, None, None, None
 
-# El timestamp y tamaño forman parte de la clave del cache.
-# Si se reemplaza/actualiza el Master, Streamlit vuelve a leerlo.
 if not os.path.exists(ruta_archivo):
     st.error("No se encontró el archivo Consolidado_Master.xlsx.")
-    st.info(
-        "El sistema buscó el Master en la raíz del repositorio y en la carpeta pages. "
-        f"Ruta esperada en la raíz: {CANDIDATOS_MASTER[0]}"
-    )
     st.stop()
 
 _archivo_mtime = os.path.getmtime(ruta_archivo)
@@ -718,35 +706,11 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
 
 st.sidebar.title("💰 Módulo de Finanzas")
 
-# Estado de carga del Master para poder detectar rápidamente
-# si la aplicación está leyendo una versión distinta del Excel.
 with st.sidebar.expander("🔎 Diagnóstico del Master", expanded=False):
     st.caption(f"Archivo leído: {os.path.basename(ruta_archivo)}")
     st.caption(f"Ruta: {ruta_archivo}")
     st.caption(f"Tamaño: {_archivo_size:,} bytes")
     st.caption(f"Modificado: {pd.to_datetime(_archivo_mtime, unit='s')}")
-
-    if df_tesoreria is not None and not df_tesoreria.empty and 'DocFolio' in df_tesoreria.columns:
-        folios_master = df_tesoreria['DocFolio'].apply(normalizar_folio)
-        existe_sp3133_master = (folios_master == 'SP3133').any()
-        st.write(f"SP3133 en SolicitudPago: {'✅ SÍ' if existe_sp3133_master else '❌ NO'}")
-        if existe_sp3133_master:
-            st.write(f"Filas SP3133: {(folios_master == 'SP3133').sum():,}")
-    else:
-        st.write("SolicitudPago: ❌ sin datos")
-
-    if df_tesoreria_proc is not None and not df_tesoreria_proc.empty and 'DocFolio' in df_tesoreria_proc.columns:
-        folios_proc = df_tesoreria_proc['DocFolio'].apply(normalizar_folio)
-        existe_sp3133_proc = (folios_proc == 'SP3133').any()
-        st.write(f"SP3133 procesado: {'✅ SÍ' if existe_sp3133_proc else '❌ NO'}")
-        if existe_sp3133_proc and 'Saldo_Pendiente' in df_tesoreria_proc.columns:
-            saldo_3133 = pd.to_numeric(
-                df_tesoreria_proc.loc[folios_proc == 'SP3133', 'Saldo_Pendiente'],
-                errors='coerce'
-            ).fillna(0).sum()
-            st.write(f"Saldo SP3133: {formato_mx(saldo_3133)}")
-    else:
-        st.write("SolicitudPago procesada: ❌ sin datos")
 
     if st.button("🔄 Recargar Master ahora", key="btn_recargar_master", use_container_width=True):
         st.cache_data.clear()
@@ -822,7 +786,7 @@ if submodulo == "📊 Facturación":
             if col_r in df_f.columns:
                 df_f.loc[es_nc_mask, col_r] = -1 * df_f.loc[es_nc_mask, col_r].abs()
 
-        st.markdown("#### ⚙️️ Filtros de Selección")
+        st.markdown("#### ⚙ Filtros de Selección")
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             if 'EmpresaOrigen' in df_f.columns:
@@ -860,21 +824,6 @@ if submodulo == "📊 Facturación":
             st.metric("Saldo Pendiente Neto", formato_mx(df_unicos['SaldoFactura'].sum()))
 
         st.markdown("---")
-
-        g1, g2 = st.columns(2)
-        with g1:
-            st.subheader("📈 Top 10 Clientes por Saldo Pendiente")
-            if 'BusinessEntityName' in df_unicos.columns:
-                top_clientes = df_unicos.groupby('BusinessEntityName')['SaldoFactura'].sum().nlargest(10).reset_index()
-                st.bar_chart(top_clientes.set_index('BusinessEntityName'))
-        with g2:
-            st.subheader("🏢 Distribución por Empresa Origen")
-            if 'EmpresaOrigen' in df_unicos.columns:
-                emp_totales = df_unicos.groupby('EmpresaOrigen')['Total'].sum().reset_index()
-                st.bar_chart(emp_totales.set_index('EmpresaOrigen'))
-
-        st.markdown("---")
-        st.subheader("📋 Tabla General de Facturación y Notas de Crédito")
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
@@ -1052,7 +1001,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
             st.markdown("---")
 
-            # FUNCIÓN DE RENDIMIENTO OPTIMIZADO
             def renderizar_vista_reporte_pagos(df_origen, solo_pendientes=True, key_prefix="rep"):
                 df_rep_total = df_origen.copy()
 
@@ -1067,8 +1015,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     col_monto_eval = 'Total'
                     label_monto = "Monto Total"
 
-                # Normalización única y consistente de folios.
-                # Así SP3133, sp3133, SP3133.0 y 3133 se pueden localizar.
                 df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].apply(normalizar_folio)
                 df_rep_total['DocFolio_Clean'] = df_rep_total[col_folio_name].apply(folio_clave)
 
@@ -1090,8 +1036,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     if prov_seleccionados:
                         df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
                 with c_rf4:
-                    # Usamos los folios ya normalizados para que el buscador
-                    # no dependa del formato exacto que venga desde Excel.
                     lista_folios = sorted(
                         [f for f in df_rep_total['DocFolio_Upper'].dropna().unique() if str(f).strip()]
                     )
@@ -1112,7 +1056,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
 
                 st.markdown("---")
 
-                # --- METRICAS / KPIS ---
                 st.markdown("### 📊 Indicadores Clave de Desempeño (KPIs)")
                 col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
@@ -1156,7 +1099,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     )
                     st.markdown("---")
 
-                    # BOTONES PARA CONTROLAR DESPLEGADOS
                     if f"{key_prefix}_expand_all" not in st.session_state:
                         st.session_state[f"{key_prefix}_expand_all"] = True
 
@@ -1173,7 +1115,6 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     st.markdown("<br>", unsafe_allow_html=True)
 
                     estado_desplegado = st.session_state[f"{key_prefix}_expand_all"]
-
                     max_provs = 30 if not solo_pendientes and not prov_seleccionados else None
 
                     for empresa in sorted(empresas_agrupadas):
@@ -1185,7 +1126,7 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                         resumen_proveedor = resumen_proveedor.sort_values(by=col_monto_eval, ascending=False)
 
                         if max_provs and len(resumen_proveedor) > max_provs:
-                            st.caption(f"⚡ Mostrando Top {max_provs} proveedores para acelerar la carga web. (Usa filtros o descarga el Excel para ver el 100%).")
+                            st.caption(f"⚡ Mostrando Top {max_provs} proveedores para acelerar la carga web.")
                             resumen_proveedor = resumen_proveedor.head(max_provs)
 
                         for _, prov_row in resumen_proveedor.iterrows():
@@ -1225,6 +1166,5 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                 renderizar_vista_reporte_pagos(df_rep_total_base, solo_pendientes=True, key_prefix="rep_pend")
             else:
                 renderizar_vista_reporte_pagos(df_rep_total_base, solo_pendientes=False, key_prefix="rep_univ")
-
     else:
         st.warning("No hay datos cargados para generar el reporte.")
