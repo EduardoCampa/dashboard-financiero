@@ -106,12 +106,10 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN PARA GENERAR EXCEL DE CÉDULA ISR ---
-def generar_excel_cedula_isr(empresa_nombre, anio_val, mes_nombre, df_datos):
+# --- FUNCIÓN PARA GENERAR EXCEL CONSOLIDADO DE IMPUESTOS (3 PESTAÑAS) ---
+def generar_excel_impuestos_completo(empresa_isr, anio_val, mes_nombre, df_isr, df_iva):
     wb = Workbook()
-    ws = wb.active
-    ws.title = "ISR Pagos Provisionales"
-    ws.views.sheetView[0].showGridLines = True
+    wb.remove(wb.active) # Quitar la hoja por defecto
 
     font_titulo_empresa = Font(name="Calibri", size=12, bold=True, color="000000")
     font_titulo_rep = Font(name="Calibri", size=11, bold=True, color="000000")
@@ -137,38 +135,41 @@ def generar_excel_cedula_isr(empresa_nombre, anio_val, mes_nombre, df_datos):
         right=Side(style='thin', color='D9D9D9')
     )
 
-    ws.merge_cells('A1:B1')
-    ws.cell(row=1, column=1, value=f"{empresa_nombre} SA DE CV").font = font_titulo_empresa
-    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    # 1. PESTAÑA: ISR Pagos Provisionales
+    ws_isr = wb.create_sheet(title="ISR Pagos Provisionales")
+    ws_isr.views.sheetView[0].showGridLines = True
 
-    ws.merge_cells('A2:B2')
-    ws.cell(row=2, column=1, value="PAGOS PROVISIONALES").font = font_titulo_rep
-    ws.cell(row=2, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws_isr.merge_cells('A1:B1')
+    ws_isr.cell(row=1, column=1, value=f"{empresa_isr} SA DE CV").font = font_titulo_empresa
+    ws_isr.cell(row=1, column=1).alignment = Alignment(horizontal="center", vertical="center")
 
-    ws.merge_cells('A3:B3')
-    ws.cell(row=3, column=1, value=f"EJERCICIO {anio_val}").font = font_ejercicio
-    ws.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws_isr.merge_cells('A2:B2')
+    ws_isr.cell(row=2, column=1, value="PAGOS PROVISIONALES").font = font_titulo_rep
+    ws_isr.cell(row=2, column=1).alignment = Alignment(horizontal="center", vertical="center")
 
-    # Cabecera de tabla
-    ws.cell(row=5, column=1, value="OBLIGACIONES").font = font_header
-    ws.cell(row=5, column=1).fill = fill_header
-    ws.cell(row=5, column=1).alignment = Alignment(horizontal="center", vertical="center")
-    ws.cell(row=5, column=1).border = borde_delgado
+    ws_isr.merge_cells('A3:B3')
+    ws_isr.cell(row=3, column=1, value=f"EJERCICIO {anio_val}").font = font_ejercicio
+    ws_isr.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+    ws_isr.cell(row=5, column=1, value="OBLIGACIONES").font = font_header
+    ws_isr.cell(row=5, column=1).fill = fill_header
+    ws_isr.cell(row=5, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws_isr.cell(row=5, column=1).border = borde_delgado
 
     col_mes_abr = mes_nombre.upper()[:3]
-    ws.cell(row=5, column=2, value=col_mes_abr).font = font_header
-    ws.cell(row=5, column=2).fill = fill_header
-    ws.cell(row=5, column=2).alignment = Alignment(horizontal="center", vertical="center")
-    ws.cell(row=5, column=2).border = borde_delgado
-    ws.row_dimensions[5].height = 25
+    ws_isr.cell(row=5, column=2, value=col_mes_abr).font = font_header
+    ws_isr.cell(row=5, column=2).fill = fill_header
+    ws_isr.cell(row=5, column=2).alignment = Alignment(horizontal="center", vertical="center")
+    ws_isr.cell(row=5, column=2).border = borde_delgado
+    ws_isr.row_dimensions[5].height = 25
 
     row_idx = 6
-    for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+    for _, r in df_isr.iterrows():
         concepto = r['OBLIGACIONES']
         valor = r[col_mes_abr]
 
-        cell_c = ws.cell(row=row_idx, column=1, value=concepto)
-        cell_v = ws.cell(row=row_idx, column=2)
+        cell_c = ws_isr.cell(row=row_idx, column=1, value=concepto)
+        cell_v = ws_isr.cell(row=row_idx, column=2)
 
         is_total_row = (concepto == "TOTAL ISR A PAGAR")
 
@@ -187,10 +188,7 @@ def generar_excel_cedula_isr(empresa_nombre, anio_val, mes_nombre, df_datos):
 
         cell_c.alignment = Alignment(horizontal="left", vertical="center")
 
-        if concepto == "C.U.":
-            cell_v.value = float(valor)
-            cell_v.number_format = '0.00%'
-        elif concepto == "TASA DE IMPTO":
+        if concepto in ["C.U.", "TASA DE IMPTO"]:
             cell_v.value = float(valor)
             cell_v.number_format = '0.00%'
         else:
@@ -198,11 +196,90 @@ def generar_excel_cedula_isr(empresa_nombre, anio_val, mes_nombre, df_datos):
             cell_v.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
 
         cell_v.alignment = Alignment(horizontal="right", vertical="center")
-        ws.row_dimensions[row_idx].height = 20
+        ws_isr.row_dimensions[row_idx].height = 20
         row_idx += 1
 
-    ws.column_dimensions['A'].width = 50
-    ws.column_dimensions['B'].width = 20
+    ws_isr.column_dimensions['A'].width = 50
+    ws_isr.column_dimensions['B'].width = 20
+
+    # 2. PESTAÑA: IVA (Cobrado vs Pagado)
+    ws_iva = wb.create_sheet(title="IVA")
+    ws_iva.views.sheetView[0].showGridLines = True
+
+    font_titulo_g = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    fill_titulo_g = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    font_header_g = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    fill_header_g = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+
+    ws_iva.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_iva.columns))
+    t_iva = ws_iva.cell(row=1, column=1, value=f"DETERMINACIÓN DE IVA — {mes_nombre.upper()} {anio_val}")
+    t_iva.font = font_titulo_g
+    t_iva.fill = fill_titulo_g
+    t_iva.alignment = Alignment(horizontal="center", vertical="center")
+    ws_iva.row_dimensions[1].height = 32
+
+    headers_iva = list(df_iva.columns)
+    for c_idx, h in enumerate(headers_iva, 1):
+        cell_h = ws_iva.cell(row=3, column=c_idx, value=h)
+        cell_h.font = font_header_g
+        cell_h.fill = fill_header_g
+        cell_h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell_h.border = borde_delgado
+    ws_iva.row_dimensions[3].height = 25
+
+    row_idx_iva = 4
+    for idx_f, (_, r) in enumerate(df_iva.iterrows()):
+        fill_row = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid") if idx_f % 2 == 1 else None
+        for c_idx, val in enumerate(r, 1):
+            cell = ws_iva.cell(row=row_idx_iva, column=c_idx)
+            if c_idx == 1:
+                cell.value = str(val)
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell.value = float(val) if pd.notnull(val) else 0.0
+                cell.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.font = font_normal
+            cell.border = borde_delgado
+            if fill_row:
+                cell.fill = fill_row
+        ws_iva.row_dimensions[row_idx_iva].height = 20
+        row_idx_iva += 1
+
+    for col in ws_iva.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws_iva.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+    # 3. PESTAÑA: Retenciones
+    ws_ret = wb.create_sheet(title="Retenciones")
+    ws_ret.views.sheetView[0].showGridLines = True
+
+    ws_ret.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
+    t_ret = ws_ret.cell(row=1, column=1, value=f"DETALLE DE RETENCIONES — {mes_nombre.upper()} {anio_val}")
+    t_ret.font = font_titulo_g
+    t_ret.fill = fill_titulo_g
+    t_ret.alignment = Alignment(horizontal="center", vertical="center")
+    ws_ret.row_dimensions[1].height = 32
+
+    ws_ret.cell(row=3, column=1, value="Concepto").font = font_header_g
+    ws_ret.cell(row=3, column=1).fill = fill_header_g
+    ws_ret.cell(row=3, column=1).alignment = Alignment(horizontal="center", vertical="center")
+    ws_ret.cell(row=3, column=1).border = borde_delgado
+
+    ws_ret.cell(row=3, column=2, value="Monto").font = font_header_g
+    ws_ret.cell(row=3, column=2).fill = fill_header_g
+    ws_ret.cell(row=3, column=2).alignment = Alignment(horizontal="center", vertical="center")
+    ws_ret.cell(row=3, column=2).border = borde_delgado
+    ws_ret.row_dimensions[3].height = 25
+
+    ws_ret.cell(row=4, column=1, value="Retenciones ISR e IVA del Periodo").font = font_normal
+    ws_ret.cell(row=4, column=1).border = borde_delgado
+    ws_ret.cell(row=4, column=2, value=0.0).font = font_normal
+    ws_ret.cell(row=4, column=2).number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+    ws_ret.cell(row=4, column=2).border = borde_delgado
+    ws_ret.column_dimensions['A'].width = 40
+    ws_ret.column_dimensions['B'].width = 20
 
     output = io.BytesIO()
     wb.save(output)
@@ -417,6 +494,92 @@ def generar_excel_ejecutivo_completo_nomina(dict_dfs_empresas, periodo_str):
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = get_column_letter(col[0].column)
             ws_cons.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+    for emp_nombre, df_datos in dict_dfs_empresas.items():
+        ws = wb.create_sheet(title=f"Amarre {emp_nombre}"[:31])
+        ws.views.sheetView[0].showGridLines = True
+
+        row_idx = 1
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+        cell_t = ws.cell(row=row_idx, column=1, value=f"REPORTE EJECUTIVO DE AMARRE DE NÓMINA — {emp_nombre.upper()} ({periodo_str.upper()})")
+        cell_t.font = font_titulo
+        cell_t.fill = fill_titulo
+        cell_t.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[row_idx].height = 32
+        row_idx += 2
+
+        for col_num, h in enumerate(headers, 1):
+            c = ws.cell(row=row_idx, column=col_num, value=h)
+            c.font = font_header
+            c.fill = fill_header
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = borde_delgado
+        ws.row_dimensions[row_idx].height = 25
+        row_idx += 1
+
+        for idx_f, (_, r) in enumerate(df_datos.iterrows()):
+            ws.cell(row=row_idx, column=1, value=str(r.get('Concepto SAT', ''))).alignment = Alignment(horizontal="left", vertical="center")
+            
+            c_m_sat = ws.cell(row=row_idx, column=2, value=float(r.get('Monto SAT', 0.0)))
+            c_m_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_m_sat.alignment = Alignment(horizontal="right", vertical="center")
+
+            ws.cell(row=row_idx, column=3, value=str(r.get('Cuenta Contable', ''))).alignment = Alignment(horizontal="center", vertical="center")
+
+            c_m_cont = ws.cell(row=row_idx, column=4, value=float(r.get('Monto Contabilidad', 0.0)))
+            c_m_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_m_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+            c_dif = ws.cell(row=row_idx, column=5, value=float(r.get('Diferencia (SAT - Contab)', 0.0)))
+            c_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+            c_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+            fill_row = fill_zebra if idx_f % 2 == 1 else None
+            for c_num in range(1, 6):
+                cell_curr = ws.cell(row=row_idx, column=c_num)
+                cell_curr.font = font_normal
+                cell_curr.border = borde_delgado
+                if fill_row:
+                    cell_curr.fill = fill_row
+
+            ws.row_dimensions[row_idx].height = 20
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="TOTALES").font = font_total
+        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+        
+        tot_sat = df_datos['Monto SAT'].sum() if 'Monto SAT' in df_datos.columns else 0.0
+        tot_cont = df_datos['Monto Contabilidad'].sum() if 'Monto Contabilidad' in df_datos.columns else 0.0
+        tot_dif = df_datos['Diferencia (SAT - Contab)'].sum() if 'Diferencia (SAT - Contab)' in df_datos.columns else 0.0
+
+        c_tot_sat = ws.cell(row=row_idx, column=2, value=tot_sat)
+        c_tot_sat.font = font_total
+        c_tot_sat.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_sat.alignment = Alignment(horizontal="right", vertical="center")
+
+        ws.cell(row=row_idx, column=3, value="").font = font_total
+
+        c_tot_cont = ws.cell(row=row_idx, column=4, value=tot_cont)
+        c_tot_cont.font = font_total
+        c_tot_cont.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_cont.alignment = Alignment(horizontal="right", vertical="center")
+
+        c_tot_dif = ws.cell(row=row_idx, column=5, value=tot_dif)
+        c_tot_dif.font = font_total
+        c_tot_dif.number_format = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
+        c_tot_dif.alignment = Alignment(horizontal="right", vertical="center")
+
+        for col_num in range(1, 6):
+            c_tot_item = ws.cell(row=row_idx, column=col_num)
+            c_tot_item.fill = fill_total
+            c_tot_item.border = borde_total
+
+        ws.row_dimensions[row_idx].height = 24
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
     output = io.BytesIO()
     wb.save(output)
@@ -1337,6 +1500,8 @@ elif submodulo_sat == "🏛️ Impuestos":
         posibles_gen = [f for f in posibles if "rh" not in os.path.basename(f).lower() and not os.path.basename(f).startswith("~$")]
         ruta_balanza_sel = posibles_gen[0] if posibles_gen else None
 
+        df_pivot_iva_global = pd.DataFrame()
+
         if ruta_balanza_sel and os.path.exists(ruta_balanza_sel):
             df_saldos = obtener_saldos_balanza(ruta_balanza_sel)
 
@@ -1345,7 +1510,44 @@ elif submodulo_sat == "🏛️ Impuestos":
                 df_saldos['Cuenta'] = df_saldos['Cuenta'].astype(str)
                 empresas_unicas = df_saldos['Empresa'].unique()
 
-                # Selector de empresa para mostrar el formato detallado tipo cédula
+                # Generar IVA global para exportación conjunta
+                def extraer_movimientos_iva(df_sub):
+                    mask_cobrado = (
+                        df_sub['Cuenta_Original'].str.startswith('201-00010-001') | 
+                        df_sub['Cuenta'].str.startswith('20100010001')
+                    )
+                    mask_pagado = (
+                        df_sub['Cuenta_Original'].str.startswith(('101-00011-001', '101-00011-002')) | 
+                        df_sub['Cuenta'].str.startswith(('10100011001', '10100011002'))
+                    )
+                    df_cob = df_sub[mask_cobrado]
+                    df_pag = df_sub[mask_pagado]
+                    return float(df_cob['Columna F (Abonos)'].sum()), float(df_pag['Columna E (Cargos)'].sum())
+
+                lista_resultados_iva = []
+                for emp in empresas_unicas:
+                    df_emp_sub = df_saldos[df_saldos['Empresa'] == emp]
+                    iva_cob, iva_pag = extraer_movimientos_iva(df_emp_sub)
+                    iva_neto = iva_cob - iva_pag
+                    etiqueta_neto = "IVA a cargo" if iva_neto >= 0 else "IVA a favor"
+                    monto_neto_mostrar = iva_neto if iva_neto >= 0 else abs(iva_neto)
+                    lista_resultados_iva.append({'Empresa': emp, 'IVA COBRADO': iva_cob, 'IVA PAGADO': iva_pag, etiqueta_neto: monto_neto_mostrar})
+
+                df_matriz_iva = pd.DataFrame(lista_resultados_iva)
+                if not df_matriz_iva.empty:
+                    matriz_final_dict = {}
+                    for emp in empresas_unicas:
+                        df_emp_reg = df_matriz_iva[df_matriz_iva['Empresa'] == emp]
+                        if not df_emp_reg.empty:
+                            cob = df_emp_reg['IVA COBRADO'].values[0]
+                            pag = df_emp_reg['IVA PAGADO'].values[0]
+                            neto_val = cob - pag
+                            label_neto = "IVA a cargo" if neto_val >= 0 else "IVA a favor"
+                            val_neto = neto_val if neto_val >= 0 else abs(neto_val)
+                            matriz_final_dict[emp] = pd.Series({'IVA COBRADO': cob, 'IVA PAGADO': pag, label_neto: val_neto})
+                    df_pivot_iva_global = pd.DataFrame(matriz_final_dict).fillna(0.0).reset_index().rename(columns={'index': 'Concepto / Empresa'})
+
+                # Selector de empresa para la cédula ISR
                 empresa_sel_isr = st.selectbox("Seleccione Empresa para Cédula de ISR:", empresas_unicas, key="emp_isr_cedula")
                 df_emp_isr = df_saldos[df_saldos['Empresa'] == empresa_sel_isr]
 
@@ -1401,7 +1603,6 @@ elif submodulo_sat == "🏛️ Impuestos":
 
                 total_isr_pagar = max(0.0, importe_pp - isr_retenido - isr_retenido_acum - pago_provisional_acum - compensacion_isr)
 
-                # Construcción de la tabla de formato cédula solicitado
                 datos_cedula = [
                     ("INGRESOS DEL MES", ingresos_mes),
                     ("OTROS INGRESOS", otros_ingresos),
@@ -1437,19 +1638,22 @@ elif submodulo_sat == "🏛️ Impuestos":
                 )
 
                 st.markdown("---")
-                excel_cedula_bytes = generar_excel_cedula_isr(
+                
+                # Botón único para exportar las 3 pestañas de impuestos
+                excel_completo_impuestos = generar_excel_impuestos_completo(
                     empresa_nombre=empresa_sel_isr,
                     anio_val=anio_imp,
                     mes_nombre=nombres_meses[mes_imp-1],
-                    df_datos=df_cedula_isr
+                    df_isr=df_cedula_isr,
+                    df_iva=df_pivot_iva_global
                 )
 
                 st.download_button(
-                    label="📥 Descargar Cédula de ISR en Excel",
-                    data=excel_cedula_bytes,
-                    file_name=f"Cedula_ISR_{empresa_sel_isr}_{nombres_meses[mes_imp-1]}_{anio_imp}.xlsx",
+                    label="📥 Descargar Reporte Completo de Impuestos en Excel (3 Pestañas)",
+                    data=excel_completo_impuestos,
+                    file_name=f"Reporte_Impuestos_Completo_{empresa_sel_isr}_{nombres_meses[mes_imp-1]}_{anio_imp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="btn_dl_cedula_isr",
+                    key="btn_dl_completo_impuestos",
                     use_container_width=True
                 )
 
