@@ -101,7 +101,7 @@ def obtener_saldos_balanza(ruta_balanza):
     return pd.DataFrame(detalles)
 
 
-# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - CORREGIDA ---
+# --- FUNCIÓN LECTORA DE ARCHIVOS EXCEL DE NÓMINA EMITIDA (CARPETA NOMINA) - RESTAURADA ORIGINAL ---
 def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
     if not os.path.exists(carpeta_nomina):
         return pd.DataFrame()
@@ -125,14 +125,14 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
         try:
             xls = pd.ExcelFile(archivo)
             for sheet in xls.sheet_names:
-                df_raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=10)
+                df_raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=15)
                 if df_raw.empty:
                     continue
                 
                 header_row_idx = 0
                 for r_idx, row in df_raw.iterrows():
                     row_str = " ".join([str(val).upper() for val in row.values if pd.notnull(val)])
-                    if any(k in row_str for k in ['RFC EMISOR', 'DESCRIPCION', 'CONCEPTO', 'IMPORTE', 'TOTAL']):
+                    if any(k in row_str for k in ['CONCEPTO', 'DESCRIPCION', 'PERCEPCION', 'IMPORTE', 'CLAVE']):
                         header_row_idx = r_idx
                         break
 
@@ -140,23 +140,12 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
                 if df.empty:
                     continue
                 
-                df.columns = [str(c).strip() for c in df.columns]
-                cols_upper = [str(c).strip().upper() for c in df.columns]
-
-                # Identificar columnas por nombre exacto o parcial visto en tus archivos
-                col_rfc_idx = next((i for i, c in enumerate(cols_upper) if 'RFC' in c and 'EMISOR' in c), None)
+                cols = {str(c).strip().lower(): i for i, c in enumerate(df.columns)}
                 
-                # Buscar columna de concepto/descripción (como en tu imagen: 'Descripción')
-                col_concepto_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['DESCRIPCION', 'CONCEPTO', 'PERCEPCION', 'CLAVE', 'NOMBRE'])), None)
-                if col_concepto_idx is None:
-                    col_concepto_idx = 0
-
-                # Buscar columna de importe (ej. 'Importe', 'Total', o columnas numéricas al final)
-                col_importe_idx = next((i for i, c in enumerate(cols_upper) if any(x in c for x in ['IMPORTE', 'MONTO', 'TOTAL', 'SUBTOTAL', 'GRAVADO', 'EXENTO'])), None)
-                if col_importe_idx is None:
-                    col_importe_idx = df.shape[1] - 1
-
-                col_fecha_idx = next((i for i, c in enumerate(cols_upper) if 'FECHA' in c or 'PAGO' in c or 'EMISION' in c), None)
+                col_rfc_idx = next((i for k, i in cols.items() if 'rfc' in k or 'emisor' in k), None)
+                col_concepto_idx = next((i for k, i in cols.items() if any(x in k for x in ['concepto', 'descripcion', 'percepcion', 'tipo', 'clave'])), 0)
+                col_importe_idx = next((i for k, i in cols.items() if any(x in k for x in ['importe', 'monto', 'total', 'subtotal', 'gravado', 'exento'])), df.shape[1] - 1)
+                col_fecha_idx = next((i for k, i in cols.items() if 'fecha' in k or 'pago' in k or 'emision' in k), None)
 
                 for _, row in df.iterrows():
                     if col_fecha_idx is not None and pd.notnull(row.iloc[col_fecha_idx]):
@@ -168,26 +157,18 @@ def cargar_conceptos_nomina_sat(carpeta_nomina, anio_filtro, mes_ini, mes_fin):
                                 continue
 
                     rfc_val = str(row.iloc[col_rfc_idx]).strip().upper() if col_rfc_idx is not None and pd.notnull(row.iloc[col_rfc_idx]) else rfc_filename
-                    if not rfc_val or rfc_val == 'NAN':
+                    if not rfc_val:
                         rfc_val = rfc_filename
 
                     conc_val = str(row.iloc[col_concepto_idx]).strip().upper() if pd.notnull(row.iloc[col_concepto_idx]) else ""
-                    
-                    val_raw = row.iloc[col_importe_idx] if col_importe_idx < len(row) else 0
-                    imp_val = 0.0
-                    try:
-                        v_str = str(val_raw).replace('$', '').replace(',', '').strip()
-                        imp_val = float(pd.to_numeric(v_str, errors='coerce') or 0.0)
-                    except:
-                        imp_val = 0.0
+                    imp_val = float(pd.to_numeric(str(row.iloc[col_importe_idx]).replace('$', '').replace(',', ''), errors='coerce') or 0.0)
 
-                    if conc_val and conc_val != 'NAN':
-                        registros_sat.append({
-                            'Archivo': nombre_archivo,
-                            'RFC Emisor': rfc_val,
-                            'Concepto SAT': conc_val,
-                            'Importe SAT': imp_val
-                        })
+                    registros_sat.append({
+                        'Archivo': nombre_archivo,
+                        'RFC Emisor': rfc_val,
+                        'Concepto SAT': conc_val,
+                        'Importe SAT': imp_val
+                    })
         except Exception:
             continue
 
