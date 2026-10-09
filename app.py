@@ -35,11 +35,12 @@ def verificar_login():
         return False
     return True
 
-# Control de ejecución del login
+# Control de ejecución del login: si no ha iniciado sesión, detenemos todo aquí
 if not verificar_login():
+    st.warning("⚠️ Por favor, inicia sesión en la barra lateral para acceder al sistema.")
     st.stop()
 
-# Si ya inició sesión, mostramos el botón de cerrar sesión en la barra lateral
+# Si ya inició sesión, mostramos el usuario en la barra lateral[cite: 7]
 st.sidebar.markdown(f"👤 **Usuario:** {st.session_state.usuario} ({st.session_state.rol})")
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
@@ -50,7 +51,16 @@ if st.sidebar.button("Cerrar Sesión"):
 
 st.sidebar.markdown("---")
 
-# Selector de Módulos permitidos para este usuario
+# --- BOTÓN PARA BORRAR LA CACHÉ DE TODOS LOS MENÚS ---
+if st.sidebar.button("🧹 Borrar Caché General"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.sidebar.success("¡Caché borrada exitosamente!")
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# Selector de Módulos permitidos exclusivamente para este usuario[cite: 7]
 modulo_seleccionado = st.sidebar.selectbox("Selecciona el Módulo:", st.session_state.modulos)
 
 # --- CARGA DE DATOS ---
@@ -76,7 +86,6 @@ def cargar_datos_facturacion(path):
         xls = pd.ExcelFile(path)
         sheets = xls.sheet_names
 
-        # 1. Cargar FacturaCliente y filtrar Deleted == 0/False
         df_fac = pd.read_excel(path, sheet_name='FacturaCliente') if 'FacturaCliente' in sheets else pd.DataFrame()
         if not df_fac.empty:
             col_del_fac = 'Deleted' if 'Deleted' in df_fac.columns else ('Delete' if 'Delete' in df_fac.columns else None)
@@ -84,7 +93,6 @@ def cargar_datos_facturacion(path):
                 df_fac = df_fac[pd.to_numeric(df_fac[col_del_fac], errors='coerce').fillna(0) == 0].copy()
             df_fac['TIPO DOC'] = 'F'
 
-        # 2. Cargar NotaCreditoCliente y filtrar Deleted == 0/False
         df_nc = pd.read_excel(path, sheet_name='NotaCreditoCliente') if 'NotaCreditoCliente' in sheets else pd.DataFrame()
         if not df_nc.empty:
             col_del_nc = 'Deleted' if 'Deleted' in df_nc.columns else ('Delete' if 'Delete' in df_nc.columns else None)
@@ -94,7 +102,6 @@ def cargar_datos_facturacion(path):
 
         df_facturacion_base = pd.concat([df_fac, df_nc], ignore_index=True) if not df_fac.empty or not df_nc.empty else pd.DataFrame()
 
-        # 3. Cargar EdoCuenta y filtrar Amount != 0
         df_edo = pd.read_excel(path, sheet_name='EdoCuenta') if 'EdoCuenta' in sheets else pd.DataFrame()
         if not df_edo.empty and 'Amount' in df_edo.columns:
             df_edo['Amount'] = pd.to_numeric(df_edo['Amount'], errors='coerce').fillna(0)
@@ -203,4 +210,4 @@ if modulo_seleccionado == "Facturación y Cobranza":
 
 elif modulo_seleccionado == "Módulo SAT & Amarres":
     st.title("📑 Módulo SAT & Amarres")
-    st.info("Aquí puedes integrar la lógica completa de amarre de ingresos que construimos anteriormente (con carga de carpetas XML, resúmenes por empresa y auditoría de diferencias).")
+    st.info("Aquí puedes integrar la lógica completa de amarre de ingresos que construimos anteriormente.")
