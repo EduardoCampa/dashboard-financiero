@@ -410,10 +410,40 @@ def generar_excel_ejecutivo(df_datos, empresa_nombre):
     output.seek(0)
     return output
 
-ruta_archivo = "Consolidado_Master.xlsx" if os.path.exists("Consolidado_Master.xlsx") else "../Consolidado_Master.xlsx"
+# ============================================================
+# CONFIGURACIÓN ROBUSTA DEL MASTER
+# ============================================================
+# Siempre toma el Master desde la misma carpeta donde está este script.
+# Esto evita que Streamlit termine leyendo otra copia del archivo.
+# En Streamlit Cloud este archivo está dentro de /pages, mientras que el Master
+# normalmente está en la raíz del repositorio. Buscamos primero en la raíz del repo.
+DIRECTORIO_SCRIPT = os.path.dirname(os.path.abspath(__file__))
+DIRECTORIO_REPO = os.path.dirname(DIRECTORIO_SCRIPT)
+CANDIDATOS_MASTER = [
+    os.path.join(DIRECTORIO_REPO, "Consolidado_Master.xlsx"),
+    os.path.join(DIRECTORIO_SCRIPT, "Consolidado_Master.xlsx"),
+]
+
+ruta_archivo = next((p for p in CANDIDATOS_MASTER if os.path.exists(p)), CANDIDATOS_MASTER[0])
+
+def normalizar_folio(valor):
+    """Normaliza folios como SP3133, sp3133, SP3133.0, 3133, etc."""
+    if pd.isna(valor):
+        return ""
+    texto = str(valor).strip().upper()
+    if texto.endswith('.0'):
+        texto = texto[:-2]
+    return texto.strip()
+
+def folio_clave(valor):
+    """Obtiene la clave numérica/limpia del folio para comparar SP/OC."""
+    texto = normalizar_folio(valor)
+    if texto.startswith('SP') or texto.startswith('OC'):
+        texto = texto[2:]
+    return texto.strip()
 
 @st.cache_data
-def cargar_datos_finanzas(path):
+def cargar_datos_finanzas(path, archivo_mtime, archivo_size):
     if not os.path.exists(path):
         return None, None, None, None, None, None
     try:
@@ -467,7 +497,22 @@ def cargar_datos_finanzas(path):
         st.error(f"Error al cargar datos de finanzas: {e}")
         return None, None, None, None, None, None
 
-df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(ruta_archivo)
+# El timestamp y tamaño forman parte de la clave del cache.
+# Si se reemplaza/actualiza el Master, Streamlit vuelve a leerlo.
+if not os.path.exists(ruta_archivo):
+    st.error("No se encontró el archivo Consolidado_Master.xlsx.")
+    st.info(
+        "El sistema buscó el Master en la raíz del repositorio y en la carpeta pages. "
+        f"Ruta esperada en la raíz: {CANDIDATOS_MASTER[0]}"
+    )
+    st.stop()
+
+_archivo_mtime = os.path.getmtime(ruta_archivo)
+_archivo_size = os.path.getsize(ruta_archivo)
+
+df_factura, df_edocuenta, df_tesoreria, df_ordenes, df_fact_compra, df_gastos = cargar_datos_finanzas(
+    ruta_archivo, _archivo_mtime, _archivo_size
+)
 
 @st.cache_data
 def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
@@ -524,7 +569,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     rows_sp = []
     if _df_tes is not None and not _df_tes.empty:
         for _, row in _df_tes.iterrows():
-            folio_sp = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
+            folio_sp = normalizar_folio(row.get('DocFolio', ''))
             emp = str(row.get('EmpresaOrigen', '')).strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
@@ -575,7 +620,7 @@ def procesar_oc_sp_definitivo(_df_ord, _df_tes, _df_fc, _df_gas, _df_edo):
     rows_oc = []
     if _df_ord is not None and not _df_ord.empty:
         for _, row in _df_ord.iterrows():
-            folio_oc = str(row.get('DocFolio', '')).replace('.0', '').strip().upper()
+            folio_oc = normalizar_folio(row.get('DocFolio', ''))
             emp = str(row.get('EmpresaOrigen', '')).strip()
             total_doc = pd.to_numeric(row.get('Total', 0), errors='coerce') or 0.0
 
@@ -667,6 +712,41 @@ def mostrar_tabla_con_totales(df_entrada, cols_num, cols_orden):
     st.dataframe(df_view[cols_existentes], use_container_width=True)
 
 st.sidebar.title("💰 Módulo de Finanzas")
+
+# Estado de carga del Master para poder detectar rápidamente
+# si la aplicación está leyendo una versión distinta del Excel.
+with st.sidebar.expander("🔎 Diagnóstico del Master", expanded=False):
+    st.caption(f"Archivo leído: {os.path.basename(ruta_archivo)}")
+    st.caption(f"Ruta: {ruta_archivo}")
+    st.caption(f"Tamaño: {_archivo_size:,} bytes")
+    st.caption(f"Modificado: {pd.to_datetime(_archivo_mtime, unit='s')}")
+
+    if df_tesoreria is not None and not df_tesoreria.empty and 'DocFolio' in df_tesoreria.columns:
+        folios_master = df_tesoreria['DocFolio'].apply(normalizar_folio)
+        existe_sp3133_master = (folios_master == 'SP3133').any()
+        st.write(f"SP3133 en SolicitudPago: {'✅ SÍ' if existe_sp3133_master else '❌ NO'}")
+        if existe_sp3133_master:
+            st.write(f"Filas SP3133: {(folios_master == 'SP3133').sum():,}")
+    else:
+        st.write("SolicitudPago: ❌ sin datos")
+
+    if df_tesoreria_proc is not None and not df_tesoreria_proc.empty and 'DocFolio' in df_tesoreria_proc.columns:
+        folios_proc = df_tesoreria_proc['DocFolio'].apply(normalizar_folio)
+        existe_sp3133_proc = (folios_proc == 'SP3133').any()
+        st.write(f"SP3133 procesado: {'✅ SÍ' if existe_sp3133_proc else '❌ NO'}")
+        if existe_sp3133_proc and 'Saldo_Pendiente' in df_tesoreria_proc.columns:
+            saldo_3133 = pd.to_numeric(
+                df_tesoreria_proc.loc[folios_proc == 'SP3133', 'Saldo_Pendiente'],
+                errors='coerce'
+            ).fillna(0).sum()
+            st.write(f"Saldo SP3133: {formato_mx(saldo_3133)}")
+    else:
+        st.write("SolicitudPago procesada: ❌ sin datos")
+
+    if st.button("🔄 Recargar Master ahora", key="btn_recargar_master", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 st.sidebar.markdown("---")
 submodulo = st.sidebar.radio(
     "Seleccione Submódulo:",
@@ -982,8 +1062,10 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     col_monto_eval = 'Total'
                     label_monto = "Monto Total"
 
-                df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].astype(str).str.strip().str.upper()
-                df_rep_total['DocFolio_Clean'] = df_rep_total['DocFolio_Upper'].str.replace(r'^(SP|OC)', '', regex=True).str.replace(r'\.0$', '', regex=True).str.strip()
+                # Normalización única y consistente de folios.
+                # Así SP3133, sp3133, SP3133.0 y 3133 se pueden localizar.
+                df_rep_total['DocFolio_Upper'] = df_rep_total[col_folio_name].apply(normalizar_folio)
+                df_rep_total['DocFolio_Clean'] = df_rep_total[col_folio_name].apply(folio_clave)
 
                 c_rf1, c_rf2, c_rf3, c_rf4 = st.columns(4)
                 with c_rf1:
@@ -1003,15 +1085,24 @@ elif submodulo == "📋 Reporte Ejecutivo de Pagos":
                     if prov_seleccionados:
                         df_rep_total = df_rep_total[df_rep_total[col_prov_name].isin(prov_seleccionados)]
                 with c_rf4:
-                    lista_folios = sorted(df_rep_total[col_folio_name].dropna().unique())
-                    folios_seleccionados = st.multiselect("Filtrar por Folio(s):", lista_folios, default=[], key=f"{key_prefix}_folio_f")
+                    # Usamos los folios ya normalizados para que el buscador
+                    # no dependa del formato exacto que venga desde Excel.
+                    lista_folios = sorted(
+                        [f for f in df_rep_total['DocFolio_Upper'].dropna().unique() if str(f).strip()]
+                    )
+                    folios_seleccionados = st.multiselect(
+                        "Filtrar por Folio(s):",
+                        lista_folios,
+                        default=[],
+                        key=f"{key_prefix}_folio_f"
+                    )
                     if folios_seleccionados:
-                        folios_upper = [str(f).strip().upper() for f in folios_seleccionados]
-                        folios_clean = [f.replace('SP', '').replace('OC', '').strip() for f in folios_upper]
-                        
+                        folios_upper = [normalizar_folio(f) for f in folios_seleccionados]
+                        folios_clean = [folio_clave(f) for f in folios_seleccionados]
+
                         df_rep_total = df_rep_total[
-                            (df_rep_total['DocFolio_Upper'].isin(folios_upper)) | 
-                            (df_rep_total['DocFolio_Clean'].isin(folios_clean))
+                            df_rep_total['DocFolio_Upper'].isin(folios_upper) |
+                            df_rep_total['DocFolio_Clean'].isin(folios_clean)
                         ]
 
                 st.markdown("---")
