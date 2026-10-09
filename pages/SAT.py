@@ -67,7 +67,6 @@ def obtener_saldos_balanza(ruta_balanza):
                     if not cta or cta.lower() in ('nan', 'cuenta', 'none', 'total', 'totales'):
                         continue
                     
-                    # Guardar tanto la cuenta original (con guiones) como la limpia
                     cta_original = cta
                     cta_limpia = cta.replace(' ', '').replace('-', '')
                     nom = str(row.iloc[1]).strip() if df_hoja.shape[1] > 1 else ""
@@ -568,7 +567,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         if df_det.empty:
             return pd.DataFrame(), df_det
 
-        # Forzar que la cuenta original y limpia sean texto
         df_det['Cuenta_Original'] = df_det['Cuenta_Original'].astype(str)
         df_det['Cuenta'] = df_det['Cuenta'].astype(str)
 
@@ -577,8 +575,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
         for empresa in empresas_unicas:
             df_emp = df_det[df_det['Empresa'] == empresa]
             
-            # NUEVO FILTRO EXACTO PARA EVITAR TRAER SUBCUENTAS
-            # Busca coincidencia exacta con guiones "410-00000-000-0000" o exacto sin guiones "41000000000000"
             def obtener_saldo_exacto(df_sub, prefijo_cta):
                 match = df_sub[
                     (df_sub['Cuenta_Original'] == f"{prefijo_cta}-00000-000-0000") | 
@@ -596,7 +592,6 @@ if submodulo_sat == "📊 Amarre Ingresos":
             v_410 = obtener_saldo_exacto(df_emp, "410")
             v_411 = obtener_saldo_exacto(df_emp, "411")
             
-            # Cuenta 423 evalúa Acreedor y luego Deudor por si cambia la naturaleza
             v_423_ac = obtener_saldo_exacto(df_emp, "423")
             v_423_de = obtener_saldo_deudor_exacto(df_emp, "423")
             v_423 = v_423_ac if v_423_ac > 0 else v_423_de
@@ -692,7 +687,8 @@ if submodulo_sat == "📊 Amarre Ingresos":
                     res_cont_ing, res_cont_eg = [], []
                     for _, r_map in df_res.iterrows():
                         target = str(r_map['CONTABILIDAD']).strip().upper()
-                        match = df_balanzas[df_balanzas['Empresa'].str.contains(target, na=False)]
+                        # CAMBIO CLAVE AQUI: USAR COINCIDENCIA EXACTA (==) EN LUGAR DE CONTAINS
+                        match = df_balanzas[df_balanzas['Empresa'] == target]
                         if not match.empty:
                             res_cont_ing.append(match['Contabilidad Ingresos'].sum())
                             res_cont_eg.append(match['Contabilidad Egresos'].sum())
